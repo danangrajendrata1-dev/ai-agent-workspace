@@ -3,7 +3,8 @@ export default function TemplateCard({
   icon,
   description,
   buttonLabel = "Select",
-  onAction
+  onAction,
+  disabled = false
 }) {
   return (
     <article className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
@@ -14,7 +15,8 @@ export default function TemplateCard({
         <button
           type="button"
           onClick={onAction}
-          className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.76)] transition hover:bg-[#D5CFBF]"
+          disabled={disabled}
+          className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.76)] transition hover:bg-[#D5CFBF] disabled:cursor-not-allowed disabled:opacity-70"
         >
           {buttonLabel}
         </button>

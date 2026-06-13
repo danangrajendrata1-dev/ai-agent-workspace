@@ -327,6 +327,71 @@ const RECOMMENDED_SKILLS = [
   "Email Assistant"
 ];
 
+const SKILL_IMPORT_REQUIREMENTS = [
+  {
+    title: "GitHub repository URL",
+    detail: "Source repo only. No execution."
+  },
+  {
+    title: "Skill manifest file",
+    detail: "Preview SKILL.md or equivalent manifest."
+  },
+  {
+    title: "Permission declaration",
+    detail: "Show allowed and blocked actions."
+  },
+  {
+    title: "Workflow template reference",
+    detail: "Template link only. No creation yet."
+  },
+  {
+    title: "Required credentials",
+    detail: "Plan credential scope. Do not save secrets here."
+  },
+  {
+    title: "Safety review",
+    detail: "Approval before activation."
+  }
+];
+
+const SKILL_IMPORT_EXAMPLE = {
+  name: "Email Summary",
+  icon: "EM",
+  description:
+    "Requires email credential, model provider, n8n workflow template, and approval before activation."
+};
+
+const N8N_REQUIREMENTS = [
+  {
+    title: "n8n base URL",
+    detail: "Server-side only, no raw execution path."
+  },
+  {
+    title: "n8n API key",
+    detail: "Stored server-side only."
+  },
+  {
+    title: "Public webhook or domain",
+    detail: "Only if future workflow needs it."
+  },
+  {
+    title: "Selected credential inside n8n",
+    detail: "Reference only during planning."
+  },
+  {
+    title: "Workflow template",
+    detail: "Draft template for later review."
+  },
+  {
+    title: "Schedule or manual trigger",
+    detail: "Trigger plan only."
+  },
+  {
+    title: "Approval before activation",
+    detail: "No activation without review."
+  }
+];
+
 const MODEL_OPTIONS = ["model", "gpt-4.1", "gpt-4o-mini"];
 const INITIAL_AGENT_FORM = {
   name: "",
@@ -367,9 +432,7 @@ export default function DashboardPage() {
   const [draftPreview, setDraftPreview] = useState(null);
   const [commandResetSignal, setCommandResetSignal] = useState(0);
   const [skillQuery, setSkillQuery] = useState("");
-  const [workflowMode, setWorkflowMode] = useState("template");
   const [createNotice, setCreateNotice] = useState("");
-  const [importNotice, setImportNotice] = useState("");
   const [pinnedIds, setPinnedIds] = useState([]);
   const [didLoadPinnedIds, setDidLoadPinnedIds] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState(null);
@@ -1152,37 +1215,99 @@ export default function DashboardPage() {
 
       <FloatingCard
         title="Import Skill"
-        subtitle="Browse skill templates for your agents"
+        subtitle="GitHub skill import is planned for a later phase. This MVP only previews the requirement flow."
         open={cards.skills.open}
         position={{ x: cards.skills.x, y: cards.skills.y }}
         zIndex={cards.skills.z}
-        widthClassName="w-[420px] max-w-[calc(100vw-2rem)]"
+        widthClassName="w-[520px] max-w-[calc(100vw-2rem)]"
         bodyClassName="space-y-4"
         onClose={() => closeCard("skills")}
         onMove={(nextPosition) => moveCard("skills", nextPosition)}
         onFocus={() => bringCardToFront("skills")}
       >
-        <input
-          value={skillQuery}
-          onChange={(event) => setSkillQuery(event.target.value)}
-          placeholder="Search skill templates"
-          className="w-full rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
-        />
+        <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+          <p className="text-sm font-medium text-[#3E362E]">Requirement planning only</p>
+          <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+            This workspace can plan automation requirements, but it cannot run imported code or execute workflows in MVP mode.
+          </p>
+          <div className="mt-3 inline-flex rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+            Preview only
+          </div>
+        </div>
 
-        <div className="space-y-3">
-          {filteredTemplates.map((template) => (
-            <TemplateCard
-              key={template.name}
-              name={template.name}
-              icon={template.icon}
-              description={template.description}
-              buttonLabel="Preview"
-              onAction={() => setImportNotice(`${template.name} dipilih.`)}
-            />
+        <div className="grid gap-3 sm:grid-cols-2">
+          {SKILL_IMPORT_REQUIREMENTS.map((item) => (
+            <div
+              key={item.title}
+              className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3"
+            >
+              <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
+              <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">{item.detail}</p>
+            </div>
           ))}
         </div>
 
-        {importNotice ? <p className="text-xs text-[rgba(62,54,46,0.6)]">{importNotice}</p> : null}
+        <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
+                Example concept
+              </p>
+              <p className="mt-1 text-lg font-semibold text-[#3E362E]">{SKILL_IMPORT_EXAMPLE.name}</p>
+            </div>
+            <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+              Preview only
+            </span>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+            {SKILL_IMPORT_EXAMPLE.description}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.58)]">
+            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
+              Email credential
+            </span>
+            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
+              Model provider
+            </span>
+            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
+              n8n template
+            </span>
+            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
+              Approval
+            </span>
+          </div>
+          <div className="mt-4">
+            <TemplateCard
+              name={SKILL_IMPORT_EXAMPLE.name}
+              icon={SKILL_IMPORT_EXAMPLE.icon}
+              description={SKILL_IMPORT_EXAMPLE.description}
+              buttonLabel="Preview only"
+              disabled
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-3">
+          <input
+            value={skillQuery}
+            onChange={(event) => setSkillQuery(event.target.value)}
+            placeholder="Filter preview concepts"
+            className="w-full rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+          />
+
+          <div className="space-y-3">
+            {filteredTemplates.map((template) => (
+              <TemplateCard
+                key={template.name}
+                name={template.name}
+                icon={template.icon}
+                description={template.description}
+                buttonLabel="Preview only"
+                disabled
+              />
+            ))}
+          </div>
+        </div>
       </FloatingCard>
 
       <FloatingCard
@@ -1277,61 +1402,78 @@ export default function DashboardPage() {
 
       <FloatingCard
         title="Workflow n8n"
-        subtitle="Manage workflow connection concept."
+        subtitle="n8n workflow creation and execution are disabled in MVP. Future phase will create inactive workflow drafts only after review."
         open={cards.workflow.open}
         position={{ x: cards.workflow.x, y: cards.workflow.y }}
         zIndex={cards.workflow.z}
-        widthClassName="w-[380px] max-w-[calc(100vw-2rem)]"
+        widthClassName="w-[460px] max-w-[calc(100vw-2rem)]"
         bodyClassName="space-y-4"
         onClose={() => closeCard("workflow")}
         onMove={(nextPosition) => moveCard("workflow", nextPosition)}
         onFocus={() => bringCardToFront("workflow")}
       >
-        <div className="grid gap-2">
-          <label className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-4 text-sm text-[rgba(62,54,46,0.78)]">
-            <input
-              type="radio"
-              name="workflow-mode"
-              value="template"
-              checked={workflowMode === "template"}
-              onChange={(event) => setWorkflowMode(event.target.value)}
-              className="mr-3"
-            />
-            Use template workflow
-          </label>
-          <label className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-4 text-sm text-[rgba(62,54,46,0.78)]">
-            <input
-              type="radio"
-              name="workflow-mode"
-              value="existing"
-              checked={workflowMode === "existing"}
-              onChange={(event) => setWorkflowMode(event.target.value)}
-              className="mr-3"
-            />
-            Connect existing n8n workflow
-          </label>
-          <label className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-4 text-sm text-[rgba(62,54,46,0.78)]">
-            <input
-              type="radio"
-              name="workflow-mode"
-              value="manual"
-              checked={workflowMode === "manual"}
-              onChange={(event) => setWorkflowMode(event.target.value)}
-              className="mr-3"
-            />
-            Create/edit manually in n8n
-          </label>
+        <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+          <p className="text-sm font-medium text-[#3E362E]">Planning only</p>
+          <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+            n8n workflow creation and execution are disabled in MVP. Future phase will create inactive workflow drafts only after review.
+          </p>
+          <div className="mt-3 inline-flex rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+            Preview only
+          </div>
         </div>
 
-        <button
-          type="button"
-          disabled
-          className="w-full cursor-not-allowed rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-4 text-sm font-medium text-[rgba(62,54,46,0.54)] opacity-70"
-        >
-          Runtime disabled
-        </button>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {N8N_REQUIREMENTS.map((item) => (
+            <div
+              key={item.title}
+              className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3"
+            >
+              <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
+              <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">{item.detail}</p>
+            </div>
+          ))}
+        </div>
 
-        <p className="text-xs text-[rgba(62,54,46,0.6)]">Preview only. n8n connection and workflow execution stay disabled for this MVP step.</p>
+        <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
+          <p className="text-sm font-medium text-[#3E362E]">Future phase states</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled
+              className="cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.54)] opacity-70"
+            >
+              Preview only
+            </button>
+            <button
+              type="button"
+              disabled
+              className="cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.54)] opacity-70"
+            >
+              Workflow creation disabled
+            </button>
+            <button
+              type="button"
+              disabled
+              className="cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.54)] opacity-70"
+            >
+              Runtime disabled
+            </button>
+            <button
+              type="button"
+              disabled
+              className="cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.54)] opacity-70"
+            >
+              Activation disabled
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-[rgba(62,54,46,0.6)]">
+            Create workflow = future. Execute workflow = disabled. Activate workflow = disabled.
+          </p>
+        </div>
+
+        <p className="text-xs text-[rgba(62,54,46,0.6)]">
+          This workspace can plan automation requirements, but it cannot run imported code or execute workflows in MVP mode.
+        </p>
       </FloatingCard>
     </>
   );
