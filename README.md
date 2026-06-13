@@ -1,31 +1,48 @@
-# Personal AI Agent Workspace Docs v2.1
+# Personal AI Agent Workspace v2.1
 
-This folder contains consistency-fixed Markdown documentation for the Personal AI Agent Workspace.
+Private single-user workspace for creating and managing AI agents.
 
-Use these files in the repository:
+## Current Frontend Status
 
-```txt
-AGENTS.md
-docs/PRD.md
-docs/TECHNICAL.md
-docs/DATABASE.md
-docs/SECURITY.md
-docs/CONSISTENCY_FIXES.md
+- Next.js App Router
+- JavaScript only
+- Tailwind CSS
+- Antique Ivory workspace UI
+- Login + protected dashboard
+- Create Agent save flow
+- Pinned and active agents in localStorage
+- Draft-only command input
+- Read-only Safety Center summaries
+- Import Skill preview-only
+- n8n workflow preview-only
+- Settings preview-only
+- Runtime execution disabled
+
+## Environment
+
+Frontend requires:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-Main v2.1 fixes:
+## Safety Boundaries
 
-- Removed undefined `skill_sources` and `tool_sources` references.
-- Unified `skills.status` and `tools.status` as `active`, `inactive`, `disabled`.
-- Unified task lifecycle statuses.
-- Unified memory categories.
-- Added explicit `agent_tools.permission_mode` for allowed/blocked tools.
-- Clarified GitHub imported tool risk: preview/register = high risk, execution = critical and disabled for MVP.
+- No runtime execution in MVP
+- No n8n execution in MVP
+- No GitHub import execution in MVP
+- No credential, API key, or secret save in MVP
+- No model test or tool execution in MVP
+- No TypeScript source for MVP
 
-Project rules remain:
+## Docs
 
-- Frontend: Next.js + JavaScript + Tailwind CSS.
-- Backend: FastAPI + Python.
-- No TypeScript for MVP.
-- Private single-user MVP.
-- Sensitive actions require approval and logging.
+- `AGENTS.md`
+- `docs/PRD.md`
+- `docs/TECHNICAL.md`
+- `docs/DATABASE.md`
+- `docs/SECURITY.md`
+- `docs/CONSISTENCY_FIXES.md`
+- `docs/CODEX_STEP_BY_STEP_PERSONAL_AI_AGENT_WORKSPACE.md`
+- `apps/web/README.md`
+- `apps/api/README.md`
