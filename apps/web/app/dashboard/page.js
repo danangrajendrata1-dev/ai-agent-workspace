@@ -1258,9 +1258,9 @@ export default function DashboardPage() {
   return (
     <ProtectedRoute>
       <AppShell minimal sidebar={canvasSidebar}>
-        <div className="relative min-h-screen bg-[#F5F1E6]">
-          <div className="grid min-h-screen grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <section className="min-w-0 p-6">
+        <div className="relative min-h-screen overflow-hidden bg-[#F5F1E6]">
+          <div className="grid min-h-screen min-h-0 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <section className="min-w-0 p-6 xl:min-h-0">
               <div className="flex h-full min-h-[calc(100vh-48px)] flex-col rounded-[20px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-6">
                 <header className="mb-6 flex items-start justify-between gap-4">
                   <div>
@@ -1430,8 +1430,8 @@ export default function DashboardPage() {
               </div>
             </section>
 
-            <aside className="border-t border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4 xl:border-l xl:border-t-0">
-              <div className="flex h-full min-h-[320px] flex-col gap-4">
+              <aside className="border-t border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4 xl:h-screen xl:border-l xl:border-t-0 xl:overflow-hidden">
+                <div className="flex h-full min-h-0 flex-col gap-4 xl:overflow-y-auto xl:pr-1">
                 <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
                   <p className="text-lg font-semibold text-[#3E362E]">Safety Center</p>
                   <div className="mt-4 rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">

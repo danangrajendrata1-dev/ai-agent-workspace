@@ -39,7 +39,7 @@ export default function Sidebar({
 
   if (variant === "workspace") {
     return (
-      <aside className="w-full shrink-0 border-b border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] lg:h-screen lg:w-64 lg:border-b-0 lg:border-r">
+      <aside className="w-full shrink-0 border-b border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] lg:h-screen lg:w-72 lg:border-b-0 lg:border-r xl:w-80">
         <div className="flex h-full min-h-0 flex-col overflow-hidden p-4">
           <div className="pb-4">
             <p className="text-[28px] font-semibold tracking-[-0.03em] text-[#3E362E]">Workspace</p>
@@ -91,22 +91,21 @@ export default function Sidebar({
                 >
                   <button
                     type="button"
-                    onClick={() => onPinnedAgentSelect?.(agent.id)}
-                    className="block w-full text-left"
-                    aria-pressed={activeAgentId === agent.id}
-                  >
-                    <AgentCard agent={agent} />
-                  </button>
-                  <button
-                    type="button"
                     onClick={(event) => {
                       event.stopPropagation();
                       onPinnedAgentUnpin?.(agent.id);
                     }}
-                    className="absolute right-3 top-3 rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[11px] uppercase tracking-[0.12em] text-[rgba(62,54,46,0.72)] transition hover:bg-[#D5CFBF]"
+                    className="absolute right-3 top-3 z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] text-[18px] leading-none text-[rgba(62,54,46,0.72)] transition hover:bg-[#D5CFBF] hover:text-[#3E362E]"
+                    aria-label="Unpin agent"
+                    title="Unpin agent"
                   >
-                    Unpin
+                    ×
                   </button>
+                  <AgentCard
+                    agent={agent}
+                    onSelect={() => onPinnedAgentSelect?.(agent.id)}
+                    onUnpin={() => onPinnedAgentUnpin?.(agent.id)}
+                  />
                 </div>
               ))}
               {!pinnedAgents.length ? (
