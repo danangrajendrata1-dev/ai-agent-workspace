@@ -65,3 +65,6 @@ n8n/credentials/
 n8n/*.sqlite
 n8n/*.sqlite3
 n8n/*.db
+# local workspace / local automation files
+.agents/
+n8n/
