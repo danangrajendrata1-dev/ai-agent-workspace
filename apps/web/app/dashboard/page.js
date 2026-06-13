@@ -1312,91 +1312,92 @@ export default function DashboardPage() {
 
       <FloatingCard
         title="Settings"
-        subtitle="Manage your workspace preferences"
+        subtitle="Settings are preview-only in MVP. Provider credentials and runtime configuration will be handled in a later secure phase."
         open={cards.settings.open}
         position={{ x: cards.settings.x, y: cards.settings.y }}
         zIndex={cards.settings.z}
-        widthClassName="w-[440px] max-w-[calc(100vw-2rem)]"
+        widthClassName="w-[480px] max-w-[calc(100vw-2rem)]"
         bodyClassName="space-y-4"
         onClose={() => closeCard("settings")}
         onMove={(nextPosition) => moveCard("settings", nextPosition)}
         onFocus={() => bringCardToFront("settings")}
         footer={
           <div className="space-y-3">
-            <div className="flex gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 disabled
-                className="flex-1 cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-2.5 text-sm text-[rgba(62,54,46,0.52)] opacity-70"
+                className="cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-2.5 text-sm text-[rgba(62,54,46,0.52)] opacity-70"
               >
-                Preview only
+                Provider setup disabled
               </button>
               <button
                 type="button"
                 disabled
-                className="flex-1 cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-2.5 text-sm font-medium text-[rgba(62,54,46,0.52)] opacity-70"
+                className="cursor-not-allowed rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-2.5 text-sm font-medium text-[rgba(62,54,46,0.52)] opacity-70"
               >
-                Save disabled
+                Model testing disabled
               </button>
             </div>
-            <p className="text-xs text-[rgba(62,54,46,0.6)]">Preview only. Save and connection test stay disabled for this MVP step.</p>
+            <p className="text-xs text-[rgba(62,54,46,0.6)]">
+              MVP mode prevents credential saving, model testing, runtime execution, and workflow activation.
+            </p>
           </div>
         }
       >
         <section className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
-          <p className="text-sm font-medium text-[#3E362E]">Profile</p>
+          <p className="text-sm font-medium text-[#3E362E]">Workspace owner</p>
           <p className="mt-2 text-sm text-[rgba(62,54,46,0.64)]">
             {workspace.currentUser?.display_name || "Workspace owner"}
           </p>
         </section>
 
         <section className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
-          <p className="text-sm font-medium text-[#3E362E]">Appearance</p>
-          <div className="mt-3 flex gap-2">
-            <button type="button" className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.72)]">
-              Ivory
-            </button>
-            <button type="button" className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.72)]">
-              Minimal
-            </button>
-          </div>
-        </section>
-
-        <section className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
-          <p className="text-sm font-medium text-[#3E362E]">AI Model / Brain</p>
+          <p className="text-sm font-medium text-[#3E362E]">Provider setup preview</p>
+          <p className="mt-2 text-sm text-[rgba(62,54,46,0.64)]">
+            Provider credentials stay server-side in a later secure phase.
+          </p>
           <div className="mt-3 grid gap-3">
             <input
-              placeholder="Provider preview"
+              placeholder="Provider setup disabled"
               disabled
-              className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[#3E362E] outline-none"
+              className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[#3E362E] opacity-80 outline-none"
             />
-            <select disabled className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.6)] outline-none">
+            <select disabled className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.6)] opacity-80 outline-none">
               <option>Preview only</option>
             </select>
             <input
-              placeholder="Default model preview"
+              placeholder="Model testing disabled"
               disabled
-              className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[#3E362E] outline-none"
+              className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[#3E362E] opacity-80 outline-none"
             />
-            <input
-              placeholder="Fallback model preview"
-              disabled
-              className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[#3E362E] outline-none"
-            />
-            <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
-              Status: Not connected yet
+          </div>
+        </section>
+
+        <section className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+            <p className="text-sm font-medium text-[#3E362E]">Runtime config preview</p>
+            <div className="mt-3 space-y-2 text-sm text-[rgba(62,54,46,0.64)]">
+              <p>API base URL: preview only</p>
+              <p>n8n base URL: preview only</p>
+              <p>Public webhook or domain: preview only</p>
+            </div>
+          </div>
+          <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+            <p className="text-sm font-medium text-[#3E362E]">Security notes</p>
+            <div className="mt-3 space-y-2 text-sm text-[rgba(62,54,46,0.64)]">
+              <p>Server-side credential storage only.</p>
+              <p>Runtime mode disabled.</p>
+              <p>Workflow activation disabled.</p>
             </div>
           </div>
         </section>
 
         <section className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
-          <p className="text-sm font-medium text-[#3E362E]">n8n Connection</p>
-          <p className="mt-2 text-sm text-[rgba(62,54,46,0.64)]">Preview only. Runtime disabled.</p>
-        </section>
-
-        <section className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
-          <p className="text-sm font-medium text-[#3E362E]">Security</p>
-          <p className="mt-2 text-sm text-[rgba(62,54,46,0.64)]">Backend-managed secrets only</p>
+          <p className="text-sm font-medium text-[#3E362E]">Safety note</p>
+          <p className="mt-2 text-sm text-[rgba(62,54,46,0.64)]">
+            MVP mode prevents credential saving, model testing, runtime execution, and workflow activation.
+          </p>
         </section>
       </FloatingCard>
 
