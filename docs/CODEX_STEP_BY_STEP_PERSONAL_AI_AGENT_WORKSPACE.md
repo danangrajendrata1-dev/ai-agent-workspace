@@ -929,6 +929,53 @@ Before editing code:
 - unittest passes without pytest.
 - No route, endpoint, model, repository, or migration is added.
 
+## Step 61 - Backend Manifest Extraction Helper Only
+
+**Goal:** Add a pure backend manifest extraction helper that converts preview text into a manifest dict without validation or side effects.
+
+**Codex may do:**
+- Create `apps/api/app/services/skill_manifest_extraction_service.py`.
+- Create `apps/api/tests/test_skill_manifest_extraction_service.py`.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change routes.
+- Add endpoints.
+- Add migrations.
+- Add packages.
+- Call GitHub, n8n, Hermes, OpenClaw, runtime, tools, or external models.
+- Commit changes.
+
+**Done when:**
+- Extraction helper exists.
+- Targeted unittest passes without pytest.
+- Manifest validation stays separate.
+- No route or endpoint is wired yet.
+
+## Step 62 - Manifest Extraction Helper Final Audit / Commit Readiness
+
+**Goal:** Final audit of the manifest extraction helper and targeted unittest before future commit readiness.
+
+**Codex may do:**
+- Audit `apps/api/app/services/skill_manifest_extraction_service.py`.
+- Audit `apps/api/tests/test_skill_manifest_extraction_service.py`.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change routes.
+- Add endpoints.
+- Add migrations.
+- Add packages.
+- Call GitHub, n8n, Hermes, OpenClaw, runtime, tools, or external models.
+- Commit changes.
+
+**Done when:**
+- Extraction helper remains pure, isolated, and safe.
+- unittest passes without pytest.
+- No route, endpoint, model, repository, or migration is added.
+
 ## Final Safety Reminder
 
 Do not ask Codex to complete the whole project in one prompt. This project includes agents, tools, memory, approval, GitHub import, OpenClaw, Hermes, n8n, logs, deployment, and security boundaries. Building everything at once increases the risk of unnecessary refactors, unsafe defaults, TypeScript files, secret leaks, and broken architecture.
