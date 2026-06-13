@@ -12,6 +12,7 @@ import {
   createAgent,
   get,
   getActivityLogs,
+  getAgent,
   getCurrentUser,
   getPendingApprovals,
   getModelProviders,
@@ -311,6 +312,9 @@ export default function DashboardPage() {
   const [pendingApprovalSummaries, setPendingApprovalSummaries] = useState([]);
   const [isLoadingPendingApprovalSummaries, setIsLoadingPendingApprovalSummaries] = useState(true);
   const [pendingApprovalSummariesNotice, setPendingApprovalSummariesNotice] = useState("");
+  const [activeAgentDetail, setActiveAgentDetail] = useState(null);
+  const [isLoadingActiveAgentDetail, setIsLoadingActiveAgentDetail] = useState(true);
+  const [activeAgentDetailNotice, setActiveAgentDetailNotice] = useState("");
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [cards, setCards] = useState(buildInitialCards);
@@ -535,6 +539,49 @@ export default function DashboardPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadActiveAgentDetail() {
+      if (!activeAgentId) {
+        setActiveAgentDetail(null);
+        setActiveAgentDetailNotice("");
+        setIsLoadingActiveAgentDetail(false);
+        return;
+      }
+
+      setIsLoadingActiveAgentDetail(true);
+
+      try {
+        const response = await getAgent(activeAgentId);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setActiveAgentDetail(response || null);
+        setActiveAgentDetailNotice("");
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+
+        setActiveAgentDetail(null);
+        setActiveAgentDetailNotice("Agent detail unavailable");
+      } finally {
+        if (isMounted) {
+          setIsLoadingActiveAgentDetail(false);
+        }
+      }
+    }
+
+    loadActiveAgentDetail();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeAgentId]);
+
   const allAgents = useMemo(() => workspace.agents, [workspace.agents]);
 
   const pinnedAgents = useMemo(
@@ -546,6 +593,21 @@ export default function DashboardPage() {
     () => pinnedAgents.find((agent) => agent.id === activeAgentId) || null,
     [activeAgentId, pinnedAgents]
   );
+  const activeAgentProviderLabel = useMemo(() => {
+    if (!activeAgentDetail) {
+      return "";
+    }
+
+    const providerName =
+      availableProviders.find((provider) => provider.id === activeAgentDetail.default_model_provider_id)
+        ?.name || "";
+
+    if (providerName && activeAgentDetail.default_model_name) {
+      return `${providerName} / ${activeAgentDetail.default_model_name}`;
+    }
+
+    return providerName || activeAgentDetail.default_model_name || "";
+  }, [activeAgentDetail, availableProviders]);
   const workspaceStatusItems = useMemo(
     () => [
       { label: "Pinned agents", value: String(pinnedAgents.length) },
@@ -1226,21 +1288,89 @@ export default function DashboardPage() {
                       </p>
                     </div>
 
-                    {activeAgent ? (
-                      <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-5 py-4">
+                    <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-5 py-4">
+                      <div className="flex items-center justify-between gap-3">
                         <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
                           Active associate
                         </p>
+                        <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#A36A58]">
+                          Read-only
+                        </span>
+                      </div>
+
+                      {activeAgent ? (
                         <p className="mt-2 text-xl font-semibold text-[#3E362E]">{activeAgent.name}</p>
+                      ) : (
+                        <p className="mt-2 text-xl font-semibold text-[#3E362E]">
+                          No active associate selected
+                        </p>
+                      )}
+
+                      {activeAgent ? (
                         <div className="mt-2 flex flex-wrap gap-3 text-xs text-[rgba(62,54,46,0.64)]">
                           <span>Status: {activeAgent.status}</span>
                           {activeAgent.defaultModelName ? <span>Model: {activeAgent.defaultModelName}</span> : null}
                         </div>
-                        {activeAgent.description ? (
-                          <p className="mt-3 text-sm leading-6 text-[rgba(62,54,46,0.64)]">{activeAgent.description}</p>
-                        ) : null}
-                      </div>
-                    ) : null}
+                      ) : null}
+
+                      {activeAgentDetailNotice ? (
+                        <p className="mt-3 text-sm text-[rgba(62,54,46,0.64)]">
+                          {activeAgentDetailNotice}
+                        </p>
+                      ) : null}
+
+                      {isLoadingActiveAgentDetail ? (
+                        <p className="mt-3 text-sm text-[rgba(62,54,46,0.64)]">
+                          Loading active agent detail...
+                        </p>
+                      ) : activeAgentDetail ? (
+                        <div className="mt-4 grid gap-3">
+                          <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                              Provider / model
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                              {activeAgentProviderLabel || "Not set"}
+                            </p>
+                          </div>
+
+                          <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                              Description / instruction summary
+                            </p>
+                            <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+                              {truncateText(
+                                activeAgentDetail.role_description ||
+                                  activeAgentDetail.description ||
+                                  "No summary available.",
+                                220
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
+                              <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                Status
+                              </p>
+                              <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                                {activeAgentDetail.status || "unknown"}
+                              </p>
+                            </div>
+                            <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
+                              <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                Dates
+                              </p>
+                              <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+                                {formatDateTime(activeAgentDetail.created_at)}
+                                <span className="mx-2">•</span>
+                                {formatDateTime(activeAgentDetail.updated_at)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
 
                     {draftPreview ? (
                       <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-5 py-4">
