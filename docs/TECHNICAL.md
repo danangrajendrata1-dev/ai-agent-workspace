@@ -272,6 +272,11 @@ GitHub tool import is preview/registry only for MVP.
 - Execution of imported tool code is critical and outside MVP.
 - Execution requires future sandboxing, allowlist, explicit enablement, approval, and logging.
 
+Phase 2 planning reference: see `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`.
+Future backend contract reference: see `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`.
+Future data model reference: see `docs/PHASE_2_FUTURE_DATA_MODEL.md`.
+Future frontend UX reference: see `docs/PHASE_2_FUTURE_FRONTEND_UX.md`.
+
 ## 15. Memory Design
 
 Canonical memory types:

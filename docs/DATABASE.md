@@ -485,3 +485,5 @@ Rules:
 | Gemini/OpenAI API provider placeholder | Fallback API provider. |
 | Basic skills | `general-assistant`, `coding-review`, `n8n-automation`. |
 | Basic tools | Safe placeholders only, such as `run_n8n_workflow` disabled until configured. |
+
+Phase 2 future data model planning reference: see `docs/PHASE_2_FUTURE_DATA_MODEL.md`.

@@ -692,6 +692,150 @@ Before editing code:
 - Backend APIs remain the system of record.
 - Frontend starts only after backend checkpoint is clean.
 
+## Step 45 - Phase 2 Architecture Planning Docs Only
+
+**Goal:** Document safe Phase 2 planning for GitHub Skill Import and n8n workflow draft creation without changing any source code.
+
+**Codex may do:**
+- Create or update `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`.
+- Add short reference links in `docs/TECHNICAL.md` and `docs/SECURITY.md` if useful.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add migrations.
+- Add endpoints.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, models, tools, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Phase 2 planning doc exists.
+- Existing docs stay aligned.
+- No source code is touched.
+
+## Step 46 - Phase 2 Docs Consistency Audit
+
+**Goal:** Audit Phase 2 documentation wording so it stays future-only, planning-only, and does not imply unfinished features already exist.
+
+**Codex may do:**
+- Review `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md` for unsafe wording.
+- Tighten wording in `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md` if it implies implementation already exists.
+- Add or adjust short references in `docs/TECHNICAL.md` and `docs/SECURITY.md` if needed.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add migrations.
+- Add endpoints.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, models, tools, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Future/planning wording is consistent.
+- No source code is touched.
+- No endpoint is implied as implemented.
+
+## Step 47 - Phase 2 Future Backend Contract Planning Docs Only
+
+**Goal:** Create future backend contract planning docs for GitHub Skill Import preview/save and n8n draft workflow creation without implementing any endpoint.
+
+**Codex may do:**
+- Create `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`.
+- Add one short cross-reference in `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md` if useful.
+- Add one short cross-reference in `docs/TECHNICAL.md` and `docs/SECURITY.md` if useful.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add migrations.
+- Add endpoints.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, models, tools, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Future backend contracts are documented.
+- All future endpoints are marked FUTURE / NOT IMPLEMENTED.
+- No source code is touched.
+
+## Step 48 - Phase 2 Future Data Model Planning Docs Only
+
+**Goal:** Document future data model planning for GitHub Skill Import, manifest review, inactive workflow drafts, credential references, domain allowlists, approval, and audit relationships without creating migrations or models.
+
+**Codex may do:**
+- Create `docs/PHASE_2_FUTURE_DATA_MODEL.md`.
+- Add one short cross-reference in `docs/DATABASE.md` if useful.
+- Add one short cross-reference in `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`, `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`, `docs/TECHNICAL.md`, and `docs/SECURITY.md` if useful.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add migrations.
+- Add Alembic revisions.
+- Add SQL migrations.
+- Add endpoints.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, models, tools, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Future data model planning is documented.
+- All future entities are marked FUTURE / NOT IMPLEMENTED.
+- No source code is touched.
+
+## Step 49 - Phase 2 Future Frontend UX Planning Docs Only
+
+**Goal:** Document future frontend UX planning for Phase 2 without changing any frontend source code or UI behavior.
+
+**Codex may do:**
+- Create `docs/PHASE_2_FUTURE_FRONTEND_UX.md`.
+- Add one short cross-reference in `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`, `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`, `docs/PHASE_2_FUTURE_DATA_MODEL.md`, `docs/TECHNICAL.md`, and `docs/SECURITY.md` if useful.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add migrations.
+- Add endpoints.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, models, tools, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Future frontend UX planning is documented.
+- All future UI flows are marked FUTURE / NOT IMPLEMENTED.
+- No source code is touched.
+
+## Step 50 - Phase 2 Planning Docs Final Audit / Commit Readiness
+
+**Goal:** Perform a final docs-only audit for Phase 2 planning consistency and commit readiness without changing source code or implementation.
+
+**Codex may do:**
+- Audit Step 45 through Step 49 planning docs for future-only wording.
+- Verify future endpoints, entities, and UI surfaces remain marked FUTURE / NOT IMPLEMENTED.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add migrations.
+- Add endpoints.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, models, tools, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Phase 2 planning docs are consistent.
+- No source code is touched.
+- No database migration is touched.
+- No endpoint is implied as implemented.
+
 ## Final Safety Reminder
 
 Do not ask Codex to complete the whole project in one prompt. This project includes agents, tools, memory, approval, GitHub import, OpenClaw, Hermes, n8n, logs, deployment, and security boundaries. Building everything at once increases the risk of unnecessary refactors, unsafe defaults, TypeScript files, secret leaks, and broken architecture.

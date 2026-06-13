@@ -141,6 +141,11 @@ Approval requests must show:
 - Imported GitHub tool execution is critical and disabled.
 - Repository URL, commit hash, imported files, reviewer, and activation status must be logged.
 
+Phase 2 planning reference: see `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`.
+Future backend contract reference: see `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`.
+Future data model reference: see `docs/PHASE_2_FUTURE_DATA_MODEL.md`.
+Future frontend UX reference: see `docs/PHASE_2_FUTURE_FRONTEND_UX.md`.
+
 ## 12. Memory Security Rules
 
 Canonical memory types:
