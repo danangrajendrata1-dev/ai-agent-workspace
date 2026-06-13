@@ -164,7 +164,51 @@ function getSafeCreateNotice(error) {
     return message;
   }
 
-  return "Failed to create agent.";
+  if (!message) {
+    return "Failed to create agent.";
+  }
+
+  return truncateText(message.split("\n")[0].trim(), 140) || "Failed to create agent.";
+}
+
+function getCreateNoticeTone(message) {
+  const lowerMessage = String(message || "").toLowerCase();
+
+  if (lowerMessage.includes("created") || lowerMessage.includes("saved")) {
+    return "success";
+  }
+
+  if (lowerMessage.includes("saving") || lowerMessage.includes("loading")) {
+    return "loading";
+  }
+
+  if (
+    lowerMessage.includes("empty") ||
+    lowerMessage.includes("kosong") ||
+    lowerMessage.includes("required") ||
+    lowerMessage.includes("failed") ||
+    lowerMessage.includes("error")
+  ) {
+    return "error";
+  }
+
+  return "info";
+}
+
+function getCreateNoticeStyles(tone) {
+  if (tone === "success") {
+    return "border-[rgba(96,112,86,0.22)] bg-[rgba(96,112,86,0.1)] text-[#607056]";
+  }
+
+  if (tone === "error") {
+    return "border-[rgba(163,106,88,0.22)] bg-[rgba(163,106,88,0.1)] text-[#A36A58]";
+  }
+
+  if (tone === "loading") {
+    return "border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] text-[rgba(62,54,46,0.72)]";
+  }
+
+  return "border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] text-[rgba(62,54,46,0.72)]";
 }
 
 function buildInitialCards() {
@@ -784,12 +828,12 @@ export default function DashboardPage() {
     const trimmedName = agentForm.name.trim();
 
     if (!trimmedName) {
-      setCreateNotice("Nama agent masih kosong.");
+      setCreateNotice("Name is required.");
       return;
     }
 
     setIsCreatingAgent(true);
-    setCreateNotice("Saving...");
+    setCreateNotice("Saving agent profile...");
 
     try {
       const payload = buildAgentPayload(agentForm, availableProviders);
@@ -804,7 +848,7 @@ export default function DashboardPage() {
       }
 
       setAgentForm(INITIAL_AGENT_FORM);
-      setCreateNotice("Agent created.");
+      setCreateNotice("Agent profile created.");
     } catch (error) {
       setCreateNotice(getSafeCreateNotice(error));
     } finally {
@@ -814,7 +858,7 @@ export default function DashboardPage() {
 
   function handleCreateAgentDelete() {
     setAgentForm(INITIAL_AGENT_FORM);
-    setCreateNotice("Draft dibersihkan.");
+    setCreateNotice("Draft cleared.");
   }
 
   function handleCommandSend(value) {
@@ -848,7 +892,7 @@ export default function DashboardPage() {
     <>
       <FloatingCard
         title="Create Agent"
-        subtitle="Design and configure your personal AI agent"
+        subtitle="Create agent profile only. Runtime disabled."
         open={cards.create.open}
         position={{ x: cards.create.x, y: cards.create.y }}
         zIndex={cards.create.z}
@@ -874,21 +918,31 @@ export default function DashboardPage() {
                 disabled={isCreatingAgent}
                 className="flex-1 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-[16px] text-[#A36A58] transition hover:bg-[#D5CFBF] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Delete
+                Reset draft
               </button>
             </div>
-            {createNotice ? <p className="text-xs text-[rgba(62,54,46,0.66)]">{createNotice}</p> : null}
+            <p className="text-xs text-[rgba(62,54,46,0.6)]">
+              Runtime execution is disabled. This only creates an agent profile.
+            </p>
+            {createNotice ? (
+              <div className={`rounded-[14px] border px-4 py-3 text-sm ${getCreateNoticeStyles(getCreateNoticeTone(createNotice))}`}>
+                {truncateText(createNotice, 140)}
+              </div>
+            ) : null}
           </div>
         }
       >
         <label className="grid gap-2">
-          <span className="text-[17px] font-medium text-[#3E362E]">Name</span>
+          <span className="text-[17px] font-medium text-[#3E362E]">
+            Name <span className="text-[#A36A58]">*</span>
+          </span>
           <input
             value={agentForm.name}
             onChange={(event) => handleAgentFormChange("name", event.target.value)}
             placeholder="Enter agent name"
             className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-[16px] text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.4)] focus:border-[#A36A58]"
           />
+          <p className="text-xs text-[rgba(62,54,46,0.58)]">Required. Used as agent profile name.</p>
         </label>
 
         <label className="grid gap-2">
@@ -922,9 +976,22 @@ export default function DashboardPage() {
               </option>
             ))}
           </select>
-          {skillLoadNotice ? <p className="text-xs text-[#A36A58]">{skillLoadNotice}</p> : null}
-          {!isLoadingSkills && !availableSkills.length && !skillLoadNotice ? (
-            <p className="text-xs text-[rgba(62,54,46,0.58)]">No skills available yet.</p>
+          <p className="text-xs text-[rgba(62,54,46,0.58)]">
+            Skill preview only. No skill assignment yet.
+          </p>
+          {isLoadingSkills ? (
+            <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+              Loading skills...
+            </div>
+          ) : skillLoadNotice ? (
+            <div className="rounded-[14px] border border-[rgba(163,106,88,0.22)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm text-[#A36A58]">
+              <p className="font-medium">Skills unavailable</p>
+              <p className="mt-1">{truncateText(skillLoadNotice, 140)}</p>
+            </div>
+          ) : !availableSkills.length ? (
+            <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+              No skills available yet. Agent profile can still be saved.
+            </div>
           ) : null}
           {agentForm.skillName ? (
             <p className="text-xs text-[rgba(62,54,46,0.64)]">Selected skill: {agentForm.skillName}</p>
@@ -971,9 +1038,22 @@ export default function DashboardPage() {
               </option>
             ))}
           </select>
-          {providerLoadNotice ? <p className="text-xs text-[#A36A58]">{providerLoadNotice}</p> : null}
-          {!isLoadingProviders && !availableProviders.length && !providerLoadNotice ? (
-            <p className="text-xs text-[rgba(62,54,46,0.58)]">No provider configured yet.</p>
+          <p className="text-xs text-[rgba(62,54,46,0.58)]">
+            Provider selection is saved in agent profile only. No test call.
+          </p>
+          {isLoadingProviders ? (
+            <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+              Loading providers...
+            </div>
+          ) : providerLoadNotice ? (
+            <div className="rounded-[14px] border border-[rgba(163,106,88,0.22)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm text-[#A36A58]">
+              <p className="font-medium">Providers unavailable</p>
+              <p className="mt-1">{truncateText(providerLoadNotice, 140)}</p>
+            </div>
+          ) : !availableProviders.length ? (
+            <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+              No provider configured yet. Agent profile can still be saved.
+            </div>
           ) : null}
           {selectedProvider ? (
             <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
@@ -999,6 +1079,7 @@ export default function DashboardPage() {
             <option value="template">Use template workflow</option>
             <option value="manual">Create/edit manually in n8n</option>
           </select>
+          <p className="text-xs text-[rgba(62,54,46,0.58)]">Workflow stays preview-only. No execution yet.</p>
         </label>
 
         <label className="flex items-center gap-3 text-sm text-[rgba(62,54,46,0.74)]">
