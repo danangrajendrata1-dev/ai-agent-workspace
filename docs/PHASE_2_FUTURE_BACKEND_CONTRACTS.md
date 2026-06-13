@@ -61,6 +61,7 @@ Common future contract rule:
 
 See also: `docs/PHASE_2_FUTURE_DATA_MODEL.md`.
 See also: `docs/PHASE_2_FUTURE_FRONTEND_UX.md`.
+See also: `docs/PHASE_2_BACKEND_MODULE_PLAN.md`.
 
 ## 6. Future GitHub Skill Import Preview Contract
 

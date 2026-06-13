@@ -5,6 +5,7 @@
 This document defines future data model planning for Phase 2. It covers the storage shape that may be needed for GitHub Skill Import, Skill Manifest review, n8n inactive workflow drafts, credential requirement references, domain allowlist references, approval relationships, and audit relationships. This is planning only.
 
 See also: `docs/PHASE_2_FUTURE_FRONTEND_UX.md`.
+See also: `docs/PHASE_2_BACKEND_MODULE_PLAN.md`.
 
 ## 2. Current MVP Database Boundary
 

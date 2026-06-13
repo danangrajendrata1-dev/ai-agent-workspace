@@ -836,6 +836,99 @@ Before editing code:
 - No database migration is touched.
 - No endpoint is implied as implemented.
 
+## Step 54 - Phase 2 Backend Module Split and File Map Docs Only
+
+**Goal:** Define the backend module split and file map for future Phase 2 work without changing backend source code.
+
+**Codex may do:**
+- Create `docs/PHASE_2_BACKEND_MODULE_PLAN.md`.
+- Add short cross-references in `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`, `docs/PHASE_2_FUTURE_DATA_MODEL.md`, `docs/TECHNICAL.md`, and `docs/SECURITY.md` if useful.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add migrations.
+- Add endpoints.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, models, tools, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Backend module split and file map are documented.
+- No source code is touched.
+- No endpoint is implied as implemented.
+
+## Step 55 - Backend Manifest Validation Helper Only
+
+**Goal:** Implement a pure backend manifest validation helper for future Phase 2 skill import without adding any public endpoint or side effect.
+
+**Codex may do:**
+- Create `apps/api/app/services/skill_manifest_validation_service.py`.
+- Add `apps/api/tests/test_skill_manifest_validation_service.py` if backend tests already exist.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend routes.
+- Add endpoints.
+- Add migrations.
+- Add packages.
+- Call GitHub, n8n, Hermes, OpenClaw, runtime, tools, or external models.
+- Commit changes.
+
+**Done when:**
+- Pure manifest validation helper exists.
+- Targeted tests exist if backend test structure supports them.
+- No public endpoint is added.
+- No source code outside the helper and targeted test is touched.
+
+## Step 56 - Manifest Validation Helper Audit + No-Dependency Test Fix
+
+**Goal:** Harden the manifest validation helper and make its targeted test runnable with the Python standard library only.
+
+**Codex may do:**
+- Tighten `apps/api/app/services/skill_manifest_validation_service.py` if safety or correctness issues are found.
+- Convert `apps/api/tests/test_skill_manifest_validation_service.py` to `unittest` if needed so it runs without pytest.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Add endpoints.
+- Add routes.
+- Add packages.
+- Add migrations.
+- Call GitHub, n8n, Hermes, OpenClaw, runtime, tools, or external models.
+- Commit changes.
+
+**Done when:**
+- Helper stays pure and safe.
+- Targeted test runs with Python standard library.
+- No new endpoint or route exists.
+
+## Step 57 - Manifest Validation Helper Final Audit / Commit Readiness
+
+**Goal:** Final audit of the manifest validation helper and targeted unittest before future commit readiness.
+
+**Codex may do:**
+- Audit `apps/api/app/services/skill_manifest_validation_service.py`.
+- Audit `apps/api/tests/test_skill_manifest_validation_service.py`.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend routes.
+- Add endpoints.
+- Add packages.
+- Add migrations.
+- Call GitHub, n8n, Hermes, OpenClaw, runtime, tools, or external models.
+- Commit changes.
+
+**Done when:**
+- Helper remains pure, isolated, and safe.
+- unittest passes without pytest.
+- No route, endpoint, model, repository, or migration is added.
+
 ## Final Safety Reminder
 
 Do not ask Codex to complete the whole project in one prompt. This project includes agents, tools, memory, approval, GitHub import, OpenClaw, Hermes, n8n, logs, deployment, and security boundaries. Building everything at once increases the risk of unnecessary refactors, unsafe defaults, TypeScript files, secret leaks, and broken architecture.

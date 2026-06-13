@@ -145,6 +145,7 @@ Phase 2 planning reference: see `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`.
 Future backend contract reference: see `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`.
 Future data model reference: see `docs/PHASE_2_FUTURE_DATA_MODEL.md`.
 Future frontend UX reference: see `docs/PHASE_2_FUTURE_FRONTEND_UX.md`.
+Backend module plan reference: see `docs/PHASE_2_BACKEND_MODULE_PLAN.md`.
 
 ## 12. Memory Security Rules
 
