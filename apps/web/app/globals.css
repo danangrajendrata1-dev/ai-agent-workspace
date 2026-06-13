@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --background: #f5f1e6;
+  --foreground: #3e362e;
+  --panel: #f5f1e6;
+  --panel-strong: #e5e0d3;
+  --border: rgba(62, 54, 46, 0.14);
+  --accent: #a36a58;
+  --accent-soft: rgba(163, 106, 88, 0.12);
+  --mist: rgba(62, 54, 46, 0.04);
+  --sand: rgba(62, 54, 46, 0.06);
+  --muted: rgba(62, 54, 46, 0.64);
+  --danger: #b0564e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: "Segoe UI", sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.app-grid {
+  background-image:
+    linear-gradient(rgba(62, 54, 46, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(62, 54, 46, 0.03) 1px, transparent 1px);
+  background-size: 36px 36px;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(62, 54, 46, 0.18) transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(62, 54, 46, 0.18);
+}

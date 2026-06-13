@@ -1,0 +1,67 @@
+# env / secrets
+.env
+.env.*
+!**/.env.example
+
+# node / next
+node_modules/
+.next/
+out/
+dist/
+build/
+.vercel/
+.turbo/
+
+# python
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+# temp / runtime
+tmp/
+temp/
+.cache/
+uploads/
+storage/
+runtime/
+sandbox/
+execution/
+executions/
+tool-runs/
+
+# agent / skill temp safety
+skills/.cache/
+skills/tmp/
+skills/imports/
+skills/runtime/
+skills/secrets/
+agents/.cache/
+agents/tmp/
+agents/runtime/
+agents/secrets/
+# n8n local/runtime data
+n8n/.env
+n8n/.env.*
+n8n/data/
+n8n/.n8n/
+n8n/local-files/
+n8n/credentials/
+n8n/*.sqlite
+n8n/*.sqlite3
+n8n/*.db
