@@ -13,7 +13,9 @@ import {
   get,
   getActivityLogs,
   getCurrentUser,
+  getPendingApprovals,
   getModelProviders,
+  getTasks,
   getSkills
 } from "../../lib/apiClient";
 import { formatDateTime, truncateText } from "../../lib/format";
@@ -85,6 +87,26 @@ function buildActivityLogViewModel(log, index) {
     requestId: log?.request_id || "",
     actorType: log?.actor_type || "",
     createdAt: log?.created_at || ""
+  };
+}
+
+function buildTaskSummaryViewModel(task, index) {
+  return {
+    id: String(task?.id || buildAgentId("task", index)),
+    requestId: task?.request_id || "Unknown request",
+    status: task?.status || "unknown",
+    createdAt: task?.created_at || "",
+    agentId: task?.agent_id || ""
+  };
+}
+
+function buildPendingApprovalViewModel(approval, index) {
+  return {
+    id: String(approval?.id || buildAgentId("approval", index)),
+    action: approval?.requested_action || "Pending approval",
+    riskLevel: approval?.risk_level || "unknown",
+    createdAt: approval?.created_at || "",
+    status: approval?.status || "pending"
   };
 }
 
@@ -283,6 +305,12 @@ export default function DashboardPage() {
   const [activityLogs, setActivityLogs] = useState([]);
   const [isLoadingActivityLogs, setIsLoadingActivityLogs] = useState(true);
   const [activityLogsNotice, setActivityLogsNotice] = useState("");
+  const [taskSummaries, setTaskSummaries] = useState([]);
+  const [isLoadingTaskSummaries, setIsLoadingTaskSummaries] = useState(true);
+  const [taskSummariesNotice, setTaskSummariesNotice] = useState("");
+  const [pendingApprovalSummaries, setPendingApprovalSummaries] = useState([]);
+  const [isLoadingPendingApprovalSummaries, setIsLoadingPendingApprovalSummaries] = useState(true);
+  const [pendingApprovalSummariesNotice, setPendingApprovalSummariesNotice] = useState("");
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [cards, setCards] = useState(buildInitialCards);
@@ -452,6 +480,55 @@ export default function DashboardPage() {
     }
 
     loadActivityLogs();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSafetySummaries() {
+      const results = await Promise.allSettled([
+        getTasks({ query: { limit: 3 } }),
+        getPendingApprovals({ query: { limit: 3 } })
+      ]);
+
+      if (!isMounted) {
+        return;
+      }
+
+      const [tasksResult, approvalsResult] = results;
+
+      if (tasksResult.status === "fulfilled") {
+        setTaskSummaries(
+          normalizeCollection(tasksResult.value)
+            .slice(0, 3)
+            .map(buildTaskSummaryViewModel)
+        );
+        setTaskSummariesNotice("");
+      } else {
+        setTaskSummaries([]);
+        setTaskSummariesNotice("Tasks preview unavailable.");
+      }
+      setIsLoadingTaskSummaries(false);
+
+      if (approvalsResult.status === "fulfilled") {
+        setPendingApprovalSummaries(
+          normalizeCollection(approvalsResult.value)
+            .slice(0, 3)
+            .map(buildPendingApprovalViewModel)
+        );
+        setPendingApprovalSummariesNotice("");
+      } else {
+        setPendingApprovalSummaries([]);
+        setPendingApprovalSummariesNotice("Pending approvals preview unavailable.");
+      }
+      setIsLoadingPendingApprovalSummaries(false);
+    }
+
+    loadSafetySummaries();
 
     return () => {
       isMounted = false;
@@ -1298,6 +1375,134 @@ export default function DashboardPage() {
                   ) : (
                     <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
                       No activity logs yet.
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[#3E362E]">Tasks Summary</p>
+                    <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                      Read-only
+                    </span>
+                  </div>
+
+                  {isLoadingTaskSummaries ? (
+                    <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                      Loading recent tasks...
+                    </div>
+                  ) : taskSummariesNotice ? (
+                    <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
+                      <p className="text-sm font-medium text-[#3E362E]">Tasks preview unavailable</p>
+                      <p className="mt-1 text-sm text-[rgba(62,54,46,0.64)]">
+                        Dashboard stays usable while task summary is unavailable.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-3">
+                      <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
+                        <p className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">Loaded tasks</p>
+                        <p className="mt-1 text-2xl font-semibold text-[#3E362E]">{taskSummaries.length}</p>
+                      </div>
+                      {taskSummaries.length ? (
+                        taskSummaries.map((item) => (
+                          <div
+                            key={item.id}
+                            className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                  {truncateText(item.status, 16)}
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                                  {truncateText(item.requestId, 34)}
+                                </p>
+                              </div>
+                              <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                                Preview only
+                              </span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[rgba(62,54,46,0.58)]">
+                              {item.agentId ? (
+                                <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                  {truncateText(item.agentId, 18)}
+                                </span>
+                              ) : null}
+                              <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                {formatDateTime(item.createdAt)}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                          No task records yet.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[#3E362E]">Pending Approvals</p>
+                    <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                      Preview only
+                    </span>
+                  </div>
+
+                  {isLoadingPendingApprovalSummaries ? (
+                    <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                      Loading pending approvals...
+                    </div>
+                  ) : pendingApprovalSummariesNotice ? (
+                    <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
+                      <p className="text-sm font-medium text-[#3E362E]">Pending approvals unavailable</p>
+                      <p className="mt-1 text-sm text-[rgba(62,54,46,0.64)]">
+                        Dashboard stays usable while approval summary is unavailable.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-3">
+                      <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
+                        <p className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">Pending approvals</p>
+                        <p className="mt-1 text-2xl font-semibold text-[#3E362E]">{pendingApprovalSummaries.length}</p>
+                      </div>
+                      {pendingApprovalSummaries.length ? (
+                        pendingApprovalSummaries.map((item) => (
+                          <div
+                            key={item.id}
+                            className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                  {truncateText(item.riskLevel, 16)}
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                                  {truncateText(item.action, 34)}
+                                </p>
+                              </div>
+                              <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                                Read-only
+                              </span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[rgba(62,54,46,0.58)]">
+                              <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                {truncateText(item.status, 16)}
+                              </span>
+                              <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                {formatDateTime(item.createdAt)}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                          No pending approvals.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -163,6 +163,14 @@ export function getActivityLogs(options) {
   return get("/logs/activity", options);
 }
 
+export function getTasks(options) {
+  return get("/tasks", options);
+}
+
+export function getPendingApprovals(options) {
+  return get("/approvals/pending", options);
+}
+
 
 export function getTask(id, options) {
   ensureIdentifier(id, "task");
