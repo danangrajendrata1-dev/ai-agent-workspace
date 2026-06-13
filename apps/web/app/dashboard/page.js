@@ -8,7 +8,15 @@ import FloatingCard from "../../components/FloatingCard";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import TemplateCard from "../../components/TemplateCard";
-import { createAgent, get, getCurrentUser, getModelProviders, getSkills } from "../../lib/apiClient";
+import {
+  createAgent,
+  get,
+  getActivityLogs,
+  getCurrentUser,
+  getModelProviders,
+  getSkills
+} from "../../lib/apiClient";
+import { formatDateTime, truncateText } from "../../lib/format";
 
 const PINNED_AGENT_IDS_STORAGE_KEY = "personal-ai-agent-workspace:pinned-agent-ids";
 const ACTIVE_AGENT_ID_STORAGE_KEY = "personal-ai-agent-workspace:active-agent-id";
@@ -66,6 +74,17 @@ function buildProviderViewModel(provider, index) {
     providerType: provider?.provider_type || "api",
     status: provider?.status || "inactive",
     defaultModel: provider?.default_model || ""
+  };
+}
+
+function buildActivityLogViewModel(log, index) {
+  return {
+    id: String(log?.id || buildAgentId("activity", index)),
+    eventType: log?.event_type || "Activity",
+    message: log?.message || "No message available.",
+    requestId: log?.request_id || "",
+    actorType: log?.actor_type || "",
+    createdAt: log?.created_at || ""
   };
 }
 
@@ -261,6 +280,9 @@ export default function DashboardPage() {
   const [availableProviders, setAvailableProviders] = useState([]);
   const [isLoadingSkills, setIsLoadingSkills] = useState(true);
   const [isLoadingProviders, setIsLoadingProviders] = useState(true);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [isLoadingActivityLogs, setIsLoadingActivityLogs] = useState(true);
+  const [activityLogsNotice, setActivityLogsNotice] = useState("");
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [cards, setCards] = useState(buildInitialCards);
@@ -392,6 +414,44 @@ export default function DashboardPage() {
     }
 
     loadWorkspace();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadActivityLogs() {
+      try {
+        const response = await getActivityLogs({ query: { limit: 5 } });
+
+        if (!isMounted) {
+          return;
+        }
+
+        setActivityLogs(
+          normalizeCollection(response)
+            .slice(0, 5)
+            .map(buildActivityLogViewModel)
+        );
+        setActivityLogsNotice("");
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setActivityLogs([]);
+        setActivityLogsNotice("Activity logs unavailable.");
+      } finally {
+        if (isMounted) {
+          setIsLoadingActivityLogs(false);
+        }
+      }
+    }
+
+    loadActivityLogs();
 
     return () => {
       isMounted = false;
@@ -1179,25 +1239,67 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
-                  <p className="text-sm font-semibold text-[#3E362E]">Workspace activity</p>
-                  <div className="mt-3 space-y-3">
-                    <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
-                      <p className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">Local draft</p>
-                      <p className="mt-1 text-sm text-[rgba(62,54,46,0.7)]">
-                        {draftPreview ? "Draft preview tersedia di workspace." : "Belum ada draft lokal."}
-                      </p>
-                    </div>
-                    <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
-                      <p className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">Pinned agents</p>
-                      <p className="mt-1 text-sm text-[rgba(62,54,46,0.7)]">{pinnedAgents.length} visible in sidebar.</p>
-                    </div>
-                    <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
-                      <p className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">Current owner</p>
-                      <p className="mt-1 text-sm text-[rgba(62,54,46,0.7)]">
-                        {workspace.currentUser?.display_name || "Workspace owner"}
-                      </p>
-                    </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[#3E362E]">Activity Logs</p>
+                    <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                      Read-only
+                    </span>
                   </div>
+
+                  {isLoadingActivityLogs ? (
+                    <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                      Loading recent activity...
+                    </div>
+                  ) : activityLogsNotice ? (
+                    <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
+                      <p className="text-sm font-medium text-[#3E362E]">Activity logs unavailable</p>
+                      <p className="mt-1 text-sm text-[rgba(62,54,46,0.64)]">
+                        Dashboard stays usable while activity feed is unavailable.
+                      </p>
+                    </div>
+                  ) : activityLogs.length ? (
+                    <div className="mt-3 space-y-3">
+                      {activityLogs.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                {truncateText(item.eventType, 32)}
+                              </p>
+                              <p className="mt-1 text-sm leading-6 text-[#3E362E]">
+                                {truncateText(item.message, 120)}
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                              Read-only
+                            </span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[rgba(62,54,46,0.58)]">
+                            {item.requestId ? (
+                              <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                {truncateText(item.requestId, 18)}
+                              </span>
+                            ) : null}
+                            {item.actorType ? (
+                              <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                {truncateText(item.actorType, 16)}
+                              </span>
+                            ) : null}
+                            <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                              {formatDateTime(item.createdAt)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                      No activity logs yet.
+                    </div>
+                  )}
                 </div>
               </div>
             </aside>

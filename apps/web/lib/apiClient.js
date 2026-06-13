@@ -159,6 +159,10 @@ export function getModelProviders(options) {
   return get("/model-providers", options);
 }
 
+export function getActivityLogs(options) {
+  return get("/logs/activity", options);
+}
+
 
 export function getTask(id, options) {
   ensureIdentifier(id, "task");
