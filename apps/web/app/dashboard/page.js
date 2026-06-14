@@ -8,6 +8,7 @@ import FloatingCard from "../../components/FloatingCard";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import {
+  approveGithubSkillImport,
   createAgent,
   get,
   getActivityLogs,
@@ -364,6 +365,16 @@ const INITIAL_GITHUB_SKILL_PREVIEW_FORM = {
   filePath: "SKILL.md"
 };
 
+const INITIAL_GITHUB_SKILL_APPROVE_FORM = {
+  name: "",
+  slug: "",
+  description: "",
+  versionLabel: "",
+  riskLevel: "medium",
+  reviewNotes: "",
+  status: "inactive"
+};
+
 export default function DashboardPage() {
   const [workspace, setWorkspace] = useState({
     currentUser: null,
@@ -398,6 +409,12 @@ export default function DashboardPage() {
   const [githubSkillPreviewResult, setGithubSkillPreviewResult] = useState(null);
   const [githubSkillPreviewNotice, setGithubSkillPreviewNotice] = useState("");
   const [isPreviewingGithubSkill, setIsPreviewingGithubSkill] = useState(false);
+  const [githubSkillApproveForm, setGithubSkillApproveForm] = useState(
+    INITIAL_GITHUB_SKILL_APPROVE_FORM
+  );
+  const [githubSkillApproveNotice, setGithubSkillApproveNotice] = useState("");
+  const [githubSkillApproveResult, setGithubSkillApproveResult] = useState(null);
+  const [isApprovingGithubSkill, setIsApprovingGithubSkill] = useState(false);
   const [createNotice, setCreateNotice] = useState("");
   const [pinnedIds, setPinnedIds] = useState([]);
   const [didLoadPinnedIds, setDidLoadPinnedIds] = useState(false);
@@ -870,6 +887,9 @@ export default function DashboardPage() {
 
     setIsPreviewingGithubSkill(true);
     setGithubSkillPreviewResult(null);
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveNotice("");
+    setGithubSkillApproveForm(INITIAL_GITHUB_SKILL_APPROVE_FORM);
     setGithubSkillPreviewNotice("Fetching preview...");
 
     try {
@@ -892,6 +912,59 @@ export default function DashboardPage() {
       );
     } finally {
       setIsPreviewingGithubSkill(false);
+    }
+  }
+
+  function handleGithubSkillApproveFieldChange(field, value) {
+    setGithubSkillApproveForm((current) => ({
+      ...current,
+      [field]: value
+    }));
+  }
+
+  async function handleGithubSkillApproveSubmit(event) {
+    event.preventDefault();
+
+    if (!githubSkillPreviewResult?.id) {
+      setGithubSkillApproveNotice("Preview first before importing to quarantine.");
+      return;
+    }
+
+    const name = githubSkillApproveForm.name.trim();
+    if (!name) {
+      setGithubSkillApproveNotice("Skill name is required.");
+      return;
+    }
+
+    setIsApprovingGithubSkill(true);
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveNotice("Importing safely...");
+
+    try {
+      const response = await approveGithubSkillImport(githubSkillPreviewResult.id, {
+        name,
+        slug: githubSkillApproveForm.slug.trim() || undefined,
+        description: githubSkillApproveForm.description.trim() || undefined,
+        version_label: githubSkillApproveForm.versionLabel.trim() || undefined,
+        risk_level: githubSkillApproveForm.riskLevel,
+        status: githubSkillApproveForm.status || "inactive",
+        review_notes: githubSkillApproveForm.reviewNotes.trim() || undefined
+      });
+
+      setGithubSkillPreviewResult(response);
+      setGithubSkillApproveResult(response);
+      setGithubSkillApproveNotice(
+        "Imported as inactive/quarantine-style. Not assigned to any agent and not executed."
+      );
+    } catch (error) {
+      const message = getSafeErrorMessage(error, "Unable to import preview safely.");
+      if (String(message).toLowerCase().includes("skill manifest safety check failed")) {
+        setGithubSkillApproveNotice(`Blocked safely: ${truncateText(message, 180)}`);
+      } else {
+        setGithubSkillApproveNotice(truncateText(message.split("\n")[0].trim(), 180));
+      }
+    } finally {
+      setIsApprovingGithubSkill(false);
     }
   }
 
@@ -1223,11 +1296,11 @@ export default function DashboardPage() {
 
       <FloatingCard
         title="Import Skill"
-        subtitle="Preview GitHub skill safely. Preview only, not imported yet."
+        subtitle="Preview GitHub skill safely, then import to quarantine-style storage."
         open={cards.skills.open}
         position={{ x: cards.skills.x, y: cards.skills.y }}
         zIndex={cards.skills.z}
-        widthClassName="w-[520px] max-w-[calc(100vw-2rem)]"
+        widthClassName="w-[760px] max-w-[calc(100vw-2rem)]"
         bodyClassName="space-y-4"
         onClose={() => closeCard("skills")}
         onMove={(nextPosition) => moveCard("skills", nextPosition)}
@@ -1366,6 +1439,163 @@ export default function DashboardPage() {
                 {githubSkillPreviewResult.content_preview || "No preview content returned."}
               </pre>
             </div>
+
+            <form onSubmit={handleGithubSkillApproveSubmit} className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-[#3E362E]">Review before import</p>
+                  <p className="mt-1 text-xs text-[rgba(62,54,46,0.58)]">
+                    Imported skill is saved inactive/quarantine-style only.
+                  </p>
+                </div>
+                <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                  Inactive only
+                </span>
+              </div>
+
+              <div className="mt-4 grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-[#3E362E]">
+                      Name <span className="text-[#A36A58]">*</span>
+                    </span>
+                    <input
+                      value={githubSkillApproveForm.name}
+                      onChange={(event) => handleGithubSkillApproveFieldChange("name", event.target.value)}
+                      placeholder="Enter skill name"
+                      className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                    />
+                  </label>
+
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-[#3E362E]">Slug</span>
+                    <input
+                      value={githubSkillApproveForm.slug}
+                      onChange={(event) => handleGithubSkillApproveFieldChange("slug", event.target.value)}
+                      placeholder="skill-slug"
+                      className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                    />
+                  </label>
+                </div>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-[#3E362E]">Description</span>
+                  <textarea
+                    rows={3}
+                    value={githubSkillApproveForm.description}
+                    onChange={(event) => handleGithubSkillApproveFieldChange("description", event.target.value)}
+                    placeholder="Optional description for the imported skill."
+                    className="resize-none rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-[#3E362E]">Version label</span>
+                    <input
+                      value={githubSkillApproveForm.versionLabel}
+                      onChange={(event) =>
+                        handleGithubSkillApproveFieldChange("versionLabel", event.target.value)
+                      }
+                      placeholder="1.0.0"
+                      className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                    />
+                  </label>
+
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-[#3E362E]">Risk level</span>
+                    <select
+                      value={githubSkillApproveForm.riskLevel}
+                      onChange={(event) => handleGithubSkillApproveFieldChange("riskLevel", event.target.value)}
+                      className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition focus:border-[#A36A58]"
+                    >
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                    </select>
+                  </label>
+                </div>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-[#3E362E]">Review notes</span>
+                  <textarea
+                    rows={3}
+                    value={githubSkillApproveForm.reviewNotes}
+                    onChange={(event) =>
+                      handleGithubSkillApproveFieldChange("reviewNotes", event.target.value)
+                    }
+                    placeholder="Optional review notes."
+                    className="resize-none rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                  />
+                </label>
+
+                <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-[rgba(62,54,46,0.52)]">
+                    Locked status
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-[#3E362E]">{githubSkillApproveForm.status}</p>
+                  <p className="mt-1 text-xs text-[rgba(62,54,46,0.58)]">
+                    Frontend sends inactive only. Active state is not allowed here.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                  Import to quarantine-style storage only. No agent assignment. No runtime.
+                </p>
+                <button
+                  type="submit"
+                  disabled={isApprovingGithubSkill}
+                  className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isApprovingGithubSkill ? "Importing safely..." : "Import to Quarantine"}
+                </button>
+              </div>
+
+              {githubSkillApproveNotice ? (
+                <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                  {truncateText(githubSkillApproveNotice, 180)}
+                </div>
+              ) : null}
+            </form>
+
+            {githubSkillApproveResult ? (
+              <div className="rounded-[18px] border border-[rgba(96,112,86,0.18)] bg-[rgba(96,112,86,0.08)] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[#607056]">Import success</p>
+                    <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.72)]">
+                      Imported as inactive/quarantine-style. Not assigned to any agent and not executed.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#607056]">
+                    {githubSkillApproveResult.status || "imported"}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {[
+                    { label: "Import ID", value: githubSkillApproveResult.id },
+                    { label: "Repo URL", value: githubSkillApproveResult.repo_url },
+                    { label: "Branch", value: githubSkillApproveResult.branch || "-" },
+                    { label: "File path", value: githubSkillApproveResult.file_path || "-" },
+                    { label: "Status", value: githubSkillApproveResult.status || "-" },
+                    { label: "Content preview", value: "Available above as untrusted text." }
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3"
+                    >
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                        {item.label}
+                      </p>
+                      <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">{item.value || "-"}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </FloatingCard>

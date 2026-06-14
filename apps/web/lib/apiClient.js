@@ -177,6 +177,15 @@ export function previewGithubSkillImport(payload, options) {
 }
 
 
+export function approveGithubSkillImport(importId, payload, options) {
+  if (!importId) {
+    throw new Error("Missing github import identifier.");
+  }
+
+  return post(`/github-imports/${importId}/approve-skill`, payload, options);
+}
+
+
 export function getTask(id, options) {
   ensureIdentifier(id, "task");
   return get(`/tasks/${id}`, options);
