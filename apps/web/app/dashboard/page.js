@@ -908,7 +908,7 @@ export default function DashboardPage() {
     } catch (error) {
       setGithubSkillPreviewResult(null);
       setGithubSkillPreviewNotice(
-        truncateText(getSafeErrorMessage(error, "Unable to fetch preview."), 180)
+        "Preview gagal. Pastikan Repository URL adalah root repo, branch benar, dan file path mengarah ke SKILL.md yang benar-benar ada di repo."
       );
     } finally {
       setIsPreviewingGithubSkill(false);
@@ -1347,6 +1347,9 @@ export default function DashboardPage() {
                   placeholder="SKILL.md"
                   className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
                 />
+                <p className="text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                  Isi path file SKILL.md dari root repo. Contoh: skills/pdf/SKILL.md, skills/docx/SKILL.md, skills/canvas-design/SKILL.md. Jangan isi URL GitHub penuh atau raw URL.
+                </p>
               </label>
             </div>
           </div>
@@ -1439,6 +1442,9 @@ export default function DashboardPage() {
                 {githubSkillPreviewResult.content_preview || "No preview content returned."}
               </pre>
             </div>
+            <p className="text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+              Kalau di GitHub kamu membuka: repo → skills → canvas-design → SKILL.md. Maka file path: skills/canvas-design/SKILL.md.
+            </p>
 
             <form onSubmit={handleGithubSkillApproveSubmit} className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
               <div className="flex items-start justify-between gap-3">
