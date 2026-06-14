@@ -13,6 +13,7 @@ from app.schemas.github_import import (
     GitHubSkillImportApproveRequest,
     GitHubSkillPreviewRequest,
 )
+from app.services import log_service
 from app.services.skill_manifest_pipeline_service import inspect_skill_manifest_content
 from app.services.skill_manifest_risk_service import assess_skill_manifest_risk
 
@@ -38,6 +39,13 @@ def ensure_unique_skill_slug(
 
 def serialize_github_import(github_import) -> GitHubImportResponse:
     return GitHubImportResponse.model_validate(github_import)
+
+
+def _safe_record_import_log(record_fn, db: Session, **kwargs) -> None:
+    try:
+        record_fn(db, **kwargs)
+    except Exception:
+        db.rollback()
 
 
 def preview_github_skill(db: Session, payload: GitHubSkillPreviewRequest) -> GitHubImportResponse:
@@ -73,6 +81,24 @@ def preview_github_skill(db: Session, payload: GitHubSkillPreviewRequest) -> Git
     )
     db.commit()
     db.refresh(github_import)
+    _safe_record_import_log(
+        log_service.record_activity,
+        db,
+        request_id=None,
+        actor_type="system",
+        actor_id=None,
+        event_type="github_import_preview_created",
+        message="GitHub skill import preview created.",
+        metadata_json={
+            "import_id": str(github_import.id),
+            "repo_url": github_import.repo_url,
+            "branch": github_import.branch,
+            "file_path": github_import.file_path,
+            "import_type": github_import.import_type,
+            "status": github_import.status,
+        },
+    )
+    db.commit()
     return serialize_github_import(github_import)
 
 
@@ -120,6 +146,44 @@ def approve_github_skill_import(
 
     inspection = inspect_skill_manifest_content(github_import.content_preview)
     if not inspection.is_safe:
+        _safe_record_import_log(
+            log_service.record_activity,
+            db,
+            request_id=None,
+            actor_type="system",
+            actor_id=None,
+            event_type="github_import_safety_check_failed",
+            message="GitHub skill import blocked by manifest safety check.",
+            metadata_json={
+                "import_id": str(github_import.id),
+                "repo_url": github_import.repo_url,
+                "branch": github_import.branch,
+                "file_path": github_import.file_path,
+                "import_type": github_import.import_type,
+                "status": github_import.status,
+                "error_count": len(inspection.errors),
+                "error_summary": inspection.errors[:5],
+            },
+        )
+        _safe_record_import_log(
+            log_service.record_audit,
+            db,
+            user_id=None,
+            action="github_import_safety_check_failed",
+            entity_type="github_import",
+            entity_id=github_import.id,
+            before_data={
+                "status": github_import.status,
+                "review_notes": github_import.review_notes,
+            },
+            after_data={
+                "status": github_import.status,
+                "review_notes": github_import.review_notes,
+                "error_count": len(inspection.errors),
+            },
+            ip_address=None,
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Skill manifest safety check failed: " + "; ".join(inspection.errors),
@@ -153,6 +217,47 @@ def approve_github_skill_import(
     github_import_repository.update_review_notes(db, github_import, payload.review_notes)
     db.commit()
     db.refresh(github_import)
+    _safe_record_import_log(
+        log_service.record_activity,
+        db,
+        request_id=None,
+        actor_type="system",
+        actor_id=None,
+        event_type="github_import_skill_imported",
+        message="GitHub skill import approved and saved.",
+        metadata_json={
+            "import_id": str(github_import.id),
+            "skill_id": str(skill.id),
+            "repo_url": github_import.repo_url,
+            "branch": github_import.branch,
+            "file_path": github_import.file_path,
+            "import_type": github_import.import_type,
+            "status": github_import.status,
+            "risk_level": risk_result.risk_level,
+            "skill_status": skill.status,
+        },
+    )
+    _safe_record_import_log(
+        log_service.record_audit,
+        db,
+        user_id=None,
+        action="github_import_skill_imported",
+        entity_type="github_import",
+        entity_id=github_import.id,
+        before_data={
+            "status": "preview",
+            "review_notes": None,
+        },
+        after_data={
+            "status": github_import.status,
+            "review_notes": github_import.review_notes,
+            "skill_id": str(skill.id),
+            "risk_level": risk_result.risk_level,
+            "skill_status": skill.status,
+        },
+        ip_address=None,
+    )
+    db.commit()
     return serialize_github_import(github_import)
 
 
@@ -171,6 +276,41 @@ def reject_github_import(
     github_import_repository.update_review_notes(db, github_import, payload.review_notes)
     db.commit()
     db.refresh(github_import)
+    _safe_record_import_log(
+        log_service.record_activity,
+        db,
+        request_id=None,
+        actor_type="system",
+        actor_id=None,
+        event_type="github_import_rejected",
+        message="GitHub import rejected.",
+        metadata_json={
+            "import_id": str(github_import.id),
+            "repo_url": github_import.repo_url,
+            "branch": github_import.branch,
+            "file_path": github_import.file_path,
+            "import_type": github_import.import_type,
+            "status": github_import.status,
+        },
+    )
+    _safe_record_import_log(
+        log_service.record_audit,
+        db,
+        user_id=None,
+        action="github_import_rejected",
+        entity_type="github_import",
+        entity_id=github_import.id,
+        before_data={
+            "status": "preview",
+            "review_notes": None,
+        },
+        after_data={
+            "status": github_import.status,
+            "review_notes": github_import.review_notes,
+        },
+        ip_address=None,
+    )
+    db.commit()
     return serialize_github_import(github_import)
 
 
@@ -184,4 +324,37 @@ def disable_github_import(db: Session, import_id: uuid.UUID) -> GitHubImportResp
     github_import_repository.update_status(db, github_import, "disabled")
     db.commit()
     db.refresh(github_import)
+    _safe_record_import_log(
+        log_service.record_activity,
+        db,
+        request_id=None,
+        actor_type="system",
+        actor_id=None,
+        event_type="github_import_disabled",
+        message="GitHub import disabled.",
+        metadata_json={
+            "import_id": str(github_import.id),
+            "repo_url": github_import.repo_url,
+            "branch": github_import.branch,
+            "file_path": github_import.file_path,
+            "import_type": github_import.import_type,
+            "status": github_import.status,
+        },
+    )
+    _safe_record_import_log(
+        log_service.record_audit,
+        db,
+        user_id=None,
+        action="github_import_disabled",
+        entity_type="github_import",
+        entity_id=github_import.id,
+        before_data={
+            "status": "preview",
+        },
+        after_data={
+            "status": github_import.status,
+        },
+        ip_address=None,
+    )
+    db.commit()
     return serialize_github_import(github_import)

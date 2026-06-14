@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from datetime import datetime, timezone
 
 from app.services.github_import_service import approve_github_skill_import
 
@@ -10,9 +11,16 @@ class GitHubImportSkillSafetyGateTest(unittest.TestCase):
         self.db = MagicMock()
         self.github_import = SimpleNamespace(
             id="import-id",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            commit_sha=None,
             import_type="skill",
+            file_path="SKILL.md",
             status="preview",
             content_preview='{"name":"Email Summary","version":"1.0.0","description":"Generate summary."}',
+            review_notes=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         self.payload = SimpleNamespace(
             name="Email Summary",
