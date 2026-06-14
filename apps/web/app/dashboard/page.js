@@ -7,7 +7,6 @@ import CommandInput from "../../components/CommandInput";
 import FloatingCard from "../../components/FloatingCard";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
-import TemplateCard from "../../components/TemplateCard";
 import {
   createAgent,
   get,
@@ -17,7 +16,8 @@ import {
   getPendingApprovals,
   getModelProviders,
   getTasks,
-  getSkills
+  getSkills,
+  previewGithubSkillImport
 } from "../../lib/apiClient";
 import { formatDateTime, truncateText } from "../../lib/format";
 
@@ -281,44 +281,6 @@ function writeStoredActiveAgentId(activeAgentId) {
   window.localStorage.setItem(ACTIVE_AGENT_ID_STORAGE_KEY, String(activeAgentId));
 }
 
-const SKILL_TEMPLATES = [
-  {
-    name: "Reminder / Alarm",
-    icon: "RA",
-    description: "Pengingat terjadwal untuk tugas personal dan kerja rutin."
-  },
-  {
-    name: "Email",
-    icon: "EM",
-    description: "Template agent email untuk alur komunikasi yang aman."
-  },
-  {
-    name: "Notification",
-    icon: "NT",
-    description: "Template notifikasi internal lintas kanal."
-  },
-  {
-    name: "Report",
-    icon: "RP",
-    description: "Rangkuman laporan berkala dan hasil monitoring ringan."
-  },
-  {
-    name: "API Data Fetcher",
-    icon: "AP",
-    description: "Konsep agent pengambil data API via backend nanti."
-  },
-  {
-    name: "Webhook Automation",
-    icon: "WA",
-    description: "Placeholder otomasi alur event tanpa eksekusi nyata."
-  },
-  {
-    name: "Database Saver",
-    icon: "DB",
-    description: "Konsep penyimpanan data terkontrol dengan approval."
-  }
-];
-
 const RECOMMENDED_SKILLS = [
   "Web Search",
   "Data Analysis",
@@ -330,36 +292,29 @@ const RECOMMENDED_SKILLS = [
 const SKILL_IMPORT_REQUIREMENTS = [
   {
     title: "GitHub repository URL",
-    detail: "Source repo only. No execution."
+    detail: "Backend preview fetch only. No execution."
   },
   {
     title: "Skill manifest file",
-    detail: "Preview SKILL.md or equivalent manifest."
+    detail: "Preview SKILL.md from GitHub as untrusted text."
   },
   {
     title: "Permission declaration",
-    detail: "Show allowed and blocked actions."
+    detail: "Shown as review metadata only."
   },
   {
     title: "Workflow template reference",
-    detail: "Template link only. No creation yet."
+    detail: "n8n remains disabled in MVP."
   },
   {
     title: "Required credentials",
-    detail: "Plan credential scope. Do not save secrets here."
+    detail: "Preview only. Do not save secrets here."
   },
   {
     title: "Safety review",
-    detail: "Approval before activation."
+    detail: "Preview only. No import yet."
   }
 ];
-
-const SKILL_IMPORT_EXAMPLE = {
-  name: "Email Summary",
-  icon: "EM",
-  description:
-    "Requires email credential, model provider, n8n workflow template, and approval before activation."
-};
 
 const N8N_REQUIREMENTS = [
   {
@@ -403,6 +358,12 @@ const INITIAL_AGENT_FORM = {
   pinToSidebar: true
 };
 
+const INITIAL_GITHUB_SKILL_PREVIEW_FORM = {
+  repoUrl: "",
+  branch: "main",
+  filePath: "SKILL.md"
+};
+
 export default function DashboardPage() {
   const [workspace, setWorkspace] = useState({
     currentUser: null,
@@ -431,7 +392,12 @@ export default function DashboardPage() {
   const [commandNotice, setCommandNotice] = useState("");
   const [draftPreview, setDraftPreview] = useState(null);
   const [commandResetSignal, setCommandResetSignal] = useState(0);
-  const [skillQuery, setSkillQuery] = useState("");
+  const [githubSkillPreviewForm, setGithubSkillPreviewForm] = useState(
+    INITIAL_GITHUB_SKILL_PREVIEW_FORM
+  );
+  const [githubSkillPreviewResult, setGithubSkillPreviewResult] = useState(null);
+  const [githubSkillPreviewNotice, setGithubSkillPreviewNotice] = useState("");
+  const [isPreviewingGithubSkill, setIsPreviewingGithubSkill] = useState(false);
   const [createNotice, setCreateNotice] = useState("");
   const [pinnedIds, setPinnedIds] = useState([]);
   const [didLoadPinnedIds, setDidLoadPinnedIds] = useState(false);
@@ -724,17 +690,6 @@ export default function DashboardPage() {
     [availableProviders.length, availableSkills.length, pinnedAgents.length]
   );
 
-  const filteredTemplates = useMemo(() => {
-    const query = skillQuery.trim().toLowerCase();
-    if (!query) {
-      return SKILL_TEMPLATES;
-    }
-
-    return SKILL_TEMPLATES.filter((template) =>
-      `${template.name} ${template.description}`.toLowerCase().includes(query)
-    );
-  }, [skillQuery]);
-
   const selectedProvider = useMemo(
     () => availableProviders.find((provider) => provider.id === agentForm.providerId) || null,
     [availableProviders, agentForm.providerId]
@@ -885,6 +840,59 @@ export default function DashboardPage() {
       skillId: matchedSkill?.id || "",
       skillName
     }));
+  }
+
+  function handleGithubSkillPreviewFieldChange(field, value) {
+    setGithubSkillPreviewForm((current) => ({
+      ...current,
+      [field]: value
+    }));
+    setGithubSkillPreviewNotice("");
+    setGithubSkillPreviewResult(null);
+  }
+
+  async function handleGithubSkillPreviewSubmit(event) {
+    event.preventDefault();
+
+    const repoUrl = githubSkillPreviewForm.repoUrl.trim();
+    const branch = githubSkillPreviewForm.branch.trim();
+    const filePath = githubSkillPreviewForm.filePath.trim();
+
+    if (!repoUrl) {
+      setGithubSkillPreviewNotice("Repository URL is required.");
+      return;
+    }
+
+    if (!filePath) {
+      setGithubSkillPreviewNotice("File path is required.");
+      return;
+    }
+
+    setIsPreviewingGithubSkill(true);
+    setGithubSkillPreviewResult(null);
+    setGithubSkillPreviewNotice("Fetching preview...");
+
+    try {
+      const response = await previewGithubSkillImport({
+        repo_url: repoUrl,
+        branch: branch || undefined,
+        file_path: filePath
+      });
+
+      if (!response || typeof response !== "object") {
+        throw new Error("Preview response was empty.");
+      }
+
+      setGithubSkillPreviewResult(response);
+      setGithubSkillPreviewNotice("Preview loaded. Review only.");
+    } catch (error) {
+      setGithubSkillPreviewResult(null);
+      setGithubSkillPreviewNotice(
+        truncateText(getSafeErrorMessage(error, "Unable to fetch preview."), 180)
+      );
+    } finally {
+      setIsPreviewingGithubSkill(false);
+    }
   }
 
   async function handleCreateAgentSave() {
@@ -1215,7 +1223,7 @@ export default function DashboardPage() {
 
       <FloatingCard
         title="Import Skill"
-        subtitle="GitHub skill import is planned for a later phase. This MVP only previews the requirement flow."
+        subtitle="Preview GitHub skill safely. Preview only, not imported yet."
         open={cards.skills.open}
         position={{ x: cards.skills.x, y: cards.skills.y }}
         zIndex={cards.skills.z}
@@ -1225,15 +1233,70 @@ export default function DashboardPage() {
         onMove={(nextPosition) => moveCard("skills", nextPosition)}
         onFocus={() => bringCardToFront("skills")}
       >
-        <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
-          <p className="text-sm font-medium text-[#3E362E]">Requirement planning only</p>
-          <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
-            This workspace can plan automation requirements, but it cannot run imported code or execute workflows in MVP mode.
+        <div className="rounded-[18px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] p-4">
+          <p className="text-sm font-semibold text-[#A36A58]">Safety banner</p>
+          <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.72)]">
+            Preview only. This skill is not imported, not assigned to any agent, and not executed. Runtime remains disabled.
           </p>
-          <div className="mt-3 inline-flex rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+          <div className="mt-3 inline-flex rounded-full border border-[rgba(163,106,88,0.2)] bg-[#F5F1E6] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
             Preview only
           </div>
         </div>
+
+        <form onSubmit={handleGithubSkillPreviewSubmit} className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+          <div className="grid gap-3">
+            <label className="grid gap-2">
+              <span className="text-sm font-medium text-[#3E362E]">Repository URL</span>
+              <input
+                value={githubSkillPreviewForm.repoUrl}
+                onChange={(event) => handleGithubSkillPreviewFieldChange("repoUrl", event.target.value)}
+                placeholder="https://github.com/owner/repo"
+                className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+              />
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-[#3E362E]">Branch</span>
+                <input
+                  value={githubSkillPreviewForm.branch}
+                  onChange={(event) => handleGithubSkillPreviewFieldChange("branch", event.target.value)}
+                  placeholder="main"
+                  className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                />
+              </label>
+
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-[#3E362E]">File path</span>
+                <input
+                  value={githubSkillPreviewForm.filePath}
+                  onChange={(event) => handleGithubSkillPreviewFieldChange("filePath", event.target.value)}
+                  placeholder="SKILL.md"
+                  className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+              Backend preview only. GitHub text is fetched through the API and stays untrusted.
+            </p>
+            <button
+              type="submit"
+              disabled={isPreviewingGithubSkill}
+              className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isPreviewingGithubSkill ? "Fetching preview..." : "Preview GitHub Skill"}
+            </button>
+          </div>
+
+          {githubSkillPreviewNotice ? (
+            <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+              {truncateText(githubSkillPreviewNotice, 180)}
+            </div>
+          ) : null}
+        </form>
 
         <div className="grid gap-3 sm:grid-cols-2">
           {SKILL_IMPORT_REQUIREMENTS.map((item) => (
@@ -1247,67 +1310,64 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
-                Example concept
-              </p>
-              <p className="mt-1 text-lg font-semibold text-[#3E362E]">{SKILL_IMPORT_EXAMPLE.name}</p>
+        {githubSkillPreviewResult ? (
+          <div className="space-y-4 rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
+                  Preview result
+                </p>
+                <p className="mt-1 text-lg font-semibold text-[#3E362E]">
+                  Import preview ID
+                </p>
+                <p className="mt-2 break-words text-sm text-[rgba(62,54,46,0.68)]">
+                  {githubSkillPreviewResult.id || "-"}
+                </p>
+              </div>
+              <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                {githubSkillPreviewResult.status || "preview"}
+              </span>
             </div>
-            <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
-              Preview only
-            </span>
-          </div>
-          <p className="mt-3 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
-            {SKILL_IMPORT_EXAMPLE.description}
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.58)]">
-            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
-              Email credential
-            </span>
-            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
-              Model provider
-            </span>
-            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
-              n8n template
-            </span>
-            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-2.5 py-1">
-              Approval
-            </span>
-          </div>
-          <div className="mt-4">
-            <TemplateCard
-              name={SKILL_IMPORT_EXAMPLE.name}
-              icon={SKILL_IMPORT_EXAMPLE.icon}
-              description={SKILL_IMPORT_EXAMPLE.description}
-              buttonLabel="Preview only"
-              disabled
-            />
-          </div>
-        </div>
 
-        <div className="grid gap-3">
-          <input
-            value={skillQuery}
-            onChange={(event) => setSkillQuery(event.target.value)}
-            placeholder="Filter preview concepts"
-            className="w-full rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
-          />
+            <div className="grid gap-3 sm:grid-cols-2">
+              {[
+                { label: "Repository URL", value: githubSkillPreviewResult.repo_url },
+                { label: "Branch", value: githubSkillPreviewResult.branch || "-" },
+                { label: "File path", value: githubSkillPreviewResult.file_path || "-" },
+                { label: "Import type", value: githubSkillPreviewResult.import_type || "-" },
+                { label: "Created at", value: formatDateTime(githubSkillPreviewResult.created_at) },
+                { label: "Updated at", value: formatDateTime(githubSkillPreviewResult.updated_at) }
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3"
+                >
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                    {item.label}
+                  </p>
+                  <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">{item.value || "-"}</p>
+                </div>
+              ))}
+            </div>
 
-          <div className="space-y-3">
-            {filteredTemplates.map((template) => (
-              <TemplateCard
-                key={template.name}
-                name={template.name}
-                icon={template.icon}
-                description={template.description}
-                buttonLabel="Preview only"
-                disabled
-              />
-            ))}
+            <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-[#3E362E]">Content preview</p>
+                  <p className="mt-1 text-xs text-[rgba(62,54,46,0.58)]">
+                    Treat this as untrusted text.
+                  </p>
+                </div>
+                <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                  Read-only
+                </span>
+              </div>
+              <pre className="scrollbar-thin mt-3 max-h-[280px] overflow-auto whitespace-pre-wrap break-words rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#FAF7EF] p-4 text-sm leading-6 text-[#3E362E]">
+                {githubSkillPreviewResult.content_preview || "No preview content returned."}
+              </pre>
+            </div>
           </div>
-        </div>
+        ) : null}
       </FloatingCard>
 
       <FloatingCard
