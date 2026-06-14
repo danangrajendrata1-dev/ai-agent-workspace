@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+import re
 from urllib.parse import urlparse
 
 import httpx
@@ -5,6 +7,16 @@ import httpx
 
 MAX_CONTENT_BYTES = 200 * 1024
 ALLOWED_TEXT_EXTENSIONS = {".md", ".markdown", ".txt"}
+_RAW_GITHUB_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+
+
+@dataclass(slots=True)
+class GitHubPreviewFetchResult:
+    raw_url: str
+    content: str
+    commit_sha: str | None
+    source_identity: str | None
+    source_identity_type: str | None
 
 
 def _get_extension(file_path: str) -> str:
@@ -40,7 +52,7 @@ def build_raw_github_url(repo_url: str, branch: str | None, file_path: str) -> s
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch_name}/{normalized_file_path}"
 
 
-def fetch_text_preview(repo_url: str, branch: str | None, file_path: str) -> tuple[str, str]:
+def fetch_text_preview(repo_url: str, branch: str | None, file_path: str) -> GitHubPreviewFetchResult:
     normalized_file_path = file_path.strip()
     if normalized_file_path.split("/")[-1].lower() != "skill.md":
         raise ValueError("Only SKILL.md files are supported in this step.")
@@ -64,4 +76,52 @@ def fetch_text_preview(repo_url: str, branch: str | None, file_path: str) -> tup
         if encoded_size > MAX_CONTENT_BYTES:
             raise ValueError("Fetched file exceeds the maximum preview size.")
 
-    return raw_url, content
+        commit_sha = _extract_commit_sha_from_raw_url(raw_url)
+        source_identity_type = None
+        source_identity = None
+
+        if commit_sha is not None:
+            source_identity_type = "commit_sha"
+            source_identity = commit_sha
+        else:
+            etag = _normalize_header_value(response.headers.get("etag"))
+            if etag:
+                source_identity_type = "etag"
+                source_identity = etag
+            else:
+                last_modified = _normalize_header_value(response.headers.get("last-modified"))
+                if last_modified:
+                    source_identity_type = "last-modified"
+                    source_identity = last_modified
+
+    return GitHubPreviewFetchResult(
+        raw_url=raw_url,
+        content=content,
+        commit_sha=commit_sha,
+        source_identity=source_identity,
+        source_identity_type=source_identity_type,
+    )
+
+
+def _extract_commit_sha_from_raw_url(raw_url: str) -> str | None:
+    parsed = urlparse(raw_url)
+    if parsed.netloc != "raw.githubusercontent.com":
+        return None
+
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) < 4:
+        return None
+
+    ref = path_parts[2]
+    if _RAW_GITHUB_COMMIT_PATTERN.fullmatch(ref):
+        return ref.lower()
+
+    return None
+
+
+def _normalize_header_value(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    normalized = value.strip().strip('"').strip("'")
+    return normalized or None

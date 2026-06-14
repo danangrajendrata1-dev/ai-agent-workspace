@@ -51,6 +51,42 @@ def _safe_record_import_log(record_fn, db: Session, **kwargs) -> None:
         db.rollback()
 
 
+def _normalize_fetch_preview_result(fetch_result):
+    if hasattr(fetch_result, "raw_url") and hasattr(fetch_result, "content"):
+        return fetch_result
+
+    if isinstance(fetch_result, tuple):
+        if len(fetch_result) == 2:
+            raw_url, content = fetch_result
+            return type(
+                "LegacyGitHubPreviewFetchResult",
+                (),
+                {
+                    "raw_url": raw_url,
+                    "content": content,
+                    "commit_sha": None,
+                    "source_identity": None,
+                    "source_identity_type": None,
+                },
+            )()
+
+        if len(fetch_result) == 3:
+            raw_url, content, commit_sha = fetch_result
+            return type(
+                "LegacyGitHubPreviewFetchResult",
+                (),
+                {
+                    "raw_url": raw_url,
+                    "content": content,
+                    "commit_sha": commit_sha,
+                    "source_identity": commit_sha,
+                    "source_identity_type": "commit_sha" if commit_sha else None,
+                },
+            )()
+
+    raise ValueError("Unsupported GitHub preview fetch result.")
+
+
 def _is_dangerous_manifest_failure(errors: list[str]) -> bool:
     danger_markers = (
         "forbidden execution marker",
@@ -69,10 +105,12 @@ def _is_dangerous_manifest_failure(errors: list[str]) -> bool:
 
 def preview_github_skill(db: Session, payload: GitHubSkillPreviewRequest) -> GitHubImportResponse:
     try:
-        _, content_preview = fetch_text_preview(
+        fetch_result = _normalize_fetch_preview_result(
+            fetch_text_preview(
             payload.repo_url,
             payload.branch,
             payload.file_path,
+        )
         )
     except httpx.HTTPError:
         raise HTTPException(
@@ -90,10 +128,10 @@ def preview_github_skill(db: Session, payload: GitHubSkillPreviewRequest) -> Git
         {
             "repo_url": payload.repo_url,
             "branch": payload.branch,
-            "commit_sha": None,
+            "commit_sha": fetch_result.commit_sha,
             "import_type": "skill",
             "file_path": payload.file_path,
-            "content_preview": content_preview,
+            "content_preview": fetch_result.content,
             "status": "preview",
             "review_notes": None,
         },
@@ -115,6 +153,9 @@ def preview_github_skill(db: Session, payload: GitHubSkillPreviewRequest) -> Git
             "file_path": github_import.file_path,
             "import_type": github_import.import_type,
             "status": github_import.status,
+            "commit_sha": github_import.commit_sha,
+            "source_identity": fetch_result.source_identity,
+            "source_identity_type": fetch_result.source_identity_type,
         },
     )
     db.commit()
@@ -192,6 +233,7 @@ def approve_github_skill_import(
                 "import_type": github_import.import_type,
                 "skill_import_type": "manifest_skill",
                 "status": github_import.status,
+                "commit_sha": github_import.commit_sha,
                 "error_count": len(inspection.errors),
                 "error_summary": inspection.errors[:5],
             },
@@ -211,6 +253,7 @@ def approve_github_skill_import(
                 "status": github_import.status,
                 "review_notes": github_import.review_notes,
                 "error_count": len(inspection.errors),
+                "commit_sha": github_import.commit_sha,
             },
             ip_address=None,
         )
@@ -236,6 +279,7 @@ def approve_github_skill_import(
                 "import_type": github_import.import_type,
                 "skill_import_type": "manifest_skill",
                 "status": github_import.status,
+                "commit_sha": github_import.commit_sha,
                 "error_count": len(inspection.errors),
                 "error_summary": inspection.errors[:5],
             },
@@ -255,6 +299,7 @@ def approve_github_skill_import(
                 "status": github_import.status,
                 "review_notes": github_import.review_notes,
                 "error_count": len(inspection.errors),
+                "commit_sha": github_import.commit_sha,
             },
             ip_address=None,
         )
@@ -283,6 +328,7 @@ def approve_github_skill_import(
                     "import_type": github_import.import_type,
                     "skill_import_type": markdown_inspection.skill_import_type,
                     "status": github_import.status,
+                    "commit_sha": github_import.commit_sha,
                     "risk_level": markdown_inspection.risk_level,
                     "error_count": len(markdown_inspection.errors),
                     "error_summary": markdown_inspection.errors[:5],
@@ -304,6 +350,7 @@ def approve_github_skill_import(
                     "review_notes": github_import.review_notes,
                     "error_count": len(markdown_inspection.errors),
                     "risk_level": markdown_inspection.risk_level,
+                    "commit_sha": github_import.commit_sha,
                 },
                 ip_address=None,
             )
@@ -360,6 +407,7 @@ def approve_github_skill_import(
             "import_type": github_import.import_type,
             "skill_import_type": skill_import_type,
             "status": github_import.status,
+            "commit_sha": github_import.commit_sha,
             "risk_level": risk_level,
             "skill_status": skill.status,
         },
@@ -382,6 +430,7 @@ def approve_github_skill_import(
             "skill_import_type": skill_import_type,
             "risk_level": risk_level,
             "skill_status": skill.status,
+            "commit_sha": github_import.commit_sha,
         },
         ip_address=None,
     )
@@ -419,6 +468,7 @@ def reject_github_import(
             "file_path": github_import.file_path,
             "import_type": github_import.import_type,
             "status": github_import.status,
+            "commit_sha": github_import.commit_sha,
         },
     )
     _safe_record_import_log(
@@ -435,6 +485,7 @@ def reject_github_import(
         after_data={
             "status": github_import.status,
             "review_notes": github_import.review_notes,
+            "commit_sha": github_import.commit_sha,
         },
         ip_address=None,
     )
@@ -467,6 +518,7 @@ def disable_github_import(db: Session, import_id: uuid.UUID) -> GitHubImportResp
             "file_path": github_import.file_path,
             "import_type": github_import.import_type,
             "status": github_import.status,
+            "commit_sha": github_import.commit_sha,
         },
     )
     _safe_record_import_log(
@@ -481,6 +533,7 @@ def disable_github_import(db: Session, import_id: uuid.UUID) -> GitHubImportResp
         },
         after_data={
             "status": github_import.status,
+            "commit_sha": github_import.commit_sha,
         },
         ip_address=None,
     )
