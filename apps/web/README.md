@@ -18,6 +18,7 @@ Frontend for Personal AI Agent Workspace v2.1.
 - Command draft mode, UI-only
 - Safety Center read-only summaries
 - Import Skill preview-only
+- GitHub Skill Import preview may fetch text from GitHub, but it stays review-only and non-executable
 - n8n workflow preview-only
 - Settings preview-only
 - Read-only agent, task, and approval detail pages
@@ -50,6 +51,8 @@ npm run build
 - Runtime execution disabled in MVP
 - No n8n execution in MVP
 - No GitHub import execution in MVP
+- GitHub Skill Import is not execution
+- Current approve-skill review can save reviewed skill records into the registry, but it does not enable runtime execution
 - No credential, API key, or secret save in MVP
 - No model test or tool execution in MVP
 - No TypeScript source for MVP

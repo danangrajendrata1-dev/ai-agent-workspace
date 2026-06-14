@@ -13,6 +13,7 @@ Current MVP frontend boundary remains unchanged:
 - Dashboard 3-column model
 - Command input is draft-only
 - Import Skill is preview-only
+- Existing import preview may fetch text from GitHub, but it must not execute content.
 - n8n workflow is preview/read-only
 - Settings are preview-only
 - Runtime execution is disabled
@@ -576,3 +577,4 @@ Audit preview must be read-only.
 
 This document is planning only. It defines future frontend UX for Phase 2, not current product behavior. Import preview remains preview-only in current MVP. Future GitHub import preview, validation, credential review, domain allowlist review, draft workflow preview, activation request confirmation, approval status, and audit preview are all future planning only. Runtime execution remains disabled in the current MVP.
 
+Phase 2 documentation planning is temporarily complete after Step 65. Future documentation changes should be tied to real implementation changes, safety findings, or user-approved scope changes.

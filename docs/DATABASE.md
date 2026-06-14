@@ -254,6 +254,7 @@ Rules:
 Rules:
 
 - For `import_type = skill`, approved imports may create a `skills` record.
+- The current approve-skill flow saves reviewed skill content into `skills`; that is registry write behavior, not execution.
 - For `import_type = tool`, MVP only allows preview/registry tracking. Execution is disabled.
 - Previewing or registering an imported GitHub tool is high risk.
 - Executing an imported GitHub tool is critical and outside MVP.

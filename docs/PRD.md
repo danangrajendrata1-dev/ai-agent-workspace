@@ -196,6 +196,12 @@ GitHub tool import is handled differently:
 - Imported GitHub tool execution is disabled for MVP.
 - Execution can only be considered later after sandboxing, allowlist, explicit enablement, approval, and logging are implemented.
 
+Current MVP note:
+
+- Existing GitHub import preview routes may fetch text from GitHub for review.
+- `approve-skill` saves reviewed skill content into the skills registry.
+- This is review/save behavior, not runtime execution.
+
 ## 14. MVP Scope
 
 MVP includes:

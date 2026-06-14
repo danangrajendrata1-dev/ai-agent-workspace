@@ -60,11 +60,16 @@ Observed behavior:
 - Preview exists.
 - Approve / reject / disable flows exist.
 - Import rows currently store preview metadata and review notes.
+- Current preview may fetch text from GitHub.
+- Current approve-skill flow saves reviewed skill content into `skills`.
+- This stack is review/save behavior, not runtime execution.
 
 Important note:
 
 - This stack must not be blindly repurposed for Phase 2 without explicit review.
 - The current preview/review flow is not the same as the future contract split described in Phase 2 docs.
+- The extraction helper and validation helper already exist as pure backend helpers.
+- The pipeline helper is the next implementation target and is not implemented yet unless a future step adds it.
 
 ## 6. Existing n8n Workflow Stack
 
@@ -139,6 +144,7 @@ Future preview/save planning should stay metadata-only:
 - Preview should not activate anything.
 - Save should persist reviewed metadata only.
 - Save should not execute imported content.
+- Current MVP review endpoints already exist and remain separate from the future preview/save contract.
 
 Recommended future insertion point:
 
@@ -232,12 +238,18 @@ Add future files only when the design needs separation that the current modules 
 
 These are planning names only. They are not implemented in the current MVP.
 
-## 17. Smallest Safe Implementation Slice
+## 17. Next Implementation Sequence
 
-Future Step 55 recommendation:
-Implement backend-only manifest validation helper/service logic without new public endpoint, without database migration, without GitHub API call, and without execution.
+1. Backend manifest safety pipeline helper.
+2. Pipeline helper final audit.
+3. GitHub import service integration plan.
+4. Safe pipeline connection inside service layer only.
+5. Existing endpoint behavior audit after integration.
+6. Frontend read-only preview integration only after backend behavior is stable.
 
-Why this is safer than adding endpoints first:
+Commit and push are manual checkpoints and must not be counted as separate numbered feature steps.
+
+Why this roadmap order is safer than adding endpoints first:
 
 - It validates the rules before any public surface is exposed.
 - It reduces semantic collision with current MVP preview routes.
@@ -261,3 +273,5 @@ Keep Phase 2 backend work modular and conservative. First build reusable validat
 ## 20. Final Safety Statement
 
 This document is planning only. It does not change the current MVP backend. It defines future backend module boundaries, file map, and safe insertion points for Phase 2. All implementation items remain FUTURE / NOT IMPLEMENTED until a later approved step.
+
+Phase 2 documentation planning is temporarily complete after Step 65. Future documentation changes should be tied to real implementation changes, safety findings, or user-approved scope changes.

@@ -140,6 +140,7 @@ Approval requests must show:
 - GitHub tool import must not execute automatically in MVP.
 - Imported GitHub tool execution is critical and disabled.
 - Repository URL, commit hash, imported files, reviewer, and activation status must be logged.
+- Current GitHub import preview may fetch text from GitHub, and `approve-skill` may save reviewed skill records, but import is still not execution.
 
 Phase 2 planning reference: see `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`.
 Future backend contract reference: see `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`.

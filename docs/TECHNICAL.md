@@ -278,6 +278,15 @@ Future data model reference: see `docs/PHASE_2_FUTURE_DATA_MODEL.md`.
 Future frontend UX reference: see `docs/PHASE_2_FUTURE_FRONTEND_UX.md`.
 Backend module plan reference: see `docs/PHASE_2_BACKEND_MODULE_PLAN.md`.
 
+Current MVP note:
+
+- Existing `/github-imports` review endpoints already exist in the backend.
+- Preview may fetch text from GitHub, but it must not execute content.
+- `approve-skill` saves reviewed skill metadata into the skills registry.
+- The extraction helper parses safe JSON text into a manifest dict candidate.
+- The validation helper validates manifest dicts only.
+- The pipeline helper is the next implementation target and is not implemented yet unless a future step adds it.
+
 ## 15. Memory Design
 
 Canonical memory types:
@@ -367,3 +376,9 @@ Do not log plaintext secrets.
 10. Integrate n8n webhook tool.
 11. Integrate model providers and OpenClaw provider config.
 12. Integrate Hermes runtime adapter.
+
+## 21. Phase 2 Documentation Freeze
+
+Phase 2 documentation planning is temporarily complete after Step 65. Future documentation changes should be tied to real implementation changes, safety findings, or user-approved scope changes.
+
+Commit and push are manual checkpoints and must not be counted as separate numbered feature steps.

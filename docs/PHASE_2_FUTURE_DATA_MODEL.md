@@ -14,6 +14,7 @@ Current MVP database boundary remains unchanged:
 - Existing MVP tables and contracts stay authoritative.
 - Runtime execution is disabled in current MVP.
 - GitHub import handling is preview-only in current MVP.
+- Existing GitHub import review can save reviewed skill content into `skills`; that is registry write behavior, not execution.
 - n8n workflow handling is preview/read-only in current MVP.
 - Settings are preview-only in current MVP.
 
@@ -537,3 +538,5 @@ Index planning should support:
 ## 20. Final Safety Statement
 
 This document is planning only. All future entities are `FUTURE / NOT IMPLEMENTED`. Current MVP database boundary stays unchanged. Imported content remains untrusted until validated and reviewed. Workflow drafts remain inactive by default. Approval does not equal execution. Activation does not equal execution. Runtime execution remains disabled in the current MVP.
+
+Phase 2 documentation planning is temporarily complete after Step 65. Future documentation changes should be tied to real implementation changes, safety findings, or user-approved scope changes.

@@ -85,3 +85,14 @@ Decision:
 - `DATABASE.md`
 - `SECURITY.md`
 - `AGENTS.md`
+
+## 8. Phase 2 documentation freeze and helper status
+
+Decision:
+
+- Phase 2 documentation planning is temporarily complete after Step 65.
+- Future documentation updates must be tied to real implementation changes, safety findings, or user-approved scope changes.
+- The extraction helper exists and parses safe JSON text into a manifest dict candidate.
+- The validation helper exists and validates manifest dicts only.
+- The pipeline helper is the next implementation target and is not implemented yet unless a future step adds it.
+- Commit and push are manual checkpoints and must not be counted as separate numbered feature steps.

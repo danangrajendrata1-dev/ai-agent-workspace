@@ -976,6 +976,85 @@ Before editing code:
 - unittest passes without pytest.
 - No route, endpoint, model, repository, or migration is added.
 
+## Step 65 - Phase 2 Documentation Finalization and Freeze
+
+**Goal:** Finalize all remaining Phase 2 documentation in one consolidated docs-only step and temporarily freeze Phase 2 planning docs.
+
+**Files checked:**
+- `AGENTS.md`
+- `README.md`
+- `apps/web/README.md`
+- `apps/api/README.md`
+- `docs/PRD.md`
+- `docs/TECHNICAL.md`
+- `docs/DATABASE.md`
+- `docs/SECURITY.md`
+- `docs/CONSISTENCY_FIXES.md`
+- `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`
+- `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`
+- `docs/PHASE_2_FUTURE_DATA_MODEL.md`
+- `docs/PHASE_2_FUTURE_FRONTEND_UX.md`
+- `docs/PHASE_2_BACKEND_MODULE_PLAN.md`
+- `docs/CODEX_STEP_BY_STEP_PERSONAL_AI_AGENT_WORKSPACE.md`
+- `apps/api/app/services/skill_manifest_validation_service.py`
+- `apps/api/app/services/skill_manifest_extraction_service.py`
+- `apps/api/app/services/github_import_service.py`
+- `apps/api/app/routes/github_imports.py`
+
+**Files updated:**
+- `README.md`
+- `apps/web/README.md`
+- `apps/api/README.md`
+- `docs/PRD.md`
+- `docs/TECHNICAL.md`
+- `docs/DATABASE.md`
+- `docs/SECURITY.md`
+- `docs/CONSISTENCY_FIXES.md`
+- `docs/PHASE_2_SKILL_N8N_ARCHITECTURE.md`
+- `docs/PHASE_2_FUTURE_BACKEND_CONTRACTS.md`
+- `docs/PHASE_2_FUTURE_DATA_MODEL.md`
+- `docs/PHASE_2_FUTURE_FRONTEND_UX.md`
+- `docs/PHASE_2_BACKEND_MODULE_PLAN.md`
+- `docs/CODEX_STEP_BY_STEP_PERSONAL_AI_AGENT_WORKSPACE.md`
+
+**Step record:**
+- Final documentation consolidation scope.
+- Phase 2 docs temporarily frozen.
+- Commit and push are manual checkpoints and must not be counted as separate numbered feature steps.
+- Next implementation roadmap:
+  1. Backend manifest safety pipeline helper.
+  2. Pipeline helper final audit.
+  3. GitHub import service integration plan.
+  4. Safe pipeline connection inside service layer only.
+  5. Existing endpoint behavior audit after integration.
+  6. Frontend read-only preview integration only after backend behavior is stable.
+- No source code touched.
+- No endpoint added.
+- No route changed.
+- No database migration added.
+- No package added.
+- No runtime execution added.
+- No commit.
+
+**Codex may do:**
+- Update docs listed in this step.
+- Record the step in this instruction file.
+
+**Codex must not do:**
+- Change frontend source.
+- Change backend source.
+- Add endpoints.
+- Add routes.
+- Add migrations.
+- Add packages.
+- Execute runtime, n8n, Hermes, OpenClaw, external models, or GitHub imports.
+- Commit changes.
+
+**Done when:**
+- Phase 2 docs are consistent and frozen.
+- No source code is touched.
+- Commit and push remain manual checkpoints, not numbered feature steps.
+
 ## Final Safety Reminder
 
 Do not ask Codex to complete the whole project in one prompt. This project includes agents, tools, memory, approval, GitHub import, OpenClaw, Hermes, n8n, logs, deployment, and security boundaries. Building everything at once increases the risk of unnecessary refactors, unsafe defaults, TypeScript files, secret leaks, and broken architecture.

@@ -16,6 +16,19 @@ uvicorn app.main:app --reload
 
 - `GET /health`
 
+## Current GitHub Import Behavior
+
+The current backend already exposes GitHub import review endpoints under `/github-imports`.
+
+Important notes:
+
+- GitHub Skill Import preview may fetch file text from GitHub, but it does not execute the content.
+- `POST /github-imports/skills/preview` creates a preview record only.
+- `POST /github-imports/{import_id}/approve-skill` saves reviewed skill content into the skill registry and marks the import as imported.
+- `POST /github-imports/{import_id}/reject` and `POST /github-imports/{import_id}/disable` only update review state.
+- No runtime execution, n8n execution, external model call, Hermes call, or OpenClaw call happens during GitHub import review.
+- The future Phase 2 planning docs describe next contracts only and must not be confused with this current MVP behavior.
+
 ## Create Local Owner Account
 
 The backend already provides a safe local bootstrap route:

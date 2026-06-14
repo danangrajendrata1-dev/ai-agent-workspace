@@ -13,6 +13,12 @@ Current MVP remains frozen on a safe boundary:
 - Runtime execution is disabled.
 - Settings are preview-only.
 - Command input is draft-only.
+- Existing `/github-imports` review endpoints already exist in the current backend.
+- Preview may fetch text from GitHub, but it must not execute content.
+- `approve-skill` may save reviewed skill metadata into the skills registry.
+- The extraction helper parses safe JSON text into a manifest dict candidate.
+- The validation helper validates manifest dicts only.
+- The pipeline helper is the next implementation target and is not implemented yet unless a future step adds it.
 
 Future contracts in this document must not be read as current implementation.
 
@@ -131,6 +137,7 @@ Preview GitHub repository metadata and manifest content before any future save a
 ### Safety Notes
 
 Preview only. Imported content remains untrusted until future human review and approval.
+The current MVP review route may fetch text and save reviewed skill content, but that is not execution and is separate from this future contract.
 
 ## 7. Future GitHub Skill Import Save Contract
 

@@ -11,6 +11,7 @@ The current MVP is frozen on a safe boundary:
 - Frontend is JavaScript only.
 - Runtime execution is disabled.
 - GitHub Skill Import is preview-only.
+- Existing GitHub import review routes may fetch text from GitHub, but they do not execute content.
 - n8n workflow handling is preview/read-only.
 - Settings are preview-only.
 - Command input is draft-only and UI-only.
@@ -150,6 +151,7 @@ Approval in future flow means:
 - Import is accepted as metadata.
 - No execution is enabled.
 - The imported skill remains subject to permission and approval rules.
+- Current MVP approve-skill behavior may save reviewed skill content into the registry, but that is not execution.
 
 ## 9. n8n Workflow Draft Creation Flow
 
@@ -246,6 +248,13 @@ No plaintext secret storage in these records.
 
 Future backend work should be introduced only after design approval.
 
+Current MVP note:
+
+- Existing `/github-imports` review endpoints already exist in the current backend.
+- This future contract is separate from those current endpoints.
+- The extraction helper and validation helper already exist as pure backend helpers.
+- The pipeline helper is the next implementation target and is not implemented yet unless a future step adds it.
+
 Possible future endpoints as design draft only:
 
 - `POST /github-imports/preview`
@@ -337,3 +346,5 @@ Main risks:
 ## 19. Final Safety Statement
 
 Phase 2 must remain planning-first, review-first, and approval-first. GitHub skill import is not execution. n8n workflow draft creation is not execution. Imported content remains untrusted until reviewed. Runtime execution remains disabled in the current MVP.
+
+Phase 2 documentation planning is temporarily complete after this step. Future documentation changes should be tied to real implementation changes, safety findings, or user-approved scope changes.
