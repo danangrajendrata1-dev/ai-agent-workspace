@@ -81,6 +81,10 @@ _INLINE_ENV_PATTERN = re.compile(
     r"(?<![\w./-])(?P<path>\.env(?:\.[A-Za-z0-9._-]+)?|\.envrc)(?![\w./-])",
     re.IGNORECASE,
 )
+_INLINE_BARE_BLOCKED_PATTERN = re.compile(
+    r"(?<![\w./-])(?P<path>id_rsa|id_dsa)(?![\w./-])",
+    re.IGNORECASE,
+)
 
 _INLINE_EXTENSION_PATTERN = re.compile(
     r"""
@@ -136,7 +140,13 @@ def detect_skill_resource_references(content: str) -> SkillResourceDetectionResu
         )
 
     candidates, masked_content = _find_markdown_resource_references(content)
-    for pattern in (_INLINE_URL_PATTERN, _INLINE_ABSOLUTE_PATTERN, _INLINE_ENV_PATTERN, _INLINE_EXTENSION_PATTERN):
+    for pattern in (
+        _INLINE_URL_PATTERN,
+        _INLINE_ABSOLUTE_PATTERN,
+        _INLINE_ENV_PATTERN,
+        _INLINE_BARE_BLOCKED_PATTERN,
+        _INLINE_EXTENSION_PATTERN,
+    ):
         pattern_candidates, masked_content = _find_regex_resource_references(masked_content, pattern)
         candidates.extend(pattern_candidates)
     candidates.sort(key=lambda item: item[0])

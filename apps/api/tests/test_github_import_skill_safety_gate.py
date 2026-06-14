@@ -298,6 +298,42 @@ class GitHubImportSkillSafetyGateTest(unittest.TestCase):
         self.assertEqual(created_payload["risk_level"], "high")
         self.assertEqual(created_payload["status"], "inactive")
 
+    def test_markdown_tutorial_password_example_imports_as_markdown_instruction(self):
+        self.github_import.content_preview = (
+            "Use qpdf --password=mypassword --decrypt encrypted.pdf decrypted.pdf."
+        )
+
+        with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
+            "app.services.github_import_service.inspect_skill_manifest_content",
+            return_value=SimpleNamespace(
+                is_safe=False,
+                errors=["extraction: No JSON manifest found."],
+                warnings=[],
+                normalized_manifest=None,
+                is_extracted=False,
+                is_valid=False,
+                source_format=None,
+            ),
+        ), patch(
+            "app.services.github_import_service.ensure_unique_skill_slug",
+            return_value="email-summary",
+        ), patch("app.services.github_import_service.skill_repository.create") as mock_create, patch(
+            "app.services.github_import_service.github_import_repository.update_status"
+        ) as mock_update_status, patch(
+            "app.services.github_import_service.github_import_repository.update_review_notes"
+        ) as mock_update_review_notes, patch(
+            "app.services.github_import_service.serialize_github_import",
+            return_value=SimpleNamespace(status="imported"),
+        ), patch("app.services.github_import_service.assess_skill_manifest_risk") as mock_assess:
+            approve_github_skill_import(self.db, "import-id", self.payload)
+
+        mock_assess.assert_not_called()
+        created_payload = mock_create.call_args.args[1]
+        self.assertEqual(created_payload["risk_level"], "high")
+        self.assertEqual(created_payload["status"], "inactive")
+        self.assertEqual(mock_update_status.call_args.args[2], "imported")
+        mock_update_review_notes.assert_called_once()
+
     def test_dangerous_manifest_failure_does_not_fallback_to_markdown(self):
         with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
             "app.services.github_import_service.inspect_skill_manifest_content",
