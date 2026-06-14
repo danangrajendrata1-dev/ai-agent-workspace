@@ -110,6 +110,216 @@ class GitHubImportSkillSafetyGateTest(unittest.TestCase):
         self.assertEqual(mock_update_status.call_args.args[2], "imported")
         mock_update_review_notes.assert_called_once()
 
+    def test_safe_manifest_is_marked_as_manifest_skill(self):
+        inspection = SimpleNamespace(
+            is_safe=True,
+            errors=[],
+            warnings=[],
+            normalized_manifest={
+                "name": "Email Summary",
+                "version": "1.0.0",
+                "description": "Generate summary.",
+                "author": None,
+                "required_capabilities": [],
+                "required_tools": [],
+                "required_credentials": [],
+                "required_domains": [],
+                "n8n_workflow": None,
+                "permissions_requested": [],
+                "safety_notes": None,
+            },
+            is_extracted=True,
+            is_valid=True,
+            source_format="json",
+        )
+
+        with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
+            "app.services.github_import_service.inspect_skill_manifest_content",
+            return_value=inspection,
+        ), patch("app.services.github_import_service.inspect_markdown_instruction_skill") as mock_markdown, patch(
+            "app.services.github_import_service.assess_skill_manifest_risk"
+        ) as mock_assess, patch(
+            "app.services.github_import_service.ensure_unique_skill_slug",
+            return_value="email-summary",
+        ), patch("app.services.github_import_service.skill_repository.create") as mock_create, patch(
+            "app.services.github_import_service.github_import_repository.update_status"
+        ), patch(
+            "app.services.github_import_service.github_import_repository.update_review_notes"
+        ), patch(
+            "app.services.github_import_service.serialize_github_import",
+            return_value=SimpleNamespace(status="imported"),
+        ):
+            mock_assess.return_value = SimpleNamespace(
+                risk_level="low",
+                reasons=["Metadata-only manifest."],
+                requires_review=False,
+                is_blocked=False,
+            )
+            approve_github_skill_import(self.db, "import-id", self.payload)
+
+        mock_markdown.assert_not_called()
+        created_payload = mock_create.call_args.args[1]
+        self.assertEqual(created_payload["risk_level"], "low")
+
+    def test_markdown_instruction_imports_as_markdown_instruction(self):
+        markdown_content = "Use [guide](docs/guide.md) to summarize notes."
+        markdown_result = SimpleNamespace(
+            skill_import_type="markdown_instruction",
+            is_safe=True,
+            risk_level="medium",
+            errors=[],
+            warnings=[],
+            resource_paths=["docs/guide.md"],
+            safe_resource_paths=["docs/guide.md"],
+            risky_resource_paths=[],
+            blocked_resource_paths=[],
+            has_executable_resources=False,
+            requires_review=True,
+        )
+        self.github_import.content_preview = markdown_content
+
+        with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
+            "app.services.github_import_service.inspect_skill_manifest_content",
+            return_value=SimpleNamespace(
+                is_safe=False,
+                errors=["extraction: No JSON manifest found."],
+                warnings=[],
+                normalized_manifest=None,
+                is_extracted=False,
+                is_valid=False,
+                source_format=None,
+            ),
+        ), patch(
+            "app.services.github_import_service.inspect_markdown_instruction_skill",
+            return_value=markdown_result,
+        ) as mock_markdown, patch(
+            "app.services.github_import_service.assess_skill_manifest_risk"
+        ) as mock_assess, patch(
+            "app.services.github_import_service.ensure_unique_skill_slug",
+            return_value="email-summary",
+        ), patch("app.services.github_import_service.skill_repository.create") as mock_create, patch(
+            "app.services.github_import_service.github_import_repository.update_status"
+        ) as mock_update_status, patch(
+            "app.services.github_import_service.github_import_repository.update_review_notes"
+        ) as mock_update_review_notes, patch(
+            "app.services.github_import_service.serialize_github_import",
+            return_value=SimpleNamespace(status="imported"),
+        ):
+            approve_github_skill_import(self.db, "import-id", self.payload)
+
+        mock_assess.assert_not_called()
+        mock_markdown.assert_called_once()
+        created_payload = mock_create.call_args.args[1]
+        self.assertEqual(created_payload["status"], "inactive")
+        self.assertEqual(created_payload["risk_level"], "medium")
+        self.assertEqual(mock_update_status.call_args.args[2], "imported")
+        mock_update_review_notes.assert_called_once()
+
+    def test_markdown_with_blocked_resource_is_rejected_before_create(self):
+        self.github_import.content_preview = "Use [secret](../secret.env)."
+
+        with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
+            "app.services.github_import_service.inspect_skill_manifest_content",
+            return_value=SimpleNamespace(
+                is_safe=False,
+                errors=["extraction: No JSON manifest found."],
+                warnings=[],
+                normalized_manifest=None,
+                is_extracted=False,
+                is_valid=False,
+                source_format=None,
+            ),
+        ), patch(
+            "app.services.github_import_service.inspect_markdown_instruction_skill",
+            return_value=SimpleNamespace(
+                skill_import_type="markdown_instruction",
+                is_safe=False,
+                risk_level="blocked",
+                errors=["Blocked resource reference(s) found: ../secret.env"],
+                warnings=[],
+                resource_paths=["../secret.env"],
+                safe_resource_paths=[],
+                risky_resource_paths=[],
+                blocked_resource_paths=["../secret.env"],
+                has_executable_resources=False,
+                requires_review=True,
+            ),
+        ), patch("app.services.github_import_service.skill_repository.create") as mock_create:
+            with self.assertRaises(Exception) as exc_info:
+                approve_github_skill_import(self.db, "import-id", self.payload)
+
+        self.assertIn("Skill markdown instruction safety check failed", str(exc_info.exception))
+        mock_create.assert_not_called()
+
+    def test_markdown_with_risky_executable_resource_uses_high_risk(self):
+        self.github_import.content_preview = "Use [script](scripts/process.py) locally."
+
+        with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
+            "app.services.github_import_service.inspect_skill_manifest_content",
+            return_value=SimpleNamespace(
+                is_safe=False,
+                errors=["extraction: No JSON manifest found."],
+                warnings=[],
+                normalized_manifest=None,
+                is_extracted=False,
+                is_valid=False,
+                source_format=None,
+            ),
+        ), patch(
+            "app.services.github_import_service.inspect_markdown_instruction_skill",
+            return_value=SimpleNamespace(
+                skill_import_type="markdown_instruction",
+                is_safe=True,
+                risk_level="high",
+                errors=[],
+                warnings=[],
+                resource_paths=["scripts/process.py"],
+                safe_resource_paths=[],
+                risky_resource_paths=["scripts/process.py"],
+                blocked_resource_paths=[],
+                has_executable_resources=True,
+                requires_review=True,
+            ),
+        ), patch(
+            "app.services.github_import_service.ensure_unique_skill_slug",
+            return_value="email-summary",
+        ), patch("app.services.github_import_service.skill_repository.create") as mock_create, patch(
+            "app.services.github_import_service.github_import_repository.update_status"
+        ), patch(
+            "app.services.github_import_service.github_import_repository.update_review_notes"
+        ), patch(
+            "app.services.github_import_service.serialize_github_import",
+            return_value=SimpleNamespace(status="imported"),
+        ), patch("app.services.github_import_service.assess_skill_manifest_risk") as mock_assess:
+            approve_github_skill_import(self.db, "import-id", self.payload)
+
+        mock_assess.assert_not_called()
+        created_payload = mock_create.call_args.args[1]
+        self.assertEqual(created_payload["risk_level"], "high")
+        self.assertEqual(created_payload["status"], "inactive")
+
+    def test_dangerous_manifest_failure_does_not_fallback_to_markdown(self):
+        with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
+            "app.services.github_import_service.inspect_skill_manifest_content",
+            return_value=SimpleNamespace(
+                is_safe=False,
+                errors=["extraction: Content contains forbidden execution marker: curl."],
+                warnings=[],
+                normalized_manifest=None,
+                is_extracted=False,
+                is_valid=False,
+                source_format=None,
+            ),
+        ), patch(
+            "app.services.github_import_service.inspect_markdown_instruction_skill",
+            side_effect=AssertionError("markdown fallback should not run"),
+        ), patch("app.services.github_import_service.skill_repository.create") as mock_create:
+            with self.assertRaises(Exception) as exc_info:
+                approve_github_skill_import(self.db, "import-id", self.payload)
+
+        self.assertIn("Skill manifest safety check failed", str(exc_info.exception))
+        mock_create.assert_not_called()
+
     def test_unsafe_error_does_not_expose_content_preview(self):
         with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
             "app.services.github_import_service.inspect_skill_manifest_content",

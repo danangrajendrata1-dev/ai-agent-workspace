@@ -133,6 +133,59 @@ class GitHubImportLoggingTest(unittest.TestCase):
         self.assertGreaterEqual(mock_record_audit.call_count, 1)
         self.assertEqual(mock_update_status.call_args.args[2], "imported")
         self.assertEqual(mock_update_review_notes.call_args.args[2], "reviewed")
+        self.assertEqual(mock_record_activity.call_args.kwargs["metadata_json"]["skill_import_type"], "manifest_skill")
+
+    def test_markdown_success_logs_import_type(self):
+        markdown_content = "Use [guide](docs/guide.md) to summarize notes."
+        self.github_import.content_preview = markdown_content
+        markdown_result = SimpleNamespace(
+            skill_import_type="markdown_instruction",
+            is_safe=True,
+            risk_level="medium",
+            errors=[],
+            warnings=[],
+            resource_paths=["docs/guide.md"],
+            safe_resource_paths=["docs/guide.md"],
+            risky_resource_paths=[],
+            blocked_resource_paths=[],
+            has_executable_resources=False,
+            requires_review=True,
+        )
+
+        with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(
+            "app.services.github_import_service.inspect_skill_manifest_content",
+            return_value=SimpleNamespace(
+                is_safe=False,
+                errors=["extraction: No JSON manifest found."],
+                warnings=[],
+                normalized_manifest=None,
+                is_extracted=False,
+                is_valid=False,
+                source_format=None,
+            ),
+        ), patch(
+            "app.services.github_import_service.inspect_markdown_instruction_skill",
+            return_value=markdown_result,
+        ), patch("app.services.github_import_service.assess_skill_manifest_risk") as mock_assess, patch(
+            "app.services.github_import_service.ensure_unique_skill_slug",
+            return_value="email-summary",
+        ), patch("app.services.github_import_service.skill_repository.create", return_value=SimpleNamespace(id=uuid.uuid4(), status="inactive")) as mock_create, patch(
+            "app.services.github_import_service.github_import_repository.update_status"
+        ) as mock_update_status, patch(
+            "app.services.github_import_service.github_import_repository.update_review_notes"
+        ) as mock_update_review_notes, patch(
+            "app.services.github_import_service.serialize_github_import",
+            return_value=SimpleNamespace(status="imported"),
+        ), patch("app.services.github_import_service.log_service.record_activity") as mock_record_activity, patch(
+            "app.services.github_import_service.log_service.record_audit"
+        ) as mock_record_audit:
+            approve_github_skill_import(self.db, self.import_id, self.approve_payload)
+
+        mock_assess.assert_not_called()
+        mock_create.assert_called_once()
+        self.assertGreaterEqual(mock_record_activity.call_count, 1)
+        self.assertGreaterEqual(mock_record_audit.call_count, 1)
+        self.assertEqual(mock_record_activity.call_args.kwargs["metadata_json"]["skill_import_type"], "markdown_instruction")
 
     def test_reject_logs_metadata(self):
         with patch("app.services.github_import_service.github_import_repository.get_by_id", return_value=self.github_import), patch(

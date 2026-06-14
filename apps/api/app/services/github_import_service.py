@@ -16,6 +16,9 @@ from app.schemas.github_import import (
 from app.services import log_service
 from app.services.skill_manifest_pipeline_service import inspect_skill_manifest_content
 from app.services.skill_manifest_risk_service import assess_skill_manifest_risk
+from app.services.skill_markdown_instruction_service import (
+    inspect_markdown_instruction_skill,
+)
 
 
 def slugify(value: str) -> str:
@@ -46,6 +49,22 @@ def _safe_record_import_log(record_fn, db: Session, **kwargs) -> None:
         record_fn(db, **kwargs)
     except Exception:
         db.rollback()
+
+
+def _is_dangerous_manifest_failure(errors: list[str]) -> bool:
+    danger_markers = (
+        "forbidden execution marker",
+        "forbidden secret marker",
+        "forbidden execution content",
+        "Manifest contains forbidden field",
+        "Manifest contains forbidden execution field",
+        "Manifest contains forbidden execution content",
+    )
+    for error in errors:
+        lowered = error.lower()
+        if any(marker.lower() in lowered for marker in danger_markers):
+            return True
+    return False
 
 
 def preview_github_skill(db: Session, payload: GitHubSkillPreviewRequest) -> GitHubImportResponse:
@@ -144,8 +163,19 @@ def approve_github_skill_import(
             detail="Import preview content is missing.",
         )
 
+    skill_import_type = None
+    risk_level = None
     inspection = inspect_skill_manifest_content(github_import.content_preview)
-    if not inspection.is_safe:
+    if inspection.is_safe:
+        skill_import_type = "manifest_skill"
+        risk_result = assess_skill_manifest_risk(inspection.normalized_manifest or {})
+        if risk_result.is_blocked:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Skill manifest risk assessment blocked: " + "; ".join(risk_result.reasons),
+            )
+        risk_level = risk_result.risk_level
+    elif inspection.is_extracted:
         _safe_record_import_log(
             log_service.record_activity,
             db,
@@ -160,6 +190,51 @@ def approve_github_skill_import(
                 "branch": github_import.branch,
                 "file_path": github_import.file_path,
                 "import_type": github_import.import_type,
+                "skill_import_type": "manifest_skill",
+                "status": github_import.status,
+                "error_count": len(inspection.errors),
+                "error_summary": inspection.errors[:5],
+            },
+        )
+        _safe_record_import_log(
+            log_service.record_audit,
+            db,
+            user_id=None,
+            action="github_import_safety_check_failed",
+            entity_type="github_import",
+            entity_id=github_import.id,
+            before_data={
+                "status": github_import.status,
+                "review_notes": github_import.review_notes,
+            },
+            after_data={
+                "status": github_import.status,
+                "review_notes": github_import.review_notes,
+                "error_count": len(inspection.errors),
+            },
+            ip_address=None,
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Skill manifest safety check failed: " + "; ".join(inspection.errors),
+        )
+    elif _is_dangerous_manifest_failure(inspection.errors):
+        _safe_record_import_log(
+            log_service.record_activity,
+            db,
+            request_id=None,
+            actor_type="system",
+            actor_id=None,
+            event_type="github_import_safety_check_failed",
+            message="GitHub skill import blocked by manifest safety check.",
+            metadata_json={
+                "import_id": str(github_import.id),
+                "repo_url": github_import.repo_url,
+                "branch": github_import.branch,
+                "file_path": github_import.file_path,
+                "import_type": github_import.import_type,
+                "skill_import_type": "manifest_skill",
                 "status": github_import.status,
                 "error_count": len(inspection.errors),
                 "error_summary": inspection.errors[:5],
@@ -189,11 +264,62 @@ def approve_github_skill_import(
             detail="Skill manifest safety check failed: " + "; ".join(inspection.errors),
         )
 
-    risk_result = assess_skill_manifest_risk(inspection.normalized_manifest or {})
-    if risk_result.is_blocked:
+    else:
+        markdown_inspection = inspect_markdown_instruction_skill(github_import.content_preview)
+        if not markdown_inspection.is_safe:
+            _safe_record_import_log(
+                log_service.record_activity,
+                db,
+                request_id=None,
+                actor_type="system",
+                actor_id=None,
+                event_type="github_import_safety_check_failed",
+                message="GitHub skill import blocked by markdown instruction safety check.",
+                metadata_json={
+                    "import_id": str(github_import.id),
+                    "repo_url": github_import.repo_url,
+                    "branch": github_import.branch,
+                    "file_path": github_import.file_path,
+                    "import_type": github_import.import_type,
+                    "skill_import_type": markdown_inspection.skill_import_type,
+                    "status": github_import.status,
+                    "risk_level": markdown_inspection.risk_level,
+                    "error_count": len(markdown_inspection.errors),
+                    "error_summary": markdown_inspection.errors[:5],
+                },
+            )
+            _safe_record_import_log(
+                log_service.record_audit,
+                db,
+                user_id=None,
+                action="github_import_safety_check_failed",
+                entity_type="github_import",
+                entity_id=github_import.id,
+                before_data={
+                    "status": github_import.status,
+                    "review_notes": github_import.review_notes,
+                },
+                after_data={
+                    "status": github_import.status,
+                    "review_notes": github_import.review_notes,
+                    "error_count": len(markdown_inspection.errors),
+                    "risk_level": markdown_inspection.risk_level,
+                },
+                ip_address=None,
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Skill markdown instruction safety check failed: "
+                + "; ".join(markdown_inspection.errors),
+            )
+        skill_import_type = markdown_inspection.skill_import_type
+        risk_level = markdown_inspection.risk_level
+
+    if risk_level is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Skill manifest risk assessment blocked: " + "; ".join(risk_result.reasons),
+            detail="Skill import risk level could not be determined.",
         )
 
     slug = ensure_unique_skill_slug(db, slug=slugify(payload.slug or payload.name))
@@ -209,7 +335,7 @@ def approve_github_skill_import(
             "source_type": "github",
             "source_id": github_import.id,
             "version_label": payload.version_label,
-            "risk_level": risk_result.risk_level,
+            "risk_level": risk_level,
             "status": skill_status,
         },
     )
@@ -232,8 +358,9 @@ def approve_github_skill_import(
             "branch": github_import.branch,
             "file_path": github_import.file_path,
             "import_type": github_import.import_type,
+            "skill_import_type": skill_import_type,
             "status": github_import.status,
-            "risk_level": risk_result.risk_level,
+            "risk_level": risk_level,
             "skill_status": skill.status,
         },
     )
@@ -252,7 +379,8 @@ def approve_github_skill_import(
             "status": github_import.status,
             "review_notes": github_import.review_notes,
             "skill_id": str(skill.id),
-            "risk_level": risk_result.risk_level,
+            "skill_import_type": skill_import_type,
+            "risk_level": risk_level,
             "skill_status": skill.status,
         },
         ip_address=None,
