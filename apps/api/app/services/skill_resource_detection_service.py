@@ -85,6 +85,10 @@ _INLINE_BARE_BLOCKED_PATTERN = re.compile(
     r"(?<![\w./-])(?P<path>id_rsa|id_dsa)(?![\w./-])",
     re.IGNORECASE,
 )
+_SIMPLE_HTML_TAG_PATTERN = re.compile(
+    r"<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s+[^<>]*?)?\/?>",
+    re.IGNORECASE,
+)
 
 _INLINE_EXTENSION_PATTERN = re.compile(
     r"""
@@ -140,6 +144,7 @@ def detect_skill_resource_references(content: str) -> SkillResourceDetectionResu
         )
 
     candidates, masked_content = _find_markdown_resource_references(content)
+    masked_content = _mask_simple_html_xml_tags(masked_content)
     for pattern in (
         _INLINE_URL_PATTERN,
         _INLINE_ABSOLUTE_PATTERN,
@@ -327,3 +332,10 @@ def _mask_spans(content: str, spans: list[tuple[int, int]]) -> str:
         for index in range(start, end):
             chars[index] = " "
     return "".join(chars)
+
+
+def _mask_simple_html_xml_tags(content: str) -> str:
+    spans: list[tuple[int, int]] = []
+    for match in _SIMPLE_HTML_TAG_PATTERN.finditer(content):
+        spans.append(match.span())
+    return _mask_spans(content, spans)

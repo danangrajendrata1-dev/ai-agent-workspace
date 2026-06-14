@@ -71,6 +71,13 @@ class SkillResourceDetectionServiceTest(unittest.TestCase):
         self.assertEqual(result.blocked_resource_paths, ["/secrets/token.txt"])
         self.assertTrue(result.requires_review)
 
+    def test_ignores_simple_html_xml_tags(self):
+        result = detect_skill_resource_references("H<sub>2</sub>O and x<super>2</super>")
+
+        self.assertEqual(result.resource_paths, [])
+        self.assertEqual(result.blocked_resource_paths, [])
+        self.assertFalse(result.requires_review)
+
     def test_blocks_external_urls(self):
         result = detect_skill_resource_references("[script](https://example.com/file.py)")
 

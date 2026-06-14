@@ -40,6 +40,17 @@ class SkillMarkdownInstructionServiceTest(unittest.TestCase):
         self.assertTrue(result.requires_review)
         self.assertTrue(any("Code example detected" in warning for warning in result.warnings))
 
+    def test_reportlab_html_tags_do_not_trigger_resource_block(self):
+        result = inspect_markdown_instruction_skill(
+            "H<sub>2</sub>O and x<super>2</super> with qpdf --password=mypassword --decrypt encrypted.pdf decrypted.pdf."
+        )
+
+        self.assertTrue(result.is_safe)
+        self.assertEqual(result.risk_level, "high")
+        self.assertTrue(result.requires_review)
+        self.assertEqual(result.blocked_resource_paths, [])
+        self.assertFalse(any("/sub" in error or "/super" in error for error in result.errors))
+
     def test_generic_secret_words_do_not_block_by_themselves(self):
         result = inspect_markdown_instruction_skill(
             "This guide mentions password, encrypt, decrypt, credential, token, and api key."
