@@ -13,6 +13,8 @@ from app.schemas.github_import import (
     GitHubSkillImportApproveRequest,
     GitHubSkillPreviewRequest,
 )
+from app.services.skill_manifest_pipeline_service import inspect_skill_manifest_content
+from app.services.skill_manifest_risk_service import assess_skill_manifest_risk
 
 
 def slugify(value: str) -> str:
@@ -116,7 +118,22 @@ def approve_github_skill_import(
             detail="Import preview content is missing.",
         )
 
+    inspection = inspect_skill_manifest_content(github_import.content_preview)
+    if not inspection.is_safe:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Skill manifest safety check failed: " + "; ".join(inspection.errors),
+        )
+
+    risk_result = assess_skill_manifest_risk(inspection.normalized_manifest or {})
+    if risk_result.is_blocked:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Skill manifest risk assessment blocked: " + "; ".join(risk_result.reasons),
+        )
+
     slug = ensure_unique_skill_slug(db, slug=slugify(payload.slug or payload.name))
+    skill_status = payload.status if payload.status in {"inactive", "disabled"} else "inactive"
 
     skill = skill_repository.create(
         db,
@@ -128,8 +145,8 @@ def approve_github_skill_import(
             "source_type": "github",
             "source_id": github_import.id,
             "version_label": payload.version_label,
-            "risk_level": payload.risk_level,
-            "status": payload.status,
+            "risk_level": risk_result.risk_level,
+            "status": skill_status,
         },
     )
     github_import_repository.update_status(db, github_import, "imported")
