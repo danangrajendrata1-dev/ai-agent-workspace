@@ -12,6 +12,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+## Cloud Run Deployment
+
+See [CLOUD_RUN.md](./CLOUD_RUN.md) for the manual Google Cloud Run deployment package, including Docker build instructions, required environment variables, and migration guidance.
+
 ## Available Endpoint
 
 - `GET /health`
