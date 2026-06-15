@@ -115,3 +115,47 @@ class AgentResponse(BaseModel):
 
 class AgentListResponse(BaseModel):
     items: list[AgentResponse]
+
+
+class AgentRoutingPreviewRequest(BaseModel):
+    task_text: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("task_text", mode="before")
+    @classmethod
+    def strip_task_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class AgentRoutingSkillMatchResponse(BaseModel):
+    skill_id: uuid.UUID
+    title: str
+    skill_type: str
+    status: str
+    security_status: str
+    matched_terms: list[str] = Field(default_factory=list)
+    match_score: int
+    reason: str
+
+
+class AgentRoutingCandidateResponse(BaseModel):
+    agent_id: uuid.UUID
+    name: str
+    slug: str
+    description: str | None
+    role_description: str | None
+    score: int
+    reasons: list[str] = Field(default_factory=list)
+    active_skill_matches: list[AgentRoutingSkillMatchResponse] = Field(default_factory=list)
+
+
+class AgentRoutingPreviewResponse(BaseModel):
+    task_text: str
+    recommended_agent: AgentRoutingCandidateResponse | None
+    candidate_agents: list[AgentRoutingCandidateResponse] = Field(default_factory=list)
+    confidence: Literal["high", "medium", "low"]
+    reasons: list[str] = Field(default_factory=list)
+    active_skill_matches: list[AgentRoutingSkillMatchResponse] = Field(default_factory=list)
+    note: str

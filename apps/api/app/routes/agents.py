@@ -10,10 +10,12 @@ from app.schemas.agent import (
     AgentInstructionCreate,
     AgentInstructionResponse,
     AgentListResponse,
+    AgentRoutingPreviewRequest,
+    AgentRoutingPreviewResponse,
     AgentResponse,
     AgentUpdate,
 )
-from app.services import agent_service
+from app.services import agent_routing_service, agent_service
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -95,4 +97,17 @@ def create_instruction_version(
         owner_id=current_user.id,
         agent_id=agent_id,
         payload=payload,
+    )
+
+
+@router.post("/routing-preview", response_model=AgentRoutingPreviewResponse)
+def preview_agent_routing(
+    payload: AgentRoutingPreviewRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    return agent_routing_service.preview_agent_routing(
+        db,
+        current_user=current_user,
+        task_text=payload.task_text,
     )

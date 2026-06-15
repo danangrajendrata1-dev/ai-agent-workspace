@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.agent import Agent
@@ -44,6 +44,11 @@ def list_by_owner(db: Session, owner_id: uuid.UUID) -> list[Agent]:
         .where(Agent.owner_id == owner_id, Agent.deleted_at.is_(None))
         .order_by(Agent.created_at.desc())
     )
+    return list(db.execute(statement).scalars().all())
+
+
+def list_all_active(db: Session) -> list[Agent]:
+    statement = select(Agent).where(Agent.deleted_at.is_(None)).order_by(Agent.created_at.desc())
     return list(db.execute(statement).scalars().all())
 
 

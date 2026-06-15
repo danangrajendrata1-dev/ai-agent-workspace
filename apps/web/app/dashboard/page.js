@@ -23,6 +23,7 @@ import {
   getSkills,
   getSkillLibrary,
   post,
+  previewAgentRouting,
   previewGithubSkillImport
 } from "../../lib/apiClient";
 import { formatDateTime, truncateText } from "../../lib/format";
@@ -117,6 +118,60 @@ function buildActiveAgentSkillViewModel(assignment, index) {
     isEnabled: Boolean(assignment?.is_enabled),
     createdAt: assignment?.created_at || "",
     skill: buildSkillLibraryViewModel(assignment?.skill, index)
+  };
+}
+
+function buildRoutingPreviewSkillMatchViewModel(match, index) {
+  return {
+    id: String(match?.skill_id || buildAgentId("routing-skill", index)),
+    skillId: String(match?.skill_id || ""),
+    title: match?.title || `Matched skill ${index + 1}`,
+    skillType: match?.skill_type || "prompt_skill",
+    status: match?.status || "inactive",
+    securityStatus: match?.security_status || "safe",
+    matchedTerms: Array.isArray(match?.matched_terms) ? match.matched_terms : [],
+    matchScore: Number(match?.match_score || 0),
+    reason: match?.reason || ""
+  };
+}
+
+function buildRoutingPreviewCandidateViewModel(candidate, index) {
+  return {
+    id: String(candidate?.agent_id || buildAgentId("routing-agent", index)),
+    agentId: String(candidate?.agent_id || ""),
+    name: candidate?.name || `Agent ${index + 1}`,
+    slug: candidate?.slug || "",
+    description: candidate?.description || "",
+    roleDescription: candidate?.role_description || "",
+    score: Number(candidate?.score || 0),
+    reasons: Array.isArray(candidate?.reasons) ? candidate.reasons : [],
+    activeSkillMatches: Array.isArray(candidate?.active_skill_matches)
+      ? candidate.active_skill_matches.map((match, matchIndex) =>
+          buildRoutingPreviewSkillMatchViewModel(match, matchIndex)
+        )
+      : []
+  };
+}
+
+function buildRoutingPreviewResultViewModel(payload) {
+  return {
+    taskText: payload?.task_text || "",
+    recommendedAgent: payload?.recommended_agent
+      ? buildRoutingPreviewCandidateViewModel(payload.recommended_agent, 0)
+      : null,
+    candidateAgents: Array.isArray(payload?.candidate_agents)
+      ? payload.candidate_agents.map((candidate, index) =>
+          buildRoutingPreviewCandidateViewModel(candidate, index)
+        )
+      : [],
+    confidence: payload?.confidence || "low",
+    reasons: Array.isArray(payload?.reasons) ? payload.reasons : [],
+    activeSkillMatches: Array.isArray(payload?.active_skill_matches)
+      ? payload.active_skill_matches.map((match, index) =>
+          buildRoutingPreviewSkillMatchViewModel(match, index)
+        )
+      : [],
+    note: payload?.note || "Preview only, no execution."
   };
 }
 
@@ -500,6 +555,10 @@ export default function DashboardPage() {
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
   const [skillLibraryNotice, setSkillLibraryNotice] = useState("");
   const [selectedImportedGithubSkillId, setSelectedImportedGithubSkillId] = useState("");
+  const [routingPreviewForm, setRoutingPreviewForm] = useState({ taskText: "" });
+  const [routingPreviewResult, setRoutingPreviewResult] = useState(null);
+  const [routingPreviewNotice, setRoutingPreviewNotice] = useState("");
+  const [isPreviewingAgentMatch, setIsPreviewingAgentMatch] = useState(false);
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [savedWorkflows, setSavedWorkflows] = useState([]);
   const [isLoadingSavedWorkflows, setIsLoadingSavedWorkflows] = useState(true);
@@ -1204,6 +1263,36 @@ export default function DashboardPage() {
       setActiveAgentSkillsNotice(getSafeErrorMessage(error, "Unable to detach imported skill."));
     } finally {
       setSkillAssignmentActionId("");
+    }
+  }
+
+  function handleRoutingPreviewFieldChange(value) {
+    setRoutingPreviewForm({ taskText: value });
+    setRoutingPreviewNotice("");
+    setRoutingPreviewResult(null);
+  }
+
+  async function handleRoutingPreviewSubmit(event) {
+    event.preventDefault();
+
+    const taskText = routingPreviewForm.taskText.trim();
+    if (!taskText) {
+      setRoutingPreviewNotice("Task text is required.");
+      return;
+    }
+
+    setIsPreviewingAgentMatch(true);
+    setRoutingPreviewNotice("Previewing agent match...");
+
+    try {
+      const response = await previewAgentRouting({ task_text: taskText });
+      setRoutingPreviewResult(buildRoutingPreviewResultViewModel(response));
+      setRoutingPreviewNotice("Preview ready.");
+    } catch (error) {
+      setRoutingPreviewResult(null);
+      setRoutingPreviewNotice(getSafeErrorMessage(error, "Failed to preview agent match."));
+    } finally {
+      setIsPreviewingAgentMatch(false);
     }
   }
 
@@ -2792,6 +2881,205 @@ export default function DashboardPage() {
                           </div>
                         </div>
                       ) : null}
+                    </div>
+
+                    <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
+                            Routing Preview
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                            Preview Agent Match
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                          Preview only
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.64)]">
+                        Enter a task and preview which agent would be recommended based on agent profile and active skills.
+                      </p>
+
+                      <form onSubmit={handleRoutingPreviewSubmit} className="mt-4 space-y-3">
+                        <label className="grid gap-2">
+                          <span className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                            Task text
+                          </span>
+                          <textarea
+                            value={routingPreviewForm.taskText}
+                            onChange={(event) => handleRoutingPreviewFieldChange(event.target.value)}
+                            rows={4}
+                            placeholder="Example: summarize these notes and choose the best agent."
+                            className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-white px-4 py-3 text-sm leading-6 text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.4)] focus:border-[#A36A58]"
+                          />
+                        </label>
+
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            type="submit"
+                            disabled={isPreviewingAgentMatch || !routingPreviewForm.taskText.trim()}
+                            className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+                          >
+                            {isPreviewingAgentMatch ? "Previewing..." : "Preview Agent Match"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRoutingPreviewFieldChange("")}
+                            disabled={isPreviewingAgentMatch && !routingPreviewForm.taskText.trim()}
+                            className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-2.5 text-sm font-medium text-[#3E362E] transition hover:bg-[#efe7d6] disabled:cursor-not-allowed disabled:opacity-70"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </form>
+
+                      {routingPreviewNotice ? (
+                        <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                          {truncateText(routingPreviewNotice, 180)}
+                        </div>
+                      ) : null}
+
+                      {routingPreviewResult ? (
+                        <div className="mt-4 space-y-4">
+                          <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-white p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                  Recommended agent
+                                </p>
+                                <p className="mt-1 text-base font-semibold text-[#3E362E]">
+                                  {routingPreviewResult.recommendedAgent?.name || "No recommendation"}
+                                </p>
+                                <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.64)]">
+                                  {routingPreviewResult.recommendedAgent?.roleDescription ||
+                                    routingPreviewResult.recommendedAgent?.description ||
+                                    "No summary available."}
+                                </p>
+                              </div>
+                              <span
+                                className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.14em] ${
+                                  routingPreviewResult.confidence === "high"
+                                    ? "border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] text-[#607056]"
+                                    : routingPreviewResult.confidence === "medium"
+                                      ? "border-[rgba(163,142,88,0.2)] bg-[rgba(163,142,88,0.12)] text-[#9A7A35]"
+                                      : "border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] text-[#A36A58]"
+                                }`}
+                              >
+                                {routingPreviewResult.confidence} confidence
+                              </span>
+                            </div>
+
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              {(routingPreviewResult.reasons.length
+                                ? routingPreviewResult.reasons
+                                : ["Preview only, no execution."]
+                              ).map((reason, index) => (
+                                <div
+                                  key={`routing-reason-${index}`}
+                                  className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3 text-sm leading-6 text-[#3E362E]"
+                                >
+                                  {reason}
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                              <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                Matched active skills
+                              </p>
+                              {routingPreviewResult.activeSkillMatches.length ? (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {routingPreviewResult.activeSkillMatches.map((match) => (
+                                    <span
+                                      key={match.id}
+                                      className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]"
+                                    >
+                                      {match.title} | {match.skillType}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-2 text-sm text-[rgba(62,54,46,0.62)]">
+                                  No strong active skill match found.
+                                </p>
+                              )}
+                            </div>
+
+                            <p className="mt-4 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                              {routingPreviewResult.note}
+                            </p>
+                          </div>
+
+                          <div className="space-y-3">
+                            <p className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                              Candidate agents
+                            </p>
+                            {routingPreviewResult.candidateAgents.length ? (
+                              routingPreviewResult.candidateAgents.map((candidate) => (
+                                <div
+                                  key={candidate.id}
+                                  className="rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white px-4 py-3"
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-[#3E362E]">{candidate.name}</p>
+                                      <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                                        {candidate.roleDescription || candidate.description || "No summary available."}
+                                      </p>
+                                    </div>
+                                    <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.7)]">
+                                      {candidate.score > 0 ? candidate.score : "low"}
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-3 space-y-2">
+                                    {candidate.reasons.length ? (
+                                      candidate.reasons.map((reason, index) => (
+                                        <p
+                                          key={`${candidate.id}-reason-${index}`}
+                                          className="text-sm leading-6 text-[rgba(62,54,46,0.68)]"
+                                        >
+                                          {reason}
+                                        </p>
+                                      ))
+                                    ) : (
+                                      <p className="text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+                                        No strong keyword overlap found.
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {candidate.activeSkillMatches.length ? (
+                                      candidate.activeSkillMatches.map((match) => (
+                                        <span
+                                          key={match.id}
+                                          className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1 text-[11px] text-[rgba(62,54,46,0.7)]"
+                                        >
+                                          {match.title}
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1 text-[11px] text-[rgba(62,54,46,0.56)]">
+                                        No active skill matches
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                                No candidate agents available.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.18)] bg-white px-4 py-3 text-sm text-[rgba(62,54,46,0.62)]">
+                          Preview only, no execution. Enter a task to see the best agent match.
+                        </div>
+                      )}
                     </div>
 
                     {draftPreview ? (

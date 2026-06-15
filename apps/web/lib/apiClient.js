@@ -162,6 +162,10 @@ export function getAgent(id, options) {
   return get(`/agents/${id}`, options);
 }
 
+export function previewAgentRouting(payload, options) {
+  return post("/agents/routing-preview", payload, options);
+}
+
 export function getAgentActiveSkills(id, options) {
   ensureIdentifier(id, "agent");
   return get(`/agents/${id}/active-skills`, options);

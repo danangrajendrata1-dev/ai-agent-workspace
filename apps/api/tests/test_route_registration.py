@@ -10,6 +10,7 @@ EXPECTED_PATHS = {
     "/agents",
     "/skills",
     "/skills/library",
+    "/agents/routing-preview",
     "/github-imports/skills/preview",
     "/tools",
     "/memories",
