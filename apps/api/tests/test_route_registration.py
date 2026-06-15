@@ -2,6 +2,7 @@ EXPECTED_PATHS = {
     "/health",
     "/auth/login",
     "/auth/me",
+    "/auth/register",
     "/model-providers",
     "/agents",
     "/skills",

@@ -33,6 +33,12 @@ export default function HomePage() {
               >
                 Open Login
               </Link>
+              <Link
+                href="/register"
+                className="inline-flex min-w-[210px] items-center justify-center rounded-full border border-[rgba(62,54,46,0.14)] bg-[rgba(245,241,230,0.82)] px-6 py-3 text-sm font-semibold text-[#3e362e] transition hover:bg-[#d5cfbf]"
+              >
+                Create Account
+              </Link>
             </div>
           </div>
         </section>

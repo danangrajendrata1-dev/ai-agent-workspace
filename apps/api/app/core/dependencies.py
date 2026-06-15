@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
+from app.core.subscription_plans import is_admin_role
 from app.services import auth_service
 
 
@@ -36,7 +37,7 @@ def get_current_user(
 
 
 def require_owner(current_user=Depends(get_current_user)):
-    if current_user.role != "owner":
+    if not is_admin_role(current_user.role):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions.",

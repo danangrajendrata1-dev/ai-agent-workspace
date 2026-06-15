@@ -2,6 +2,11 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
+from app.core.subscription_plans import (
+    DEFAULT_REGISTER_SUBSCRIPTION_PLAN,
+    DEFAULT_REGISTER_ROLE,
+    ROLE_ADMIN,
+)
 from app.repositories import user_repository
 from app.services import log_service
 
@@ -25,7 +30,7 @@ def bootstrap_owner(db: Session, *, email: str, password: str, display_name: str
             detail="Owner bootstrap is no longer available.",
         )
 
-    user = user_repository.create_owner_user(
+    user = user_repository.create_admin_user(
         db,
         email=normalized_email,
         password_hash=hash_password(password),
@@ -37,8 +42,43 @@ def bootstrap_owner(db: Session, *, email: str, password: str, display_name: str
         actor_id=user.id,
         request_id=None,
         event_type="auth.bootstrap_owner",
-        message="Owner account bootstrapped.",
-        metadata_json={"email": normalized_email},
+        message="Admin account bootstrapped.",
+        metadata_json={"email": normalized_email, "role": ROLE_ADMIN},
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def register_user(db: Session, *, email: str, password: str, display_name: str):
+    normalized_email = normalize_email(email)
+    existing_user = user_repository.get_by_email(db, normalized_email)
+    if existing_user is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is already registered.",
+        )
+
+    user = user_repository.create_user(
+        db,
+        email=normalized_email,
+        password_hash=hash_password(password),
+        display_name=display_name.strip(),
+        role=DEFAULT_REGISTER_ROLE,
+        subscription_plan=DEFAULT_REGISTER_SUBSCRIPTION_PLAN,
+    )
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=user.id,
+        request_id=None,
+        event_type="auth.register_success",
+        message="User registered.",
+        metadata_json={
+            "email": normalized_email,
+            "role": DEFAULT_REGISTER_ROLE,
+            "subscription_plan": DEFAULT_REGISTER_SUBSCRIPTION_PLAN,
+        },
     )
     db.commit()
     db.refresh(user)

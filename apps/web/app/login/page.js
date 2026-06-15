@@ -113,6 +113,13 @@ export default function LoginPage() {
               </button>
             </form>
 
+            <div className="flex items-center justify-between gap-4 text-sm text-[rgba(62,54,46,0.68)]">
+              <span>Need an account?</span>
+              <Link href="/register" className="font-semibold text-[#3e362e] underline decoration-[rgba(62,54,46,0.22)] underline-offset-4">
+                Create one
+              </Link>
+            </div>
+
             <p className="text-center text-xs uppercase tracking-[0.2em] text-[rgba(62,54,46,0.5)]">
               Personal AI Agent Workspace v2.1
             </p>

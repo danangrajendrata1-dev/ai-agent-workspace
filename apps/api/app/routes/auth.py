@@ -8,6 +8,7 @@ from app.schemas.auth import (
     CurrentUserResponse,
     LoginRequest,
     LoginResponse,
+    RegisterRequest,
 )
 from app.services import auth_service
 
@@ -22,6 +23,17 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 )
 def bootstrap_owner(payload: BootstrapOwnerRequest, db: Session = Depends(get_db)):
     user = auth_service.bootstrap_owner(
+        db,
+        email=payload.email,
+        password=payload.password,
+        display_name=payload.display_name,
+    )
+    return user
+
+
+@router.post("/register", response_model=CurrentUserResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    user = auth_service.register_user(
         db,
         email=payload.email,
         password=payload.password,
