@@ -5,10 +5,17 @@ from datetime import UTC, datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.subscription_plans import (
+    ROLE_ADMIN,
+    ROLE_USER,
+    SubscriptionPlanLimits,
+    get_subscription_plan_limits,
+)
 from app.repositories import (
     agent_instruction_repository,
     agent_repository,
     model_provider_repository,
+    user_repository,
 )
 from app.schemas.agent import (
     AgentCreate,
@@ -58,7 +65,44 @@ def serialize_instruction(instruction) -> AgentInstructionResponse:
     return AgentInstructionResponse.model_validate(instruction)
 
 
+def enforce_agent_quota(db: Session, *, owner_id: uuid.UUID) -> None:
+    user = user_repository.get_by_id(db, owner_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    if user.role == ROLE_ADMIN:
+        return
+
+    if user.role != ROLE_USER:
+        return
+
+    limits: SubscriptionPlanLimits = get_subscription_plan_limits(user.subscription_plan)
+    current_agent_count = agent_repository.count_by_owner(db, owner_id)
+    if current_agent_count < limits.max_agents:
+        return
+
+    plan_name = user.subscription_plan.capitalize()
+    if user.subscription_plan == "free":
+        upgrade_text = "Upgrade to Pro or Executive to create more."
+    elif user.subscription_plan == "pro":
+        upgrade_text = "Upgrade to Executive to create more."
+    else:
+        upgrade_text = "Delete an existing agent to create another."
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            f"Your {plan_name} plan allows up to {limits.max_agents} agents. "
+            f"{upgrade_text}"
+        ),
+    )
+
+
 def create_agent(db: Session, *, owner_id: uuid.UUID, payload: AgentCreate) -> AgentResponse:
+    enforce_agent_quota(db, owner_id=owner_id)
     validate_default_model_provider(db, payload.default_model_provider_id)
     slug = ensure_unique_slug(db, slug=slugify(payload.slug or payload.name))
 

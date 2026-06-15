@@ -414,6 +414,11 @@ const N8N_REQUIREMENTS = [
 ];
 
 const MODEL_OPTIONS = ["model", "gpt-4.1", "gpt-4o-mini"];
+const PLAN_LIMIT_NOTES = {
+  free: "Free plan: up to 5 agents. n8n access is not included.",
+  pro: "Pro plan: up to 10 agents. n8n access is included.",
+  executive: "Executive plan: up to 50 agents. n8n access is included."
+};
 const INITIAL_AGENT_FORM = {
   name: "",
   icon: "",
@@ -439,6 +444,10 @@ const INITIAL_GITHUB_SKILL_APPROVE_FORM = {
   reviewNotes: "",
   status: "inactive"
 };
+
+function getPlanLimitNote(subscriptionPlan) {
+  return PLAN_LIMIT_NOTES[subscriptionPlan] || PLAN_LIMIT_NOTES.free;
+}
 
 export default function DashboardPage() {
   const [workspace, setWorkspace] = useState({
@@ -491,6 +500,7 @@ export default function DashboardPage() {
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0]);
   const [agentForm, setAgentForm] = useState(INITIAL_AGENT_FORM);
+  const currentSubscriptionPlan = workspace.currentUser?.subscription_plan || "free";
 
   async function loadAgents() {
     const agentsResponse = await get("/agents");
@@ -1175,6 +1185,9 @@ export default function DashboardPage() {
             <p className="text-xs text-[rgba(62,54,46,0.6)]">
               Runtime execution is disabled. This only creates an agent profile.
             </p>
+            <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+              {getPlanLimitNote(currentSubscriptionPlan)}
+            </div>
             {createNotice ? (
               <div className={`rounded-[14px] border px-4 py-3 text-sm ${getCreateNoticeStyles(getCreateNoticeTone(createNotice))}`}>
                 {truncateText(createNotice, 140)}

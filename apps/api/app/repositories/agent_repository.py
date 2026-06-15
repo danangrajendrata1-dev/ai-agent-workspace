@@ -39,6 +39,14 @@ def list_by_owner(db: Session, owner_id: uuid.UUID) -> list[Agent]:
     return list(db.execute(statement).scalars().all())
 
 
+def count_by_owner(db: Session, owner_id: uuid.UUID) -> int:
+    statement = select(func.count(Agent.id)).where(
+        Agent.owner_id == owner_id,
+        Agent.deleted_at.is_(None),
+    )
+    return db.execute(statement).scalar_one()
+
+
 def update(db: Session, agent: Agent, agent_data: dict) -> Agent:
     for field, value in agent_data.items():
         setattr(agent, field, value)
