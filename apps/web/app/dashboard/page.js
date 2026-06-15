@@ -552,6 +552,45 @@ export default function DashboardPage() {
   const activeSavedWorkflowCount = savedWorkflows.filter((workflow) => workflow.status !== "disabled").length;
   const loadedWorkspaceRef = useRef(false);
 
+  const loadSavedWorkflows = useCallback(
+    async (options = {}) => {
+      const { isMounted = true, allowAccess = canUseN8n } = options;
+
+      if (!allowAccess) {
+        if (!isMounted) {
+          return;
+        }
+
+        setSavedWorkflows([]);
+        setSavedWorkflowsNotice("Free plan does not include n8n access.");
+        setIsLoadingSavedWorkflows(false);
+        return;
+      }
+
+      try {
+        const response = await get("/n8n-workflows");
+        if (!isMounted) {
+          return;
+        }
+
+        setSavedWorkflows(normalizeCollection(response).map(buildWorkflowDraftViewModel));
+        setSavedWorkflowsNotice("");
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setSavedWorkflows([]);
+        setSavedWorkflowsNotice(getSafeErrorMessage(error, "Saved workflow drafts unavailable."));
+      } finally {
+        if (isMounted) {
+          setIsLoadingSavedWorkflows(false);
+        }
+      }
+    },
+    [canUseN8n]
+  );
+
   async function loadAgents() {
     const agentsResponse = await get("/agents");
     const normalizedAgents = normalizeCollection(agentsResponse).map(buildAgentViewModel);
@@ -1182,45 +1221,6 @@ export default function DashboardPage() {
       setIsCreatingAgent(false);
     }
   }
-
-  const loadSavedWorkflows = useCallback(
-    async (options = {}) => {
-      const { isMounted = true, allowAccess = canUseN8n } = options;
-
-      if (!allowAccess) {
-        if (!isMounted) {
-          return;
-        }
-
-        setSavedWorkflows([]);
-        setSavedWorkflowsNotice("Free plan does not include n8n access.");
-        setIsLoadingSavedWorkflows(false);
-        return;
-      }
-
-      try {
-        const response = await get("/n8n-workflows");
-        if (!isMounted) {
-          return;
-        }
-
-        setSavedWorkflows(normalizeCollection(response).map(buildWorkflowDraftViewModel));
-        setSavedWorkflowsNotice("");
-      } catch (error) {
-        if (!isMounted) {
-          return;
-        }
-
-        setSavedWorkflows([]);
-        setSavedWorkflowsNotice(getSafeErrorMessage(error, "Saved workflow drafts unavailable."));
-      } finally {
-        if (isMounted) {
-          setIsLoadingSavedWorkflows(false);
-        }
-      }
-    },
-    [canUseN8n]
-  );
 
   async function handleWorkflowDraftSave() {
     const trimmedName = workflowDraftForm.name.trim();
