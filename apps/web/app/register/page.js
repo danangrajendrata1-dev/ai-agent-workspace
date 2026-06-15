@@ -25,7 +25,13 @@ export default function RegisterPage() {
     setIsSubmitting(true);
 
     try {
-      await post("/auth/register", form, { includeAuth: false });
+      const payload = {
+        email: form.email.trim(),
+        password: form.password,
+        display_name: form.display_name.trim()
+      };
+
+      await post("/auth/register", payload, { includeAuth: false });
       setForm(INITIAL_FORM);
       setSuccessMessage(
         "Account created. New accounts start on the Free plan with up to 5 agents and no n8n access yet."
