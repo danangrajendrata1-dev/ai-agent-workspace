@@ -37,6 +37,15 @@ class GitHubImportResponse(BaseModel):
     content_preview: str | None
     status: GitHubImportStatus
     review_notes: str | None
+    skill_import_type: str | None = None
+    inspection_warnings: list[str] = Field(default_factory=list)
+    inspection_errors: list[str] = Field(default_factory=list)
+    resource_paths: list[str] = Field(default_factory=list)
+    safe_resource_paths: list[str] = Field(default_factory=list)
+    risky_resource_paths: list[str] = Field(default_factory=list)
+    blocked_resource_paths: list[str] = Field(default_factory=list)
+    has_executable_resources: bool = False
+    requires_review: bool = False
     created_at: datetime
     updated_at: datetime
 

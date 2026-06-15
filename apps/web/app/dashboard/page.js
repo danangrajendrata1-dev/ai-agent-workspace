@@ -141,12 +141,11 @@ function buildImportedGithubSkillViewModel(skill, githubImport) {
     .filter(Boolean)
     .pop()
     ?.replace(/\.md$/i, "");
-  const type = inferGitHubSkillImportType(githubImport?.content_preview);
 
   return {
     id: String(skill?.id || githubImport?.id || fileTitle || "github-skill"),
     title: skill?.name || fileTitle || "Imported GitHub skill",
-    type,
+    type: githubImport?.skill_import_type || inferGitHubSkillImportType(githubImport?.content_preview),
     status: skill?.status || githubImport?.status || "inactive",
     importStatus: githubImport?.status || "imported",
     riskLevel: skill?.riskLevel || "unknown",
@@ -154,6 +153,18 @@ function buildImportedGithubSkillViewModel(skill, githubImport) {
     repoUrl: githubImport?.repo_url || "",
     branch: githubImport?.branch || "",
     filePath: githubImport?.file_path || "",
+    commitSha: githubImport?.commit_sha || "",
+    contentPreview: githubImport?.content_preview || "",
+    inspectionWarnings: Array.isArray(githubImport?.inspection_warnings) ? githubImport.inspection_warnings : [],
+    inspectionErrors: Array.isArray(githubImport?.inspection_errors) ? githubImport.inspection_errors : [],
+    resourcePaths: Array.isArray(githubImport?.resource_paths) ? githubImport.resource_paths : [],
+    safeResourcePaths: Array.isArray(githubImport?.safe_resource_paths) ? githubImport.safe_resource_paths : [],
+    riskyResourcePaths: Array.isArray(githubImport?.risky_resource_paths) ? githubImport.risky_resource_paths : [],
+    blockedResourcePaths: Array.isArray(githubImport?.blocked_resource_paths)
+      ? githubImport.blocked_resource_paths
+      : [],
+    hasExecutableResources: Boolean(githubImport?.has_executable_resources),
+    requiresReview: Boolean(githubImport?.requires_review),
     importedAt: githubImport?.created_at || "",
     createdAt: skill?.createdAt || "",
     sourceId: skill?.sourceId || String(githubImport?.id || ""),
@@ -513,6 +524,7 @@ export default function DashboardPage() {
   const [activeAgentDetailNotice, setActiveAgentDetailNotice] = useState("");
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
   const [githubImportsNotice, setGithubImportsNotice] = useState("");
+  const [selectedImportedGithubSkillId, setSelectedImportedGithubSkillId] = useState("");
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [savedWorkflows, setSavedWorkflows] = useState([]);
   const [isLoadingSavedWorkflows, setIsLoadingSavedWorkflows] = useState(true);
@@ -895,6 +907,17 @@ export default function DashboardPage() {
     () => buildImportedGithubSkillCatalog(availableSkills, githubImports),
     [availableSkills, githubImports]
   );
+  const selectedImportedGithubSkill = useMemo(() => {
+    if (!importedGithubSkills.length) {
+      return null;
+    }
+
+    return (
+      importedGithubSkills.find((item) => item.id === selectedImportedGithubSkillId) ||
+      importedGithubSkills[0] ||
+      null
+    );
+  }, [importedGithubSkills, selectedImportedGithubSkillId]);
   const workspaceStatusItems = useMemo(
     () => [
       { label: "Pinned agents", value: String(pinnedAgents.length) },
@@ -934,6 +957,21 @@ export default function DashboardPage() {
       return pinnedIds.includes(current) ? current : null;
     });
   }, [pinnedIds]);
+
+  useEffect(() => {
+    if (!importedGithubSkills.length) {
+      if (selectedImportedGithubSkillId) {
+        setSelectedImportedGithubSkillId("");
+      }
+      return;
+    }
+
+    setSelectedImportedGithubSkillId((current) =>
+      importedGithubSkills.some((item) => item.id === current)
+        ? current
+        : importedGithubSkills[0].id
+    );
+  }, [importedGithubSkills, selectedImportedGithubSkillId]);
 
   function bringCardToFront(cardKey) {
     setZIndexSeed((current) => {
@@ -1128,9 +1166,8 @@ export default function DashboardPage() {
       setGithubSkillPreviewNotice("Preview loaded. Review only.");
     } catch (error) {
       setGithubSkillPreviewResult(null);
-      setGithubSkillPreviewNotice(
-        "Preview gagal. Pastikan Repository URL adalah root repo, branch benar, dan file path mengarah ke SKILL.md yang benar-benar ada di repo."
-      );
+      const message = getSafeErrorMessage(error, "Preview failed.");
+      setGithubSkillPreviewNotice(truncateText(message.split("\n")[0].trim(), 180));
     } finally {
       setIsPreviewingGithubSkill(false);
     }
@@ -1688,7 +1725,14 @@ export default function DashboardPage() {
                 { label: "Repository URL", value: githubSkillPreviewResult.repo_url },
                 { label: "Branch", value: githubSkillPreviewResult.branch || "-" },
                 { label: "File path", value: githubSkillPreviewResult.file_path || "-" },
-                { label: "Import type", value: githubSkillPreviewResult.import_type || "-" },
+                {
+                  label: "Import type",
+                  value:
+                    githubSkillPreviewResult.skill_import_type ||
+                    githubSkillPreviewResult.import_type ||
+                    inferGitHubSkillImportType(githubSkillPreviewResult.content_preview) ||
+                    "-"
+                },
                 { label: "Created at", value: formatDateTime(githubSkillPreviewResult.created_at) },
                 { label: "Updated at", value: formatDateTime(githubSkillPreviewResult.updated_at) }
               ].map((item) => (
@@ -1719,6 +1763,46 @@ export default function DashboardPage() {
               <pre className="scrollbar-thin mt-3 max-h-[280px] overflow-auto whitespace-pre-wrap break-words rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#FAF7EF] p-4 text-sm leading-6 text-[#3E362E]">
                 {githubSkillPreviewResult.content_preview || "No preview content returned."}
               </pre>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {[
+                  {
+                    label: "Detected resources",
+                    value:
+                      githubSkillPreviewResult.resource_paths?.length > 0
+                        ? githubSkillPreviewResult.resource_paths.join(", ")
+                        : "None detected"
+                  },
+                  {
+                    label: "Safety note",
+                    value: "Resources are detected only. Nothing is fetched or executed."
+                  }
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white px-4 py-3"
+                  >
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                      {item.label}
+                    </p>
+                    <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {Array.isArray(githubSkillPreviewResult.inspection_warnings) &&
+              githubSkillPreviewResult.inspection_warnings.length > 0 ? (
+                <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                    Warnings
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
+                    {githubSkillPreviewResult.inspection_warnings.map((warning, index) => (
+                      <li key={`${warning}-${index}`}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
             <p className="text-xs leading-6 text-[rgba(62,54,46,0.58)]">
               Kalau di GitHub kamu membuka: repo → skills → canvas-design → SKILL.md. Maka file path: skills/canvas-design/SKILL.md.
@@ -1945,13 +2029,22 @@ export default function DashboardPage() {
                   {importedGithubSkills.map((item) => (
                     <article
                       key={item.id}
-                      className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4"
+                      className={`rounded-[16px] border p-4 ${
+                        selectedImportedGithubSkillId === item.id
+                          ? "border-[rgba(163,106,88,0.28)] bg-white shadow-[0_10px_26px_rgba(62,54,46,0.08)]"
+                          : "border-[rgba(62,54,46,0.14)] bg-[#F5F1E6]"
+                      }`}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
                           <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
                             Read-only imported skill record.
+                          </p>
+                          <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.5)]">
+                            {item.resourcePaths.length > 0
+                              ? `${item.resourcePaths.length} resource reference${item.resourcePaths.length === 1 ? "" : "s"} detected`
+                              : "No resource references detected"}
                           </p>
                         </div>
 
@@ -1964,6 +2057,13 @@ export default function DashboardPage() {
                           <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
                             {item.status || "inactive"}
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedImportedGithubSkillId(item.id)}
+                            className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.72)] transition hover:bg-[#efe7d6]"
+                          >
+                            View details
+                          </button>
                         </div>
                       </div>
 
@@ -1995,6 +2095,113 @@ export default function DashboardPage() {
                   ))}
                 </div>
               )}
+
+              {selectedImportedGithubSkill ? (
+                <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-[#3E362E]">
+                        {selectedImportedGithubSkill.title}
+                      </p>
+                      <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                        Safe detail view for quarantine-style imported skill records.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                        {selectedImportedGithubSkill.type || "markdown_instruction"}
+                      </span>
+                      <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
+                        {selectedImportedGithubSkill.status || "inactive"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {[
+                      { label: "Source URL", value: selectedImportedGithubSkill.repoUrl || "-" },
+                      { label: "Branch", value: selectedImportedGithubSkill.branch || "-" },
+                      { label: "File path", value: selectedImportedGithubSkill.filePath || "-" },
+                      { label: "Commit ref", value: selectedImportedGithubSkill.commitSha || "-" },
+                      { label: "Import status", value: selectedImportedGithubSkill.importStatus || "-" },
+                      { label: "Review status", value: selectedImportedGithubSkill.reviewStatus || "-" }
+                    ].map((item) => (
+                      <div
+                        key={`detail-${item.label}`}
+                        className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3"
+                      >
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                          {item.label}
+                        </p>
+                        <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">
+                          {item.value}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                        Resource references
+                      </p>
+                      <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
+                        {selectedImportedGithubSkill.resourcePaths.length > 0 ? (
+                          selectedImportedGithubSkill.resourcePaths.map((path) => (
+                            <li key={path}>{path}</li>
+                          ))
+                        ) : (
+                          <li>None detected.</li>
+                        )}
+                      </ul>
+                    </div>
+                    <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                        Safety note
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-[#3E362E]">
+                        Resources are detected only. Nothing is fetched, executed, enabled, or assigned.
+                      </p>
+                    </div>
+                  </div>
+
+                  {selectedImportedGithubSkill.inspectionWarnings.length > 0 ? (
+                    <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                        Warnings
+                      </p>
+                      <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
+                        {selectedImportedGithubSkill.inspectionWarnings.map((warning, index) => (
+                          <li key={`${selectedImportedGithubSkill.id}-warning-${index}`}>{warning}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {selectedImportedGithubSkill.inspectionErrors.length > 0 ? (
+                    <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3">
+                      <p className="text-xs uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                        Inspection errors
+                      </p>
+                      <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
+                        {selectedImportedGithubSkill.inspectionErrors.map((error, index) => (
+                          <li key={`${selectedImportedGithubSkill.id}-error-${index}`}>{error}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#FAF7EF] p-4">
+                    <p className="text-sm font-medium text-[#3E362E]">Preview content</p>
+                    <p className="mt-1 text-xs text-[rgba(62,54,46,0.58)]">
+                      Read-only preview of the imported quarantined skill content.
+                    </p>
+                    <pre className="scrollbar-thin mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white p-4 text-sm leading-6 text-[#3E362E]">
+                      {selectedImportedGithubSkill.contentPreview || "No preview content available."}
+                    </pre>
+                  </div>
+                </div>
+              ) : null}
             </section>
           </div>
         ) : null}

@@ -41,7 +41,51 @@ def ensure_unique_skill_slug(
 
 
 def serialize_github_import(github_import) -> GitHubImportResponse:
-    return GitHubImportResponse.model_validate(github_import)
+    response_data = GitHubImportResponse.model_validate(github_import).model_dump()
+    response_data.update(_build_import_inspection_metadata(github_import.content_preview))
+    return GitHubImportResponse.model_validate(response_data)
+
+
+def _build_import_inspection_metadata(content_preview: str | None) -> dict:
+    if not isinstance(content_preview, str) or not content_preview.strip():
+        return {
+            "skill_import_type": None,
+            "inspection_warnings": [],
+            "inspection_errors": [],
+            "resource_paths": [],
+            "safe_resource_paths": [],
+            "risky_resource_paths": [],
+            "blocked_resource_paths": [],
+            "has_executable_resources": False,
+            "requires_review": False,
+        }
+
+    manifest_inspection = inspect_skill_manifest_content(content_preview)
+    if manifest_inspection.is_extracted:
+        return {
+            "skill_import_type": "manifest_skill",
+            "inspection_warnings": manifest_inspection.warnings,
+            "inspection_errors": manifest_inspection.errors,
+            "resource_paths": [],
+            "safe_resource_paths": [],
+            "risky_resource_paths": [],
+            "blocked_resource_paths": [],
+            "has_executable_resources": False,
+            "requires_review": bool(manifest_inspection.warnings or manifest_inspection.errors),
+        }
+
+    markdown_inspection = inspect_markdown_instruction_skill(content_preview)
+    return {
+        "skill_import_type": markdown_inspection.skill_import_type,
+        "inspection_warnings": markdown_inspection.warnings,
+        "inspection_errors": markdown_inspection.errors,
+        "resource_paths": markdown_inspection.resource_paths,
+        "safe_resource_paths": markdown_inspection.safe_resource_paths,
+        "risky_resource_paths": markdown_inspection.risky_resource_paths,
+        "blocked_resource_paths": markdown_inspection.blocked_resource_paths,
+        "has_executable_resources": markdown_inspection.has_executable_resources,
+        "requires_review": markdown_inspection.requires_review,
+    }
 
 
 def _safe_record_import_log(record_fn, db: Session, **kwargs) -> None:
