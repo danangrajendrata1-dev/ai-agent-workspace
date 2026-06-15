@@ -172,6 +172,11 @@ export function getPendingApprovals(options) {
 }
 
 
+export function getGithubImports(options) {
+  return get("/github-imports", options);
+}
+
+
 export function previewGithubSkillImport(payload, options) {
   return post("/github-imports/skills/preview", payload, options);
 }

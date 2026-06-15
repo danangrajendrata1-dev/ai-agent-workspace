@@ -14,6 +14,7 @@ import {
   getActivityLogs,
   getAgent,
   getCurrentUser,
+  getGithubImports,
   getPendingApprovals,
   getModelProviders,
   getTasks,
@@ -67,7 +68,10 @@ function buildSkillViewModel(skill, index) {
     name: skill?.name || `Skill ${index + 1}`,
     description: skill?.description || "",
     riskLevel: skill?.risk_level || "",
-    status: skill?.status || "inactive"
+    status: skill?.status || "inactive",
+    sourceType: skill?.source_type || "manual",
+    sourceId: skill?.source_id ? String(skill.source_id) : "",
+    createdAt: skill?.created_at || ""
   };
 }
 
@@ -110,6 +114,67 @@ function buildPendingApprovalViewModel(approval, index) {
     createdAt: approval?.created_at || "",
     status: approval?.status || "pending"
   };
+}
+
+function inferGitHubSkillImportType(contentPreview) {
+  const normalized = String(contentPreview || "").trimStart();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.startsWith("{")) {
+    return "manifest_skill";
+  }
+
+  if (/^```(?:json)?\s*[\r\n]/i.test(normalized)) {
+    return "manifest_skill";
+  }
+
+  return "markdown_instruction";
+}
+
+function buildImportedGithubSkillViewModel(skill, githubImport) {
+  const fileTitle = String(githubImport?.file_path || "")
+    .split("/")
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.md$/i, "");
+  const type = inferGitHubSkillImportType(githubImport?.content_preview);
+
+  return {
+    id: String(skill?.id || githubImport?.id || fileTitle || "github-skill"),
+    title: skill?.name || fileTitle || "Imported GitHub skill",
+    type,
+    status: skill?.status || githubImport?.status || "inactive",
+    importStatus: githubImport?.status || "imported",
+    riskLevel: skill?.riskLevel || "unknown",
+    reviewStatus: githubImport?.review_notes ? "reviewed" : "approved",
+    repoUrl: githubImport?.repo_url || "",
+    branch: githubImport?.branch || "",
+    filePath: githubImport?.file_path || "",
+    importedAt: githubImport?.created_at || "",
+    createdAt: skill?.createdAt || "",
+    sourceId: skill?.sourceId || String(githubImport?.id || ""),
+  };
+}
+
+function buildImportedGithubSkillCatalog(skills, githubImports) {
+  const githubImportMap = new Map(
+    githubImports.map((item) => [String(item?.id || ""), item])
+  );
+
+  return skills
+    .filter((skill) => skill?.sourceType === "github")
+    .map((skill) => {
+      const githubImport = skill.sourceId ? githubImportMap.get(skill.sourceId) : null;
+      return buildImportedGithubSkillViewModel(skill, githubImport);
+    })
+    .sort((left, right) => {
+      const leftTime = new Date(left.importedAt || left.createdAt || 0).getTime();
+      const rightTime = new Date(right.importedAt || right.createdAt || 0).getTime();
+      return rightTime - leftTime;
+    });
 }
 
 function buildAgentPayload(form, providerOptions) {
@@ -381,8 +446,10 @@ export default function DashboardPage() {
     agents: []
   });
   const [availableSkills, setAvailableSkills] = useState([]);
+  const [githubImports, setGithubImports] = useState([]);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [isLoadingSkills, setIsLoadingSkills] = useState(true);
+  const [isLoadingGithubImports, setIsLoadingGithubImports] = useState(true);
   const [isLoadingProviders, setIsLoadingProviders] = useState(true);
   const [activityLogs, setActivityLogs] = useState([]);
   const [isLoadingActivityLogs, setIsLoadingActivityLogs] = useState(true);
@@ -397,6 +464,7 @@ export default function DashboardPage() {
   const [isLoadingActiveAgentDetail, setIsLoadingActiveAgentDetail] = useState(true);
   const [activeAgentDetailNotice, setActiveAgentDetailNotice] = useState("");
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
+  const [githubImportsNotice, setGithubImportsNotice] = useState("");
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [cards, setCards] = useState(buildInitialCards);
   const [zIndexSeed, setZIndexSeed] = useState(30);
@@ -484,14 +552,15 @@ export default function DashboardPage() {
         getCurrentUser(),
         get("/agents"),
         getSkills(),
-        getModelProviders()
+        getModelProviders(),
+        getGithubImports()
       ]);
 
       if (!isMounted) {
         return;
       }
 
-      const [currentUserResult, agentsResult, skillsResult, providersResult] = results;
+      const [currentUserResult, agentsResult, skillsResult, providersResult, githubImportsResult] = results;
       const currentUser =
         currentUserResult.status === "fulfilled" ? currentUserResult.value : null;
       const normalizedAgents =
@@ -524,6 +593,15 @@ export default function DashboardPage() {
         setSkillLoadNotice("Daftar skill belum bisa dimuat. Form tetap bisa dipakai.");
       }
       setIsLoadingSkills(false);
+
+      if (githubImportsResult.status === "fulfilled") {
+        setGithubImports(normalizeCollection(githubImportsResult.value));
+        setGithubImportsNotice("");
+      } else {
+        setGithubImports([]);
+        setGithubImportsNotice("Imported skills preview unavailable.");
+      }
+      setIsLoadingGithubImports(false);
 
       if (providersResult.status === "fulfilled") {
         setAvailableProviders(normalizeCollection(providersResult.value).map(buildProviderViewModel));
@@ -698,6 +776,10 @@ export default function DashboardPage() {
 
     return providerName || activeAgentDetail.default_model_name || "";
   }, [activeAgentDetail, availableProviders]);
+  const importedGithubSkills = useMemo(
+    () => buildImportedGithubSkillCatalog(availableSkills, githubImports),
+    [availableSkills, githubImports]
+  );
   const workspaceStatusItems = useMemo(
     () => [
       { label: "Pinned agents", value: String(pinnedAgents.length) },
@@ -859,6 +941,30 @@ export default function DashboardPage() {
     }));
   }
 
+  async function refreshImportedGithubSkills() {
+    setIsLoadingGithubImports(true);
+
+    try {
+      const [skillsResult, githubImportsResult] = await Promise.allSettled([getSkills(), getGithubImports()]);
+
+      if (skillsResult.status === "fulfilled") {
+        setAvailableSkills(normalizeCollection(skillsResult.value).map(buildSkillViewModel));
+        setSkillLoadNotice("");
+      } else {
+        setSkillLoadNotice("Daftar skill belum bisa dimuat ulang. Form tetap bisa dipakai.");
+      }
+
+      if (githubImportsResult.status === "fulfilled") {
+        setGithubImports(normalizeCollection(githubImportsResult.value));
+        setGithubImportsNotice("");
+      } else {
+        setGithubImportsNotice("Imported skills list unavailable right now.");
+      }
+    } finally {
+      setIsLoadingGithubImports(false);
+    }
+  }
+
   function handleGithubSkillPreviewFieldChange(field, value) {
     setGithubSkillPreviewForm((current) => ({
       ...current,
@@ -956,6 +1062,7 @@ export default function DashboardPage() {
       setGithubSkillApproveNotice(
         "Imported as inactive/quarantine-style. Not assigned to any agent and not executed."
       );
+      refreshImportedGithubSkills();
     } catch (error) {
       const message = getSafeErrorMessage(error, "Unable to import preview safely.");
       if (String(message).toLowerCase().includes("skill manifest safety check failed")) {
@@ -1602,6 +1709,122 @@ export default function DashboardPage() {
                 </div>
               </div>
             ) : null}
+
+            <section className="space-y-4 rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-[#3E362E]">Imported GitHub skills</p>
+                  <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                    Stored inactive, quarantine-style, and read-only. Imported skills are not executable.
+                  </p>
+                </div>
+                <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.72)]">
+                  {importedGithubSkills.length} items
+                </span>
+              </div>
+
+              {githubImportsNotice && importedGithubSkills.length > 0 ? (
+                <div className="rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p>{truncateText(githubImportsNotice, 180)}</p>
+                    <button
+                      type="button"
+                      onClick={() => refreshImportedGithubSkills()}
+                      className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs font-medium text-[#3E362E] transition hover:bg-[#efe7d6]"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {isLoadingGithubImports ? (
+                <div className="space-y-3">
+                  <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6]" />
+                  <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6]" />
+                  <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6]" />
+                </div>
+              ) : githubImportsNotice && importedGithubSkills.length === 0 ? (
+                <div className="rounded-[16px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] p-5">
+                  <p className="text-sm font-medium text-[#3E362E]">
+                    Imported skills list unavailable right now.
+                  </p>
+                  <p className="mt-2 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                    The existing imported skills stay stored safely. Retry when the API is available again.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => refreshImportedGithubSkills()}
+                    className="mt-4 rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs font-medium text-[#3E362E] transition hover:bg-[#efe7d6]"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : importedGithubSkills.length === 0 ? (
+                <div className="rounded-[16px] border border-dashed border-[rgba(62,54,46,0.18)] bg-[#F5F1E6] p-5">
+                  <p className="text-sm font-medium text-[#3E362E]">
+                    No imported skills yet. Preview a GitHub SKILL.md file and import it to quarantine.
+                  </p>
+                  <p className="mt-2 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                    Imported skills will appear here as inactive records with safe metadata only.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {importedGithubSkills.map((item) => (
+                    <article
+                      key={item.id}
+                      className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
+                          <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                            Read-only imported skill record.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {item.type ? (
+                            <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                              {item.type}
+                            </span>
+                          ) : null}
+                          <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
+                            {item.status || "inactive"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {[
+                          { label: "Import status", value: item.importStatus || "-" },
+                          { label: "Risk level", value: item.riskLevel || "-" },
+                          { label: "Review status", value: item.reviewStatus || "-" },
+                          { label: "Repository URL", value: item.repoUrl || "-" },
+                          { label: "Branch", value: item.branch || "-" },
+                          { label: "File path", value: item.filePath || "-" },
+                          { label: "Imported at", value: formatDateTime(item.importedAt) },
+                          { label: "Created at", value: formatDateTime(item.createdAt) }
+                        ].map((field) => (
+                          <div
+                            key={`${item.id}-${field.label}`}
+                            className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#E5E0D3] px-4 py-3"
+                          >
+                            <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                              {field.label}
+                            </p>
+                            <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">
+                              {field.value || "-"}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         ) : null}
       </FloatingCard>
