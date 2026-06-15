@@ -106,6 +106,16 @@ export function patch(pathname, body, options) {
   return request("PATCH", pathname, body, options);
 }
 
+
+export function put(pathname, body, options) {
+  return request("PUT", pathname, body, options);
+}
+
+
+export function remove(pathname, options) {
+  return request("DELETE", pathname, undefined, options);
+}
+
 export async function getCurrentUser(options = {}) {
   const token = getToken();
 
@@ -172,6 +182,29 @@ export function getModelProviderSettings(options) {
 
 export function updateModelProviderSettings(payload, options) {
   return patch("/model-provider-settings", payload, options);
+}
+
+
+export function getModelProviderKeyStatuses(options) {
+  return get("/model-provider-keys", options);
+}
+
+
+export function saveModelProviderApiKey(provider, payload, options) {
+  if (!provider) {
+    throw new Error("Missing model provider identifier.");
+  }
+
+  return put(`/model-provider-keys/${provider}`, payload, options);
+}
+
+
+export function deleteModelProviderApiKey(provider, options) {
+  if (!provider) {
+    throw new Error("Missing model provider identifier.");
+  }
+
+  return remove(`/model-provider-keys/${provider}`, options);
 }
 
 export function getActivityLogs(options) {

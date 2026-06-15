@@ -29,6 +29,14 @@ Important notes:
 - No runtime execution, n8n execution, external model call, Hermes call, or OpenClaw call happens during GitHub import review.
 - The future Phase 2 planning docs describe next contracts only and must not be confused with this current MVP behavior.
 
+## Provider API Key Vault
+
+The model provider key vault stores encrypted API keys only. Set this environment variable before using the save/delete API:
+
+- `PROVIDER_API_KEY_ENCRYPTION_KEY`
+
+It must be a valid Fernet key. The backend never returns raw API keys, and it does not use the stored keys for model calls yet.
+
 ## Create Local Owner Account
 
 The backend already provides a safe local bootstrap route:

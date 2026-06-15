@@ -15,6 +15,7 @@ from app.models.base import Base
 from app.models.github_import import GitHubImport  # noqa: F401
 from app.models.memory import Memory  # noqa: F401
 from app.models.n8n_workflow import N8nWorkflow  # noqa: F401
+from app.models.model_provider_api_key import ModelProviderApiKey  # noqa: F401
 from app.models.model_usage_log import ModelUsageLog  # noqa: F401
 from app.models.model_provider import ModelProvider  # noqa: F401
 from app.models.model_provider_setting import ModelProviderSetting  # noqa: F401

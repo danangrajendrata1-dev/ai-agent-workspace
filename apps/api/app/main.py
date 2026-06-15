@@ -11,6 +11,7 @@ from app.routes import (
     health,
     logs,
     memories,
+    model_provider_keys,
     model_provider_settings,
     model_providers,
     model_router,
@@ -40,6 +41,7 @@ app.add_middleware(RequestIDMiddleware)
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(model_provider_settings.router)
+app.include_router(model_provider_keys.router)
 app.include_router(model_providers.router)
 app.include_router(agents.router)
 app.include_router(skills.router)

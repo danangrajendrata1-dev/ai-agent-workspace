@@ -8,6 +8,7 @@ from app.models.audit_log import AuditLog
 from app.models.github_import import GitHubImport
 from app.models.memory import Memory
 from app.models.n8n_workflow import N8nWorkflow
+from app.models.model_provider_api_key import ModelProviderApiKey
 from app.models.model_provider_setting import ModelProviderSetting
 from app.models.model_usage_log import ModelUsageLog
 from app.models.model_provider import ModelProvider
@@ -29,6 +30,7 @@ __all__ = [
     "GitHubImport",
     "Memory",
     "N8nWorkflow",
+    "ModelProviderApiKey",
     "ModelProviderSetting",
     "ModelUsageLog",
     "ModelProvider",

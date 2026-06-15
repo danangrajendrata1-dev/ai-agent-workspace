@@ -9,11 +9,15 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import SimpleTable from "../../components/SimpleTable";
 import StatusBadge from "../../components/StatusBadge";
 import {
+  deleteModelProviderApiKey,
   get,
   getCurrentUser,
+  getModelProviderKeyStatuses,
   getModelProviderSettings,
+  saveModelProviderApiKey,
   updateModelProviderSettings,
 } from "../../lib/apiClient";
+import { formatDateTime } from "../../lib/format";
 import { maskSensitiveReference, truncateText } from "../../lib/format";
 
 
@@ -51,6 +55,11 @@ const MODEL_PROVIDER_OPTIONS = [
 ];
 
 
+const API_KEY_PROVIDER_OPTIONS = MODEL_PROVIDER_OPTIONS.filter(
+  (option) => option.id !== "ollama_local"
+);
+
+
 const CONNECTION_STATUS_LABELS = {
   not_connected: "Not connected",
   metadata_configured: "Metadata configured"
@@ -72,6 +81,17 @@ function normalizeInputValue(value) {
 }
 
 
+function getDefaultApiKeyProvider(providerSettings, apiKeyItems) {
+  const preferredProvider = providerSettings?.preferred_provider;
+  if (API_KEY_PROVIDER_OPTIONS.some((option) => option.id === preferredProvider)) {
+    return preferredProvider;
+  }
+
+  const connectedProvider = apiKeyItems.find((item) => item.connection_status === "connected");
+  return connectedProvider?.provider || API_KEY_PROVIDER_OPTIONS[0]?.id || "openai";
+}
+
+
 export default function SettingsPage() {
   const [state, setState] = useState({
     loading: true,
@@ -82,6 +102,16 @@ export default function SettingsPage() {
       saving: false,
       saveError: "",
       saveSuccess: ""
+    },
+    apiKeyVault: {
+      items: [],
+      error: "",
+      saving: false,
+      deletingProvider: "",
+      saveError: "",
+      saveSuccess: "",
+      selectedProvider: "openai",
+      apiKey: ""
     },
     providerForm: {
       preferred_provider: "",
@@ -99,9 +129,10 @@ export default function SettingsPage() {
     let isMounted = true;
 
     async function loadSettingsData() {
-      const [currentUserResult, providerSettingsResult, providersResult, toolsResult, skillsResult] = await Promise.allSettled([
+      const [currentUserResult, providerSettingsResult, apiKeyStatusesResult, providersResult, toolsResult, skillsResult] = await Promise.allSettled([
         getCurrentUser(),
         getModelProviderSettings(),
+        getModelProviderKeyStatuses(),
         get("/model-providers"),
         get("/tools"),
         get("/skills")
@@ -123,6 +154,8 @@ export default function SettingsPage() {
       }
       const providerSettings =
         providerSettingsResult.status === "fulfilled" ? providerSettingsResult.value : null;
+      const apiKeyStatuses =
+        apiKeyStatusesResult.status === "fulfilled" ? apiKeyStatusesResult.value?.items || [] : [];
 
       setState({
         loading: false,
@@ -136,6 +169,19 @@ export default function SettingsPage() {
           saving: false,
           saveError: "",
           saveSuccess: ""
+        },
+        apiKeyVault: {
+          items: apiKeyStatuses,
+          error:
+            apiKeyStatusesResult.status === "fulfilled"
+              ? ""
+              : "Failed to load model provider API keys.",
+          saving: false,
+          deletingProvider: "",
+          saveError: "",
+          saveSuccess: "",
+          selectedProvider: getDefaultApiKeyProvider(providerSettings, apiKeyStatuses),
+          apiKey: ""
         },
         providerForm: {
           preferred_provider: normalizeInputValue(providerSettings?.preferred_provider),
@@ -240,6 +286,9 @@ export default function SettingsPage() {
   const currentConnectionStatus = state.providerSettings.item?.connection_status || "not_connected";
   const currentConnectionLabel = getConnectionStatusLabel(currentConnectionStatus);
   const currentConnectionTone = getConnectionStatusTone(currentConnectionStatus);
+  const apiKeyItemsByProvider = Object.fromEntries(
+    state.apiKeyVault.items.map((item) => [item.provider, item])
+  );
 
   async function handleSaveModelProviderSettings(event) {
     event.preventDefault();
@@ -288,6 +337,128 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSaveModelProviderApiKey(event) {
+    event.preventDefault();
+
+    const provider = state.apiKeyVault.selectedProvider;
+    const apiKey = state.apiKeyVault.apiKey.trim();
+    if (!provider || !apiKey) {
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          saveError: "Choose a provider and enter an API key before saving.",
+          saveSuccess: ""
+        }
+      }));
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      apiKeyVault: {
+        ...prev.apiKeyVault,
+        saving: true,
+        saveError: "",
+        saveSuccess: ""
+      }
+    }));
+
+    try {
+      const result = await saveModelProviderApiKey(provider, { api_key: apiKey });
+
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          items: prev.apiKeyVault.items.map((item) => (item.provider === result.provider ? result : item)),
+          saving: false,
+          saveError: "",
+          saveSuccess: "API key saved encrypted. It is not used for model calls yet.",
+          apiKey: ""
+        }
+      }));
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          saving: false,
+          saveError: error instanceof Error ? error.message : "Failed to save API key.",
+          saveSuccess: ""
+        }
+      }));
+    }
+  }
+
+  async function handleDeleteModelProviderApiKey(provider) {
+    if (!provider) {
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      apiKeyVault: {
+        ...prev.apiKeyVault,
+        deletingProvider: provider,
+        saveError: "",
+        saveSuccess: ""
+      }
+    }));
+
+    try {
+      const result = await deleteModelProviderApiKey(provider);
+
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          items: prev.apiKeyVault.items.map((item) => (item.provider === result.provider ? result : item)),
+          deletingProvider: "",
+          saveError: "",
+          saveSuccess: "API key disconnected safely.",
+          apiKey: prev.apiKeyVault.selectedProvider === provider ? "" : prev.apiKeyVault.apiKey
+        }
+      }));
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          deletingProvider: "",
+          saveError: error instanceof Error ? error.message : "Failed to disconnect API key.",
+          saveSuccess: ""
+        }
+      }));
+    }
+  }
+
+  function handleApiKeyProviderSelect(event) {
+    const { value } = event.target;
+    setState((prev) => ({
+      ...prev,
+      apiKeyVault: {
+        ...prev.apiKeyVault,
+        selectedProvider: value,
+        saveError: "",
+        saveSuccess: ""
+      }
+    }));
+  }
+
+  function handleApiKeyChange(event) {
+    const { value } = event.target;
+    setState((prev) => ({
+      ...prev,
+      apiKeyVault: {
+        ...prev.apiKeyVault,
+        apiKey: value,
+        saveError: "",
+        saveSuccess: ""
+      }
+    }));
+  }
+
   function handleProviderSelect(providerId) {
     setState((prev) => {
       const nextProvider = prev.providerForm.preferred_provider === providerId ? "" : providerId;
@@ -332,6 +503,155 @@ export default function SettingsPage() {
         ) : (
           <SimpleTable columns={columns} rows={rows} emptyMessage={emptyMessage} />
         )}
+      </section>
+    );
+  }
+
+  const apiKeyColumns = [
+    { key: "provider", label: "Provider" },
+    {
+      key: "connection_status",
+      label: "Status",
+      render: (value) => (
+        <StatusBadge
+          tone={value === "connected" ? "success" : "neutral"}
+          label={value === "connected" ? "Connected" : "Not connected"}
+        />
+      )
+    },
+    {
+      key: "masked_key",
+      label: "Masked key",
+      render: (value) => value || "-"
+    },
+    { key: "key_last4", label: "Last 4" },
+    {
+      key: "created_at",
+      label: "Created",
+      render: (value) => formatDateTime(value)
+    },
+    {
+      key: "updated_at",
+      label: "Updated",
+      render: (value) => formatDateTime(value)
+    },
+    {
+      key: "actions",
+      label: "Action",
+      render: (_, row) =>
+        row.connection_status === "connected" ? (
+          <button
+            type="button"
+            onClick={() => handleDeleteModelProviderApiKey(row.provider)}
+            disabled={state.apiKeyVault.deletingProvider === row.provider}
+            className="rounded-full border border-[color:var(--danger)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--danger)] transition hover:bg-[#fff4f4] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {state.apiKeyVault.deletingProvider === row.provider ? "Disconnecting..." : "Disconnect"}
+          </button>
+        ) : (
+          "-"
+        )
+    }
+  ];
+
+  function renderApiKeyVaultSection() {
+    if (state.apiKeyVault.error) {
+      return (
+        <section className="space-y-3">
+          <h2 className="text-xl text-ink">API Key Vault</h2>
+          <ErrorState title="API key vault unavailable" description={state.apiKeyVault.error} />
+        </section>
+      );
+    }
+
+    const selectedProvider = state.apiKeyVault.selectedProvider;
+    const selectedStatus = apiKeyItemsByProvider[selectedProvider];
+    const selectedProviderLabel =
+      API_KEY_PROVIDER_OPTIONS.find((option) => option.id === selectedProvider)?.label || selectedProvider;
+
+    return (
+      <section className="space-y-3">
+        <h2 className="text-xl text-ink">API Key Vault</h2>
+        <div className="rounded-[28px] border border-[var(--border)] bg-white p-6 shadow-panel">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl space-y-2">
+              <p className="text-sm leading-7 text-[color:var(--muted)]">
+                API keys are stored encrypted and are not used for model calls yet.
+              </p>
+              <p className="text-sm leading-7 text-[color:var(--muted)]">
+                Supported providers: OpenAI, Anthropic, Google Gemini, OpenRouter, and Custom. Ollama Local is intentionally excluded from API key storage.
+              </p>
+            </div>
+            <StatusBadge
+              tone={selectedStatus?.connection_status === "connected" ? "success" : "neutral"}
+              label={selectedStatus?.connection_status === "connected" ? "Connected" : "Not connected"}
+            />
+          </div>
+
+          <form className="mt-6 space-y-5" onSubmit={handleSaveModelProviderApiKey}>
+            <label className="block space-y-2">
+              <span className="text-sm uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                Provider
+              </span>
+              <select
+                value={state.apiKeyVault.selectedProvider}
+                onChange={handleApiKeyProviderSelect}
+                className="w-full rounded-2xl border border-[var(--border)] bg-[#fbfaf5] px-4 py-3 text-sm text-ink outline-none transition focus:border-[color:var(--accent)]"
+              >
+                {API_KEY_PROVIDER_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block space-y-2">
+              <span className="text-sm uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                API key
+              </span>
+              <input
+                type="password"
+                value={state.apiKeyVault.apiKey}
+                onChange={handleApiKeyChange}
+                placeholder="Write-only API key"
+                autoComplete="off"
+                className="w-full rounded-2xl border border-[var(--border)] bg-[#fbfaf5] px-4 py-3 text-sm text-ink outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)]"
+              />
+            </label>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="submit"
+                disabled={state.apiKeyVault.saving}
+                className="rounded-full border border-[color:var(--accent)] bg-[color:var(--accent)] px-5 py-3 text-sm font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {state.apiKeyVault.saving ? "Saving..." : "Save API key"}
+              </button>
+              <p className="text-sm leading-6 text-[color:var(--muted)]">
+                The input is write-only. Saving clears the field and stores only encrypted data.
+              </p>
+            </div>
+
+            {state.apiKeyVault.saveError ? (
+              <p className="text-sm leading-6 text-[color:var(--danger)]">{state.apiKeyVault.saveError}</p>
+            ) : null}
+            {state.apiKeyVault.saveSuccess ? (
+              <p className="text-sm leading-6 text-[color:var(--success)]">{state.apiKeyVault.saveSuccess}</p>
+            ) : null}
+          </form>
+
+          <div className="mt-6 overflow-hidden rounded-[22px] border border-[var(--border)]">
+            <div className="border-b border-[var(--border)] bg-[#fbfaf5] px-4 py-3 text-sm text-[color:var(--muted)]">
+              Selected provider: <span className="font-semibold text-ink">{selectedProviderLabel}</span>
+            </div>
+            <SimpleTable
+              columns={apiKeyColumns}
+              rows={state.apiKeyVault.items}
+              emptyMessage="No API keys stored yet. Save a key to quarantine it here."
+            />
+          </div>
+        </div>
       </section>
     );
   }
@@ -451,6 +771,7 @@ export default function SettingsPage() {
           />
         ) : (
           <div className="space-y-6">
+            {renderApiKeyVaultSection()}
             {renderProviderSettingsSection()}
             {renderSection(
               "Model Providers",
