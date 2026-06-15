@@ -8,13 +8,14 @@ import LoadingState from "../../components/LoadingState";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import SimpleTable from "../../components/SimpleTable";
 import StatusBadge from "../../components/StatusBadge";
-import { get } from "../../lib/apiClient";
+import { get, getCurrentUser } from "../../lib/apiClient";
 import { maskSensitiveReference, truncateText } from "../../lib/format";
 
 
 export default function SettingsPage() {
   const [state, setState] = useState({
     loading: true,
+    currentUser: null,
     sections: {
       providers: { items: [], error: "" },
       tools: { items: [], error: "" },
@@ -27,21 +28,28 @@ export default function SettingsPage() {
     let isMounted = true;
 
     async function loadSettingsData() {
-      const results = await Promise.allSettled([
+      const [currentUserResult, providersResult, toolsResult, skillsResult] = await Promise.allSettled([
+        getCurrentUser(),
         get("/model-providers"),
         get("/tools"),
-        get("/skills"),
-        get("/n8n-workflows")
+        get("/skills")
       ]);
 
       if (!isMounted) {
         return;
       }
 
-      const [providersResult, toolsResult, skillsResult, workflowsResult] = results;
+      const currentUser =
+        currentUserResult.status === "fulfilled" ? currentUserResult.value : null;
+      const canUseN8n =
+        currentUser?.role === "admin" || (currentUser?.subscription_plan || "free") !== "free";
+      const workflowsResult = canUseN8n
+        ? await Promise.allSettled([get("/n8n-workflows")]).then(([result]) => result)
+        : null;
 
       setState({
         loading: false,
+        currentUser,
         sections: {
           providers:
             providersResult.status === "fulfilled"
@@ -56,9 +64,11 @@ export default function SettingsPage() {
               ? { items: skillsResult.value?.items || [], error: "" }
               : { items: [], error: "Failed to load skills." },
           workflows:
-            workflowsResult.status === "fulfilled"
-              ? { items: workflowsResult.value?.items || [], error: "" }
-              : { items: [], error: "Failed to load n8n workflows." }
+            workflowsResult === null
+              ? { items: [], error: "" }
+              : workflowsResult.status === "fulfilled"
+                ? { items: workflowsResult.value?.items || [], error: "" }
+                : { items: [], error: "Failed to load n8n workflows." }
         }
       });
     }
@@ -136,6 +146,17 @@ export default function SettingsPage() {
     }
   ];
 
+  const currentSubscriptionPlan = state.currentUser?.subscription_plan || "free";
+  const currentUserRole = state.currentUser?.role || "user";
+  const n8nStateNote =
+    currentUserRole === "admin"
+      ? "Admin bypasses n8n access and workflow limits."
+      : currentSubscriptionPlan === "pro"
+        ? "Pro plan can save 1 workflow draft."
+        : currentSubscriptionPlan === "executive"
+          ? "Executive plan can save up to 10 workflow drafts."
+          : "Free plan is locked. Upgrade to Pro or Executive to save workflows.";
+
   function renderSection(title, rows, columns, emptyMessage, error) {
     return (
       <section className="space-y-3">
@@ -184,6 +205,9 @@ export default function SettingsPage() {
               "No n8n workflow registry records are available yet.",
               state.sections.workflows.error
             )}
+            <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#f5f1e6] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+              {n8nStateNote}
+            </div>
           </div>
         )}
       </AppShell>

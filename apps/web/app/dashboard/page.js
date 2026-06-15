@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AppShell from "../../components/AppShell";
 import CommandInput from "../../components/CommandInput";
@@ -19,6 +19,7 @@ import {
   getModelProviders,
   getTasks,
   getSkills,
+  post,
   previewGithubSkillImport
 } from "../../lib/apiClient";
 import { formatDateTime, truncateText } from "../../lib/format";
@@ -419,6 +420,11 @@ const PLAN_LIMIT_NOTES = {
   pro: "Pro plan: up to 10 agents. n8n access is included.",
   executive: "Executive plan: up to 50 agents. n8n access is included."
 };
+const N8N_PLAN_NOTES = {
+  free: "Free plan is locked. Upgrade to Pro or Executive to save workflows.",
+  pro: "Pro plan can save 1 workflow draft.",
+  executive: "Executive plan can save up to 10 workflow drafts."
+};
 const INITIAL_AGENT_FORM = {
   name: "",
   icon: "",
@@ -445,8 +451,41 @@ const INITIAL_GITHUB_SKILL_APPROVE_FORM = {
   status: "inactive"
 };
 
+const INITIAL_WORKFLOW_DRAFT_FORM = {
+  name: "",
+  description: ""
+};
+
 function getPlanLimitNote(subscriptionPlan) {
   return PLAN_LIMIT_NOTES[subscriptionPlan] || PLAN_LIMIT_NOTES.free;
+}
+
+function getN8nPlanNote(subscriptionPlan, role) {
+  if (role === "admin") {
+    return "Admin access bypasses n8n access and workflow limits.";
+  }
+
+  return N8N_PLAN_NOTES[subscriptionPlan] || N8N_PLAN_NOTES.free;
+}
+
+function getWorkflowStatusLabel(status) {
+  if (status === "disabled") {
+    return "disabled";
+  }
+
+  return "draft";
+}
+
+function buildWorkflowDraftViewModel(workflow, index) {
+  return {
+    id: String(workflow?.id || `workflow-${index + 1}`),
+    name: workflow?.name || `Workflow ${index + 1}`,
+    description: workflow?.description || "No description provided.",
+    status: workflow?.status || "inactive",
+    triggerType: workflow?.trigger_type || "manual",
+    createdAt: workflow?.created_at || "",
+    updatedAt: workflow?.updated_at || ""
+  };
 }
 
 export default function DashboardPage() {
@@ -475,6 +514,12 @@ export default function DashboardPage() {
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
   const [githubImportsNotice, setGithubImportsNotice] = useState("");
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
+  const [savedWorkflows, setSavedWorkflows] = useState([]);
+  const [isLoadingSavedWorkflows, setIsLoadingSavedWorkflows] = useState(true);
+  const [savedWorkflowsNotice, setSavedWorkflowsNotice] = useState("");
+  const [workflowDraftForm, setWorkflowDraftForm] = useState(INITIAL_WORKFLOW_DRAFT_FORM);
+  const [workflowDraftNotice, setWorkflowDraftNotice] = useState("");
+  const [isSavingWorkflowDraft, setIsSavingWorkflowDraft] = useState(false);
   const [cards, setCards] = useState(buildInitialCards);
   const [zIndexSeed, setZIndexSeed] = useState(30);
   const [commandNotice, setCommandNotice] = useState("");
@@ -501,6 +546,11 @@ export default function DashboardPage() {
   const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0]);
   const [agentForm, setAgentForm] = useState(INITIAL_AGENT_FORM);
   const currentSubscriptionPlan = workspace.currentUser?.subscription_plan || "free";
+  const currentUserRole = workspace.currentUser?.role || "user";
+  const canUseN8n = currentUserRole === "admin" || currentSubscriptionPlan !== "free";
+  const savedWorkflowLimit = currentUserRole === "admin" ? null : currentSubscriptionPlan === "pro" ? 1 : currentSubscriptionPlan === "executive" ? 10 : 0;
+  const activeSavedWorkflowCount = savedWorkflows.filter((workflow) => workflow.status !== "disabled").length;
+  const loadedWorkspaceRef = useRef(false);
 
   async function loadAgents() {
     const agentsResponse = await get("/agents");
@@ -555,6 +605,11 @@ export default function DashboardPage() {
   }, [activeAgentId, didLoadActiveAgentId]);
 
   useEffect(() => {
+    if (loadedWorkspaceRef.current) {
+      return;
+    }
+    loadedWorkspaceRef.current = true;
+
     let isMounted = true;
 
     async function loadWorkspace() {
@@ -621,6 +676,17 @@ export default function DashboardPage() {
         setProviderLoadNotice("Daftar provider belum bisa dimuat. Form tetap bisa dipakai.");
       }
       setIsLoadingProviders(false);
+
+      if (currentUser?.role === "admin" || (currentUser?.subscription_plan || "free") !== "free") {
+        await loadSavedWorkflows({
+          isMounted,
+          allowAccess: currentUser?.role === "admin" || (currentUser?.subscription_plan || "free") !== "free"
+        });
+      } else {
+        setSavedWorkflows([]);
+        setSavedWorkflowsNotice("Free plan does not include n8n access.");
+        setIsLoadingSavedWorkflows(false);
+      }
     }
 
     loadWorkspace();
@@ -628,7 +694,7 @@ export default function DashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [loadSavedWorkflows]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1114,6 +1180,98 @@ export default function DashboardPage() {
       setCreateNotice(getSafeCreateNotice(error));
     } finally {
       setIsCreatingAgent(false);
+    }
+  }
+
+  const loadSavedWorkflows = useCallback(
+    async (options = {}) => {
+      const { isMounted = true, allowAccess = canUseN8n } = options;
+
+      if (!allowAccess) {
+        if (!isMounted) {
+          return;
+        }
+
+        setSavedWorkflows([]);
+        setSavedWorkflowsNotice("Free plan does not include n8n access.");
+        setIsLoadingSavedWorkflows(false);
+        return;
+      }
+
+      try {
+        const response = await get("/n8n-workflows");
+        if (!isMounted) {
+          return;
+        }
+
+        setSavedWorkflows(normalizeCollection(response).map(buildWorkflowDraftViewModel));
+        setSavedWorkflowsNotice("");
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setSavedWorkflows([]);
+        setSavedWorkflowsNotice(getSafeErrorMessage(error, "Saved workflow drafts unavailable."));
+      } finally {
+        if (isMounted) {
+          setIsLoadingSavedWorkflows(false);
+        }
+      }
+    },
+    [canUseN8n]
+  );
+
+  async function handleWorkflowDraftSave() {
+    const trimmedName = workflowDraftForm.name.trim();
+    const trimmedDescription = workflowDraftForm.description.trim();
+
+    if (!canUseN8n) {
+      setWorkflowDraftNotice("Your Free plan does not include n8n access. Upgrade to Pro or Executive to save workflows.");
+      return;
+    }
+
+    if (!trimmedName) {
+      setWorkflowDraftNotice("Draft name is required.");
+      return;
+    }
+
+    if (savedWorkflowLimit !== null && activeSavedWorkflowCount >= savedWorkflowLimit) {
+      setWorkflowDraftNotice(
+        currentSubscriptionPlan === "pro"
+          ? "Your Pro plan allows 1 saved workflow. Upgrade to Executive to save more."
+          : "Your Executive plan allows up to 10 saved workflows. Delete an existing workflow to save another."
+      );
+      return;
+    }
+
+    setIsSavingWorkflowDraft(true);
+    setWorkflowDraftNotice("Saving workflow draft...");
+
+    try {
+      await post("/n8n-workflows", {
+        name: trimmedName,
+        description: trimmedDescription || null,
+        workflow_external_id: null,
+        trigger_type: "manual",
+        webhook_url_reference: null,
+        status: "inactive",
+        risk_level: "low",
+        approval_required: false,
+        metadata: {
+          source: "dashboard",
+          draft_type: "manual"
+        }
+      });
+
+      setWorkflowDraftForm(INITIAL_WORKFLOW_DRAFT_FORM);
+      setWorkflowDraftNotice("Workflow draft saved.");
+      setIsLoadingSavedWorkflows(true);
+      await loadSavedWorkflows();
+    } catch (error) {
+      setWorkflowDraftNotice(getSafeErrorMessage(error, "Failed to save workflow draft."));
+    } finally {
+      setIsSavingWorkflowDraft(false);
     }
   }
 
@@ -2003,6 +2161,140 @@ export default function DashboardPage() {
             Create workflow = future. Execute workflow = disabled. Activate workflow = disabled.
           </p>
         </div>
+
+        <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-[#3E362E]">Subscription-aware n8n state</p>
+            <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#A36A58]">
+              {currentUserRole === "admin" ? "admin" : currentSubscriptionPlan}
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+            {getN8nPlanNote(currentSubscriptionPlan, currentUserRole)}
+          </p>
+          <p className="mt-2 text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+            {savedWorkflowLimit === null
+              ? "Saved workflow limit: unlimited"
+              : `Saved workflow limit: ${savedWorkflowLimit} | Used: ${activeSavedWorkflowCount}`}
+          </p>
+        </div>
+
+        {canUseN8n ? (
+          <div className="space-y-4 rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-[#3E362E]">Save Draft Workflow</p>
+              <p className="text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+                Store workflow metadata only. No external n8n connection, activation, or execution is used.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-[#3E362E]">Draft name</span>
+                <input
+                  value={workflowDraftForm.name}
+                  onChange={(event) => setWorkflowDraftForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Email summary draft"
+                  className="w-full rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-[15px] text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.4)] focus:border-[#A36A58]"
+                />
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-[#3E362E]">Description</span>
+                <textarea
+                  value={workflowDraftForm.description}
+                  onChange={(event) => setWorkflowDraftForm((current) => ({ ...current, description: event.target.value }))}
+                  placeholder="Short note about what this workflow draft should do."
+                  rows={3}
+                  className="w-full rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-[15px] text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.4)] focus:border-[#A36A58]"
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleWorkflowDraftSave}
+                disabled={
+                  isSavingWorkflowDraft ||
+                  !workflowDraftForm.name.trim() ||
+                  (savedWorkflowLimit !== null && activeSavedWorkflowCount >= savedWorkflowLimit)
+                }
+                className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSavingWorkflowDraft ? "Saving draft..." : "Save Draft Workflow"}
+              </button>
+              <span className="text-xs text-[rgba(62,54,46,0.58)]">
+                Drafts stay inactive and never call external n8n.
+              </span>
+            </div>
+
+            {workflowDraftNotice ? (
+              <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                {workflowDraftNotice}
+              </div>
+            ) : null}
+
+            <div className="space-y-3 rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-[#3E362E]">Saved workflows</p>
+                <span className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.56)]">
+                  {activeSavedWorkflowCount}/{savedWorkflowLimit === null ? "∞" : savedWorkflowLimit}
+                </span>
+              </div>
+
+              {isLoadingSavedWorkflows ? (
+                <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                  Loading saved workflow drafts...
+                </div>
+              ) : savedWorkflowsNotice ? (
+                <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                  {savedWorkflowsNotice}
+                </div>
+              ) : savedWorkflows.length ? (
+                <div className="space-y-3">
+                  {savedWorkflows.map((workflow) => (
+                    <div key={workflow.id} className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-[#3E362E]">{workflow.name}</p>
+                          <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.64)]">
+                            {truncateText(workflow.description, 110)}
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#A36A58]">
+                          {getWorkflowStatusLabel(workflow.status)}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[rgba(62,54,46,0.58)]">
+                        <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                          {truncateText(workflow.triggerType, 18)}
+                        </span>
+                        <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                          {formatDateTime(workflow.createdAt)}
+                        </span>
+                        <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                          Updated {formatDateTime(workflow.updatedAt)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                  No saved workflow drafts yet.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+            <p className="text-sm font-semibold text-[#3E362E]">n8n locked on Free</p>
+            <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+              Your Free plan does not include n8n access. Upgrade to Pro or Executive to save workflow drafts.
+            </p>
+          </div>
+        )}
 
         <p className="text-xs text-[rgba(62,54,46,0.6)]">
           This workspace can plan automation requirements, but it cannot run imported code or execute workflows in MVP mode.

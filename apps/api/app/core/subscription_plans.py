@@ -52,5 +52,13 @@ def get_subscription_plan_limits(plan: SubscriptionPlan) -> SubscriptionPlanLimi
         raise ValueError(f"Unknown subscription plan: {plan}.") from exc
 
 
+def can_access_n8n(plan: SubscriptionPlan) -> bool:
+    return get_subscription_plan_limits(plan).n8n_access
+
+
+def get_max_saved_workflows(plan: SubscriptionPlan) -> int:
+    return get_subscription_plan_limits(plan).max_saved_workflows
+
+
 def is_admin_role(role: str | None) -> bool:
     return role in {ROLE_ADMIN, LEGACY_ROLE_OWNER}

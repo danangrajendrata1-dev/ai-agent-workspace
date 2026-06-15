@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.n8n_workflow import N8nWorkflow
@@ -37,6 +37,15 @@ def list_by_owner(db: Session, owner_id: uuid.UUID) -> list[N8nWorkflow]:
         .order_by(N8nWorkflow.created_at.desc())
     )
     return list(db.execute(statement).scalars().all())
+
+
+def count_saved_by_owner(db: Session, owner_id: uuid.UUID) -> int:
+    statement = select(func.count(N8nWorkflow.id)).where(
+        N8nWorkflow.owner_id == owner_id,
+        N8nWorkflow.deleted_at.is_(None),
+        N8nWorkflow.status != "disabled",
+    )
+    return db.execute(statement).scalar_one()
 
 
 def update(db: Session, workflow: N8nWorkflow, workflow_data: dict) -> N8nWorkflow:

@@ -33,5 +33,6 @@ def test_no_disallowed_execute_suffix_routes_are_registered(registered_paths):
             disallowed.append(path)
 
     assert "/n8n-workflows/{id}/execute" not in registered_paths
+    assert "/n8n-workflows/{workflow_id}/activate" not in registered_paths
     assert "/github-imports/{id}/execute" not in registered_paths
     assert not disallowed, f"Disallowed execute routes found: {sorted(disallowed)}"

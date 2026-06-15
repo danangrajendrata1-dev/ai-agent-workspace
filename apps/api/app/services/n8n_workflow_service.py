@@ -5,7 +5,13 @@ from datetime import UTC, datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.subscription_plans import (
+    can_access_n8n,
+    get_max_saved_workflows,
+    is_admin_role,
+)
 from app.repositories import n8n_workflow_repository
+from app.repositories import user_repository
 from app.schemas.n8n_workflow import N8nWorkflowCreate, N8nWorkflowResponse, N8nWorkflowUpdate
 from app.services import log_service
 
@@ -72,6 +78,55 @@ def validate_no_plaintext_secret(
         )
 
 
+def require_n8n_access(db: Session, *, owner_id: uuid.UUID) -> None:
+    user = user_repository.get_by_id(db, owner_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    if is_admin_role(user.role):
+        return
+
+    if not can_access_n8n(user.subscription_plan):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your Free plan does not include n8n access. Upgrade to Pro or Executive to save workflows.",
+        )
+
+
+def enforce_workflow_quota(db: Session, *, owner_id: uuid.UUID) -> None:
+    user = user_repository.get_by_id(db, owner_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+
+    if is_admin_role(user.role):
+        return
+
+    max_saved_workflows = get_max_saved_workflows(user.subscription_plan)
+    saved_workflow_count = n8n_workflow_repository.count_saved_by_owner(db, owner_id)
+    if saved_workflow_count < max_saved_workflows:
+        return
+
+    if user.subscription_plan == "pro":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your Pro plan allows 1 saved workflow. Upgrade to Executive to save more.",
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            f"Your {user.subscription_plan.capitalize()} plan allows up to {max_saved_workflows} saved workflows. "
+            "Upgrade to Executive to save more."
+        ),
+    )
+
+
 def enforce_risk_rules(workflow_data: dict) -> dict:
     normalized = dict(workflow_data)
     risk_level = normalized.get("risk_level")
@@ -107,12 +162,15 @@ def serialize_workflow(workflow) -> N8nWorkflowResponse:
 
 
 def create_workflow(db: Session, *, owner_id: uuid.UUID, payload: N8nWorkflowCreate) -> N8nWorkflowResponse:
+    require_n8n_access(db, owner_id=owner_id)
+    enforce_workflow_quota(db, owner_id=owner_id)
     validate_no_plaintext_secret(payload.webhook_url_reference, payload.metadata)
 
     workflow_data = enforce_risk_rules(payload.model_dump())
     workflow_data["owner_id"] = owner_id
     workflow_data["slug"] = ensure_unique_slug(db, slug=normalize_slug(payload.slug or payload.name))
     workflow_data["metadata_json"] = workflow_data.pop("metadata", None)
+    workflow_data["status"] = "inactive" if workflow_data.get("status") != "disabled" else "disabled"
 
     workflow = n8n_workflow_repository.create(db, workflow_data)
     log_service.record_activity(
@@ -130,11 +188,13 @@ def create_workflow(db: Session, *, owner_id: uuid.UUID, payload: N8nWorkflowCre
 
 
 def list_workflows(db: Session, *, owner_id: uuid.UUID) -> list[N8nWorkflowResponse]:
+    require_n8n_access(db, owner_id=owner_id)
     workflows = n8n_workflow_repository.list_by_owner(db, owner_id)
     return [serialize_workflow(workflow) for workflow in workflows]
 
 
 def get_workflow(db: Session, *, owner_id: uuid.UUID, workflow_id: uuid.UUID) -> N8nWorkflowResponse:
+    require_n8n_access(db, owner_id=owner_id)
     workflow = n8n_workflow_repository.get_by_id(db, owner_id, workflow_id)
     if workflow is None:
         raise HTTPException(
@@ -151,6 +211,7 @@ def update_workflow(
     workflow_id: uuid.UUID,
     payload: N8nWorkflowUpdate,
 ) -> N8nWorkflowResponse:
+    require_n8n_access(db, owner_id=owner_id)
     workflow = n8n_workflow_repository.get_by_id(db, owner_id, workflow_id)
     if workflow is None:
         raise HTTPException(
@@ -173,6 +234,7 @@ def update_workflow(
     }
     validate_no_plaintext_secret(candidate["webhook_url_reference"], candidate["metadata"])
     candidate = enforce_risk_rules(candidate)
+    candidate["status"] = "disabled" if candidate.get("status") == "disabled" else "inactive"
 
     if "slug" in update_data or "name" in update_data:
         source_slug = update_data.get("slug") or update_data.get("name") or workflow.slug
@@ -200,6 +262,7 @@ def update_workflow(
 
 
 def delete_workflow(db: Session, *, owner_id: uuid.UUID, workflow_id: uuid.UUID) -> None:
+    require_n8n_access(db, owner_id=owner_id)
     workflow = n8n_workflow_repository.get_by_id(db, owner_id, workflow_id)
     if workflow is None:
         raise HTTPException(

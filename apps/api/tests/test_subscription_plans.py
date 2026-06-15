@@ -7,7 +7,9 @@ from app.core.subscription_plans import (
     SUBSCRIPTION_PLAN_EXECUTIVE,
     SUBSCRIPTION_PLAN_FREE,
     SUBSCRIPTION_PLAN_PRO,
+    can_access_n8n,
     get_subscription_plan_limits,
+    get_max_saved_workflows,
     is_admin_role,
 )
 
@@ -41,6 +43,15 @@ class SubscriptionPlansTest(unittest.TestCase):
     def test_unknown_plan_raises(self):
         with self.assertRaises(ValueError):
             get_subscription_plan_limits("starter")  # type: ignore[arg-type]
+
+    def test_n8n_access_and_workflow_limits(self):
+        self.assertFalse(can_access_n8n(SUBSCRIPTION_PLAN_FREE))
+        self.assertTrue(can_access_n8n(SUBSCRIPTION_PLAN_PRO))
+        self.assertTrue(can_access_n8n(SUBSCRIPTION_PLAN_EXECUTIVE))
+
+        self.assertEqual(get_max_saved_workflows(SUBSCRIPTION_PLAN_FREE), 0)
+        self.assertEqual(get_max_saved_workflows(SUBSCRIPTION_PLAN_PRO), 1)
+        self.assertEqual(get_max_saved_workflows(SUBSCRIPTION_PLAN_EXECUTIVE), 10)
 
 
 if __name__ == "__main__":

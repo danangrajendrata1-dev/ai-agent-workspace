@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
-from app.core.subscription_plans import is_admin_role
+from app.core.subscription_plans import can_access_n8n, is_admin_role
 from app.services import auth_service
 
 
@@ -42,4 +42,17 @@ def require_owner(current_user=Depends(get_current_user)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions.",
         )
+    return current_user
+
+
+def require_n8n_access(current_user=Depends(get_current_user)):
+    if is_admin_role(current_user.role):
+        return current_user
+
+    if not can_access_n8n(current_user.subscription_plan):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your Free plan does not include n8n access. Upgrade to Pro or Executive to save workflows.",
+        )
+
     return current_user
