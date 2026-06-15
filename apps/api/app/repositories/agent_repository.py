@@ -22,6 +22,14 @@ def get_by_id(db: Session, owner_id: uuid.UUID, agent_id: uuid.UUID) -> Agent | 
     return db.execute(statement).scalar_one_or_none()
 
 
+def get_by_id_for_admin(db: Session, agent_id: uuid.UUID) -> Agent | None:
+    statement = select(Agent).where(
+        Agent.id == agent_id,
+        Agent.deleted_at.is_(None),
+    )
+    return db.execute(statement).scalar_one_or_none()
+
+
 def get_by_slug(db: Session, slug: str) -> Agent | None:
     statement = select(Agent).where(
         Agent.slug == slug,

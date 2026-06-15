@@ -162,12 +162,21 @@ export function getAgent(id, options) {
   return get(`/agents/${id}`, options);
 }
 
+export function getAgentActiveSkills(id, options) {
+  ensureIdentifier(id, "agent");
+  return get(`/agents/${id}/active-skills`, options);
+}
+
 export function createAgent(payload, options) {
   return post("/agents", payload, options);
 }
 
 export function getSkills(options) {
   return get("/skills", options);
+}
+
+export function getSkillLibrary(options) {
+  return get("/skills/library", options);
 }
 
 export function getModelProviders(options) {
@@ -220,11 +229,6 @@ export function getPendingApprovals(options) {
 }
 
 
-export function getGithubImports(options) {
-  return get("/github-imports", options);
-}
-
-
 export function previewGithubSkillImport(payload, options) {
   return post("/github-imports/skills/preview", payload, options);
 }
@@ -236,6 +240,18 @@ export function approveGithubSkillImport(importId, payload, options) {
   }
 
   return post(`/github-imports/${importId}/approve-skill`, payload, options);
+}
+
+export function attachImportedSkillToAgent(agentId, skillId, options) {
+  ensureIdentifier(agentId, "agent");
+  ensureIdentifier(skillId, "skill");
+  return post(`/agents/${agentId}/skills/imported/${skillId}`, undefined, options);
+}
+
+export function detachImportedSkillFromAgent(agentId, skillId, options) {
+  ensureIdentifier(agentId, "agent");
+  ensureIdentifier(skillId, "skill");
+  return remove(`/agents/${agentId}/skills/imported/${skillId}`, options);
 }
 
 

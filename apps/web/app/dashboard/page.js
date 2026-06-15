@@ -9,16 +9,19 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import {
   approveGithubSkillImport,
+  attachImportedSkillToAgent,
   createAgent,
+  detachImportedSkillFromAgent,
   get,
   getActivityLogs,
   getAgent,
+  getAgentActiveSkills,
   getCurrentUser,
-  getGithubImports,
   getPendingApprovals,
   getModelProviders,
   getTasks,
   getSkills,
+  getSkillLibrary,
   post,
   previewGithubSkillImport
 } from "../../lib/apiClient";
@@ -76,6 +79,47 @@ function buildSkillViewModel(skill, index) {
   };
 }
 
+function buildSkillLibraryViewModel(skill, index) {
+  return {
+    id: String(skill?.id || buildAgentId("library-skill", index)),
+    title: skill?.title || skill?.name || `Imported skill ${index + 1}`,
+    type: skill?.skill_type || "prompt_skill",
+    status: skill?.status || "inactive",
+    importStatus: skill?.import_status || "manual",
+    securityStatus: skill?.security_status || "safe",
+    riskLevel: skill?.risk_level || "low",
+    warnings: Array.isArray(skill?.warnings) ? skill.warnings : [],
+    resourceReferences: Array.isArray(skill?.resource_references) ? skill.resource_references : [],
+    sourceUrl: skill?.source_url || "",
+    sourceReference: skill?.source_reference || "",
+    sourceBranch: skill?.source_branch || "",
+    filePath: skill?.file_path || "",
+    repoUrl: skill?.source_url || "",
+    branch: skill?.source_branch || "",
+    resourcePaths: Array.isArray(skill?.resource_references) ? skill.resource_references : [],
+    reviewStatus:
+      skill?.security_status === "blocked"
+        ? "blocked"
+        : skill?.security_status === "warning"
+          ? "review recommended"
+          : "approved",
+    importedAt: skill?.created_at || "",
+    createdAt: skill?.created_at || "",
+    isAttachable: skill?.is_attachable !== false,
+    attachBlockReason: skill?.attach_block_reason || ""
+  };
+}
+
+function buildActiveAgentSkillViewModel(assignment, index) {
+  return {
+    id: String(assignment?.id || buildAgentId("active-skill", index)),
+    skillId: String(assignment?.skill_id || assignment?.skill?.id || ""),
+    isEnabled: Boolean(assignment?.is_enabled),
+    createdAt: assignment?.created_at || "",
+    skill: buildSkillLibraryViewModel(assignment?.skill, index)
+  };
+}
+
 function buildProviderViewModel(provider, index) {
   return {
     id: String(provider?.id || buildAgentId("provider", index)),
@@ -115,78 +159,6 @@ function buildPendingApprovalViewModel(approval, index) {
     createdAt: approval?.created_at || "",
     status: approval?.status || "pending"
   };
-}
-
-function inferGitHubSkillImportType(contentPreview) {
-  const normalized = String(contentPreview || "").trimStart();
-
-  if (!normalized) {
-    return "";
-  }
-
-  if (normalized.startsWith("{")) {
-    return "manifest_skill";
-  }
-
-  if (/^```(?:json)?\s*[\r\n]/i.test(normalized)) {
-    return "manifest_skill";
-  }
-
-  return "markdown_instruction";
-}
-
-function buildImportedGithubSkillViewModel(skill, githubImport) {
-  const fileTitle = String(githubImport?.file_path || "")
-    .split("/")
-    .filter(Boolean)
-    .pop()
-    ?.replace(/\.md$/i, "");
-
-  return {
-    id: String(skill?.id || githubImport?.id || fileTitle || "github-skill"),
-    title: skill?.name || fileTitle || "Imported GitHub skill",
-    type: githubImport?.skill_import_type || inferGitHubSkillImportType(githubImport?.content_preview),
-    status: skill?.status || githubImport?.status || "inactive",
-    importStatus: githubImport?.status || "imported",
-    riskLevel: skill?.riskLevel || "unknown",
-    reviewStatus: githubImport?.review_notes ? "reviewed" : "approved",
-    repoUrl: githubImport?.repo_url || "",
-    branch: githubImport?.branch || "",
-    filePath: githubImport?.file_path || "",
-    commitSha: githubImport?.commit_sha || "",
-    contentPreview: githubImport?.content_preview || "",
-    inspectionWarnings: Array.isArray(githubImport?.inspection_warnings) ? githubImport.inspection_warnings : [],
-    inspectionErrors: Array.isArray(githubImport?.inspection_errors) ? githubImport.inspection_errors : [],
-    resourcePaths: Array.isArray(githubImport?.resource_paths) ? githubImport.resource_paths : [],
-    safeResourcePaths: Array.isArray(githubImport?.safe_resource_paths) ? githubImport.safe_resource_paths : [],
-    riskyResourcePaths: Array.isArray(githubImport?.risky_resource_paths) ? githubImport.risky_resource_paths : [],
-    blockedResourcePaths: Array.isArray(githubImport?.blocked_resource_paths)
-      ? githubImport.blocked_resource_paths
-      : [],
-    hasExecutableResources: Boolean(githubImport?.has_executable_resources),
-    requiresReview: Boolean(githubImport?.requires_review),
-    importedAt: githubImport?.created_at || "",
-    createdAt: skill?.createdAt || "",
-    sourceId: skill?.sourceId || String(githubImport?.id || ""),
-  };
-}
-
-function buildImportedGithubSkillCatalog(skills, githubImports) {
-  const githubImportMap = new Map(
-    githubImports.map((item) => [String(item?.id || ""), item])
-  );
-
-  return skills
-    .filter((skill) => skill?.sourceType === "github")
-    .map((skill) => {
-      const githubImport = skill.sourceId ? githubImportMap.get(skill.sourceId) : null;
-      return buildImportedGithubSkillViewModel(skill, githubImport);
-    })
-    .sort((left, right) => {
-      const leftTime = new Date(left.importedAt || left.createdAt || 0).getTime();
-      const rightTime = new Date(right.importedAt || right.createdAt || 0).getTime();
-      return rightTime - leftTime;
-    });
 }
 
 function buildAgentPayload(form, providerOptions) {
@@ -505,10 +477,10 @@ export default function DashboardPage() {
     agents: []
   });
   const [availableSkills, setAvailableSkills] = useState([]);
-  const [githubImports, setGithubImports] = useState([]);
+  const [skillLibrary, setSkillLibrary] = useState([]);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [isLoadingSkills, setIsLoadingSkills] = useState(true);
-  const [isLoadingGithubImports, setIsLoadingGithubImports] = useState(true);
+  const [isLoadingSkillLibrary, setIsLoadingSkillLibrary] = useState(true);
   const [isLoadingProviders, setIsLoadingProviders] = useState(true);
   const [activityLogs, setActivityLogs] = useState([]);
   const [isLoadingActivityLogs, setIsLoadingActivityLogs] = useState(true);
@@ -522,8 +494,11 @@ export default function DashboardPage() {
   const [activeAgentDetail, setActiveAgentDetail] = useState(null);
   const [isLoadingActiveAgentDetail, setIsLoadingActiveAgentDetail] = useState(true);
   const [activeAgentDetailNotice, setActiveAgentDetailNotice] = useState("");
+  const [activeAgentSkills, setActiveAgentSkills] = useState([]);
+  const [isLoadingActiveAgentSkills, setIsLoadingActiveAgentSkills] = useState(true);
+  const [activeAgentSkillsNotice, setActiveAgentSkillsNotice] = useState("");
   const [skillLoadNotice, setSkillLoadNotice] = useState("");
-  const [githubImportsNotice, setGithubImportsNotice] = useState("");
+  const [skillLibraryNotice, setSkillLibraryNotice] = useState("");
   const [selectedImportedGithubSkillId, setSelectedImportedGithubSkillId] = useState("");
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [savedWorkflows, setSavedWorkflows] = useState([]);
@@ -562,6 +537,8 @@ export default function DashboardPage() {
   const canUseN8n = currentUserRole === "admin" || currentSubscriptionPlan !== "free";
   const savedWorkflowLimit = currentUserRole === "admin" ? null : currentSubscriptionPlan === "pro" ? 1 : currentSubscriptionPlan === "executive" ? 10 : 0;
   const activeSavedWorkflowCount = savedWorkflows.filter((workflow) => workflow.status !== "disabled").length;
+  const [skillLibraryActionNotice, setSkillLibraryActionNotice] = useState("");
+  const [skillAssignmentActionId, setSkillAssignmentActionId] = useState("");
   const loadedWorkspaceRef = useRef(false);
 
   const loadSavedWorkflows = useCallback(
@@ -668,15 +645,21 @@ export default function DashboardPage() {
         getCurrentUser(),
         get("/agents"),
         getSkills(),
-        getModelProviders(),
-        getGithubImports()
+        getSkillLibrary(),
+        getModelProviders()
       ]);
 
       if (!isMounted) {
         return;
       }
 
-      const [currentUserResult, agentsResult, skillsResult, providersResult, githubImportsResult] = results;
+      const [
+        currentUserResult,
+        agentsResult,
+        skillsResult,
+        skillLibraryResult,
+        providersResult
+      ] = results;
       const currentUser =
         currentUserResult.status === "fulfilled" ? currentUserResult.value : null;
       const normalizedAgents =
@@ -710,14 +693,14 @@ export default function DashboardPage() {
       }
       setIsLoadingSkills(false);
 
-      if (githubImportsResult.status === "fulfilled") {
-        setGithubImports(normalizeCollection(githubImportsResult.value));
-        setGithubImportsNotice("");
+      if (skillLibraryResult.status === "fulfilled") {
+        setSkillLibrary(normalizeCollection(skillLibraryResult.value).map(buildSkillLibraryViewModel));
+        setSkillLibraryNotice("");
       } else {
-        setGithubImports([]);
-        setGithubImportsNotice("Imported skills preview unavailable.");
+        setSkillLibrary([]);
+        setSkillLibraryNotice("Skill library belum bisa dimuat. Preview import tetap tersedia.");
       }
-      setIsLoadingGithubImports(false);
+      setIsLoadingSkillLibrary(false);
 
       if (providersResult.status === "fulfilled") {
         setAvailableProviders(normalizeCollection(providersResult.value).map(buildProviderViewModel));
@@ -877,6 +860,51 @@ export default function DashboardPage() {
     };
   }, [activeAgentId]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadActiveAgentSkills() {
+      if (!activeAgentId) {
+        setActiveAgentSkills([]);
+        setActiveAgentSkillsNotice("Select an active associate to view attached skills.");
+        setIsLoadingActiveAgentSkills(false);
+        return;
+      }
+
+      setIsLoadingActiveAgentSkills(true);
+
+      try {
+        const response = await getAgentActiveSkills(activeAgentId);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setActiveAgentSkills(
+          normalizeCollection(response).map((assignment, index) => buildActiveAgentSkillViewModel(assignment, index))
+        );
+        setActiveAgentSkillsNotice("");
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setActiveAgentSkills([]);
+        setActiveAgentSkillsNotice(getSafeErrorMessage(error, "Active skills unavailable."));
+      } finally {
+        if (isMounted) {
+          setIsLoadingActiveAgentSkills(false);
+        }
+      }
+    }
+
+    loadActiveAgentSkills();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeAgentId]);
+
   const allAgents = useMemo(() => workspace.agents, [workspace.agents]);
 
   const pinnedAgents = useMemo(
@@ -903,10 +931,7 @@ export default function DashboardPage() {
 
     return providerName || activeAgentDetail.default_model_name || "";
   }, [activeAgentDetail, availableProviders]);
-  const importedGithubSkills = useMemo(
-    () => buildImportedGithubSkillCatalog(availableSkills, githubImports),
-    [availableSkills, githubImports]
-  );
+  const importedGithubSkills = useMemo(() => skillLibrary, [skillLibrary]);
   const selectedImportedGithubSkill = useMemo(() => {
     if (!importedGithubSkills.length) {
       return null;
@@ -1094,11 +1119,28 @@ export default function DashboardPage() {
     }));
   }
 
+  async function refreshActiveAgentSkills(targetAgentId = activeAgentId) {
+    if (!targetAgentId) {
+      setActiveAgentSkills([]);
+      setActiveAgentSkillsNotice("Select an active associate to view attached skills.");
+      return;
+    }
+
+    const response = await getAgentActiveSkills(targetAgentId);
+    setActiveAgentSkills(
+      normalizeCollection(response).map((assignment, index) => buildActiveAgentSkillViewModel(assignment, index))
+    );
+    setActiveAgentSkillsNotice("");
+  }
+
   async function refreshImportedGithubSkills() {
-    setIsLoadingGithubImports(true);
+    setIsLoadingSkillLibrary(true);
 
     try {
-      const [skillsResult, githubImportsResult] = await Promise.allSettled([getSkills(), getGithubImports()]);
+      const [skillsResult, skillLibraryResult] = await Promise.allSettled([
+        getSkills(),
+        getSkillLibrary()
+      ]);
 
       if (skillsResult.status === "fulfilled") {
         setAvailableSkills(normalizeCollection(skillsResult.value).map(buildSkillViewModel));
@@ -1107,14 +1149,61 @@ export default function DashboardPage() {
         setSkillLoadNotice("Daftar skill belum bisa dimuat ulang. Form tetap bisa dipakai.");
       }
 
-      if (githubImportsResult.status === "fulfilled") {
-        setGithubImports(normalizeCollection(githubImportsResult.value));
-        setGithubImportsNotice("");
+      if (skillLibraryResult.status === "fulfilled") {
+        setSkillLibrary(normalizeCollection(skillLibraryResult.value).map(buildSkillLibraryViewModel));
+        setSkillLibraryNotice("");
       } else {
-        setGithubImportsNotice("Imported skills list unavailable right now.");
+        setSkillLibraryNotice("Skill library belum bisa dimuat ulang.");
       }
+
     } finally {
-      setIsLoadingGithubImports(false);
+      setIsLoadingSkillLibrary(false);
+    }
+  }
+
+  async function handleAttachImportedSkill(skillId) {
+    if (!activeAgentDetail?.id) {
+      setSkillLibraryActionNotice("Select an active associate before attaching a skill.");
+      return;
+    }
+
+    setSkillAssignmentActionId(skillId);
+    setSkillLibraryActionNotice("Attaching imported skill...");
+
+    try {
+      await attachImportedSkillToAgent(activeAgentDetail.id, skillId);
+      await Promise.all([
+        refreshActiveAgentSkills(activeAgentDetail.id),
+        refreshImportedGithubSkills()
+      ]);
+      setSkillLibraryActionNotice("Imported skill attached to the active associate.");
+    } catch (error) {
+      setSkillLibraryActionNotice(getSafeErrorMessage(error, "Unable to attach imported skill."));
+    } finally {
+      setSkillAssignmentActionId("");
+    }
+  }
+
+  async function handleDetachImportedSkill(skillId) {
+    if (!activeAgentDetail?.id) {
+      setActiveAgentSkillsNotice("Select an active associate before detaching a skill.");
+      return;
+    }
+
+    setSkillAssignmentActionId(skillId);
+    setActiveAgentSkillsNotice("Detaching imported skill...");
+
+    try {
+      await detachImportedSkillFromAgent(activeAgentDetail.id, skillId);
+      await Promise.all([
+        refreshActiveAgentSkills(activeAgentDetail.id),
+        refreshImportedGithubSkills()
+      ]);
+      setActiveAgentSkillsNotice("Imported skill detached.");
+    } catch (error) {
+      setActiveAgentSkillsNotice(getSafeErrorMessage(error, "Unable to detach imported skill."));
+    } finally {
+      setSkillAssignmentActionId("");
     }
   }
 
@@ -1730,8 +1819,7 @@ export default function DashboardPage() {
                   value:
                     githubSkillPreviewResult.skill_import_type ||
                     githubSkillPreviewResult.import_type ||
-                    inferGitHubSkillImportType(githubSkillPreviewResult.content_preview) ||
-                    "-"
+                    "markdown_instruction"
                 },
                 { label: "Created at", value: formatDateTime(githubSkillPreviewResult.created_at) },
                 { label: "Updated at", value: formatDateTime(githubSkillPreviewResult.updated_at) }
@@ -1968,9 +2056,9 @@ export default function DashboardPage() {
             <section className="space-y-4 rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-[#3E362E]">Imported GitHub skills</p>
+                  <p className="text-sm font-semibold text-[#3E362E]">Skill Library</p>
                   <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
-                    Stored inactive, quarantine-style, and read-only. Imported skills are not executable.
+                    Imported GitHub skills stay inactive in quarantine-style storage. Attaching a skill makes it active on an agent, not executable.
                   </p>
                 </div>
                 <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.72)]">
@@ -1978,10 +2066,10 @@ export default function DashboardPage() {
                 </span>
               </div>
 
-              {githubImportsNotice && importedGithubSkills.length > 0 ? (
+              {skillLibraryNotice ? (
                 <div className="rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p>{truncateText(githubImportsNotice, 180)}</p>
+                    <p>{truncateText(skillLibraryNotice, 180)}</p>
                     <button
                       type="button"
                       onClick={() => refreshImportedGithubSkills()}
@@ -1993,27 +2081,17 @@ export default function DashboardPage() {
                 </div>
               ) : null}
 
-              {isLoadingGithubImports ? (
+              {skillLibraryActionNotice ? (
+                <div className="rounded-[14px] border border-[rgba(96,112,86,0.16)] bg-[rgba(96,112,86,0.08)] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                  {truncateText(skillLibraryActionNotice, 180)}
+                </div>
+              ) : null}
+
+              {isLoadingSkillLibrary ? (
                 <div className="space-y-3">
                   <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6]" />
                   <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6]" />
                   <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6]" />
-                </div>
-              ) : githubImportsNotice && importedGithubSkills.length === 0 ? (
-                <div className="rounded-[16px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] p-5">
-                  <p className="text-sm font-medium text-[#3E362E]">
-                    Imported skills list unavailable right now.
-                  </p>
-                  <p className="mt-2 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
-                    The existing imported skills stay stored safely. Retry when the API is available again.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => refreshImportedGithubSkills()}
-                    className="mt-4 rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs font-medium text-[#3E362E] transition hover:bg-[#efe7d6]"
-                  >
-                    Retry
-                  </button>
                 </div>
               ) : importedGithubSkills.length === 0 ? (
                 <div className="rounded-[16px] border border-dashed border-[rgba(62,54,46,0.18)] bg-[#F5F1E6] p-5">
@@ -2021,78 +2099,116 @@ export default function DashboardPage() {
                     No imported skills yet. Preview a GitHub SKILL.md file and import it to quarantine.
                   </p>
                   <p className="mt-2 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
-                    Imported skills will appear here as inactive records with safe metadata only.
+                    Imported skills will appear here as safe metadata-only records.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {importedGithubSkills.map((item) => (
-                    <article
-                      key={item.id}
-                      className={`rounded-[16px] border p-4 ${
-                        selectedImportedGithubSkillId === item.id
-                          ? "border-[rgba(163,106,88,0.28)] bg-white shadow-[0_10px_26px_rgba(62,54,46,0.08)]"
-                          : "border-[rgba(62,54,46,0.14)] bg-[#F5F1E6]"
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
-                          <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
-                            Read-only imported skill record.
-                          </p>
-                          <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.5)]">
-                            {item.resourcePaths.length > 0
-                              ? `${item.resourcePaths.length} resource reference${item.resourcePaths.length === 1 ? "" : "s"} detected`
-                              : "No resource references detected"}
-                          </p>
-                        </div>
+                  {importedGithubSkills.map((item) => {
+                    const canAttach = item.isAttachable && Boolean(activeAgentDetail?.id);
+                    const attachDisabledReason = !activeAgentDetail?.id
+                      ? "Select an active associate first."
+                      : item.attachBlockReason || "";
 
-                        <div className="flex flex-wrap items-center gap-2">
-                          {item.type ? (
+                    return (
+                      <article
+                        key={item.id}
+                        className={`rounded-[16px] border p-4 ${
+                          selectedImportedGithubSkillId === item.id
+                            ? "border-[rgba(163,106,88,0.28)] bg-white shadow-[0_10px_26px_rgba(62,54,46,0.08)]"
+                            : "border-[rgba(62,54,46,0.14)] bg-[#F5F1E6]"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
+                            <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                              Read-only imported skill record.
+                            </p>
+                            <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.5)]">
+                              {item.resourceReferences.length > 0
+                                ? `${item.resourceReferences.length} resource reference${item.resourceReferences.length === 1 ? "" : "s"} detected`
+                                : "No resource references detected"}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
                               {item.type}
                             </span>
-                          ) : null}
-                          <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
-                            {item.status || "inactive"}
-                          </span>
+                            <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
+                              {item.status || "inactive"}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedImportedGithubSkillId(item.id)}
+                              className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.72)] transition hover:bg-[#efe7d6]"
+                            >
+                              View details
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          {[
+                            { label: "Import status", value: item.importStatus || "-" },
+                            { label: "Security status", value: item.securityStatus || "-" },
+                            { label: "Risk level", value: item.riskLevel || "-" },
+                            { label: "Source URL", value: item.sourceUrl || "-" },
+                            { label: "Source reference", value: item.sourceReference || "-" },
+                            { label: "Branch", value: item.sourceBranch || "-" },
+                            { label: "File path", value: item.filePath || "-" },
+                            { label: "Created at", value: formatDateTime(item.createdAt) }
+                          ].map((field) => (
+                            <div
+                              key={`${item.id}-${field.label}`}
+                              className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#E5E0D3] px-4 py-3"
+                            >
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                                {field.label}
+                              </p>
+                              <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">
+                                {field.value || "-"}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {item.warnings.length > 0 ? (
+                          <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3">
+                            <p className="text-xs uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                              Warnings
+                            </p>
+                            <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
+                              {item.warnings.map((warning, index) => (
+                                <li key={`${item.id}-warning-${index}`}>{warning}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                            {item.isAttachable
+                              ? attachDisabledReason || "Attach to an active associate to make it active on that agent."
+                              : item.attachBlockReason || "Blocked imported skill cannot be attached."}
+                          </p>
                           <button
                             type="button"
-                            onClick={() => setSelectedImportedGithubSkillId(item.id)}
-                            className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.72)] transition hover:bg-[#efe7d6]"
+                            disabled={!canAttach || skillAssignmentActionId === item.id}
+                            onClick={() => handleAttachImportedSkill(item.id)}
+                            className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
                           >
-                            View details
+                            {skillAssignmentActionId === item.id
+                              ? "Attaching..."
+                              : item.isAttachable
+                                ? "Attach"
+                                : "Blocked"}
                           </button>
                         </div>
-                      </div>
-
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        {[
-                          { label: "Import status", value: item.importStatus || "-" },
-                          { label: "Risk level", value: item.riskLevel || "-" },
-                          { label: "Review status", value: item.reviewStatus || "-" },
-                          { label: "Repository URL", value: item.repoUrl || "-" },
-                          { label: "Branch", value: item.branch || "-" },
-                          { label: "File path", value: item.filePath || "-" },
-                          { label: "Imported at", value: formatDateTime(item.importedAt) },
-                          { label: "Created at", value: formatDateTime(item.createdAt) }
-                        ].map((field) => (
-                          <div
-                            key={`${item.id}-${field.label}`}
-                            className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#E5E0D3] px-4 py-3"
-                          >
-                            <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
-                              {field.label}
-                            </p>
-                            <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">
-                              {field.value || "-"}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    );
+                  })}
                 </div>
               )}
 
@@ -2109,7 +2225,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
-                        {selectedImportedGithubSkill.type || "markdown_instruction"}
+                        {selectedImportedGithubSkill.type || "prompt_skill"}
                       </span>
                       <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
                         {selectedImportedGithubSkill.status || "inactive"}
@@ -2119,12 +2235,12 @@ export default function DashboardPage() {
 
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     {[
-                      { label: "Source URL", value: selectedImportedGithubSkill.repoUrl || "-" },
-                      { label: "Branch", value: selectedImportedGithubSkill.branch || "-" },
+                      { label: "Source URL", value: selectedImportedGithubSkill.sourceUrl || "-" },
+                      { label: "Source reference", value: selectedImportedGithubSkill.sourceReference || "-" },
+                      { label: "Branch", value: selectedImportedGithubSkill.sourceBranch || "-" },
                       { label: "File path", value: selectedImportedGithubSkill.filePath || "-" },
-                      { label: "Commit ref", value: selectedImportedGithubSkill.commitSha || "-" },
                       { label: "Import status", value: selectedImportedGithubSkill.importStatus || "-" },
-                      { label: "Review status", value: selectedImportedGithubSkill.reviewStatus || "-" }
+                      { label: "Security status", value: selectedImportedGithubSkill.securityStatus || "-" }
                     ].map((item) => (
                       <div
                         key={`detail-${item.label}`}
@@ -2146,8 +2262,8 @@ export default function DashboardPage() {
                         Resource references
                       </p>
                       <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
-                        {selectedImportedGithubSkill.resourcePaths.length > 0 ? (
-                          selectedImportedGithubSkill.resourcePaths.map((path) => (
+                        {selectedImportedGithubSkill.resourceReferences.length > 0 ? (
+                          selectedImportedGithubSkill.resourceReferences.map((path) => (
                             <li key={path}>{path}</li>
                           ))
                         ) : (
@@ -2165,41 +2281,18 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {selectedImportedGithubSkill.inspectionWarnings.length > 0 ? (
+                  {selectedImportedGithubSkill.warnings.length > 0 ? (
                     <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3">
                       <p className="text-xs uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
                         Warnings
                       </p>
                       <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
-                        {selectedImportedGithubSkill.inspectionWarnings.map((warning, index) => (
+                        {selectedImportedGithubSkill.warnings.map((warning, index) => (
                           <li key={`${selectedImportedGithubSkill.id}-warning-${index}`}>{warning}</li>
                         ))}
                       </ul>
                     </div>
                   ) : null}
-
-                  {selectedImportedGithubSkill.inspectionErrors.length > 0 ? (
-                    <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3">
-                      <p className="text-xs uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
-                        Inspection errors
-                      </p>
-                      <ul className="mt-2 space-y-1 text-sm leading-6 text-[#3E362E]">
-                        {selectedImportedGithubSkill.inspectionErrors.map((error, index) => (
-                          <li key={`${selectedImportedGithubSkill.id}-error-${index}`}>{error}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-
-                  <div className="mt-4 rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#FAF7EF] p-4">
-                    <p className="text-sm font-medium text-[#3E362E]">Preview content</p>
-                    <p className="mt-1 text-xs text-[rgba(62,54,46,0.58)]">
-                      Read-only preview of the imported quarantined skill content.
-                    </p>
-                    <pre className="scrollbar-thin mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white p-4 text-sm leading-6 text-[#3E362E]">
-                      {selectedImportedGithubSkill.contentPreview || "No preview content available."}
-                    </pre>
-                  </div>
                 </div>
               ) : null}
             </section>
@@ -2622,6 +2715,80 @@ export default function DashboardPage() {
                                 {formatDateTime(activeAgentDetail.updated_at)}
                               </p>
                             </div>
+                          </div>
+
+                          <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                  Active skills
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                                  Active as instruction/capability. Not executable runtime yet.
+                                </p>
+                              </div>
+                              <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#A36A58]">
+                                Read-only
+                              </span>
+                            </div>
+
+                            {activeAgentSkillsNotice ? (
+                              <div className="mt-3 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                                {activeAgentSkillsNotice}
+                              </div>
+                            ) : null}
+
+                            {isLoadingActiveAgentSkills ? (
+                              <div className="mt-3 space-y-3">
+                                <div className="h-14 animate-pulse rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white" />
+                                <div className="h-14 animate-pulse rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white" />
+                              </div>
+                            ) : activeAgentSkills.length ? (
+                              <div className="mt-3 space-y-3">
+                                {activeAgentSkills.map((item) => (
+                                  <div
+                                    key={item.id}
+                                    className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white px-4 py-3"
+                                  >
+                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-semibold text-[#3E362E]">
+                                          {item.skill.title}
+                                        </p>
+                                        <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                                          {item.skill.type} | {item.skill.status} | {item.skill.securityStatus}
+                                        </p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDetachImportedSkill(item.skillId)}
+                                        disabled={skillAssignmentActionId === item.skillId}
+                                        className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs font-medium text-[#3E362E] transition hover:bg-[#efe7d6] disabled:cursor-not-allowed disabled:opacity-70"
+                                      >
+                                        {skillAssignmentActionId === item.skillId ? "Detaching..." : "Detach"}
+                                      </button>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[rgba(62,54,46,0.58)]">
+                                      {item.skill.sourceUrl ? (
+                                        <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                          {truncateText(item.skill.sourceUrl, 24)}
+                                        </span>
+                                      ) : null}
+                                      <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                        {truncateText(item.skill.type, 18)}
+                                      </span>
+                                      <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-2.5 py-1">
+                                        {formatDateTime(item.createdAt)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-white px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                                No active imported skills attached yet.
+                              </div>
+                            )}
                           </div>
                         </div>
                       ) : null}

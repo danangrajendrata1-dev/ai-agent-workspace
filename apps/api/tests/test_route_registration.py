@@ -9,6 +9,7 @@ EXPECTED_PATHS = {
     "/model-providers",
     "/agents",
     "/skills",
+    "/skills/library",
     "/github-imports/skills/preview",
     "/tools",
     "/memories",
@@ -18,6 +19,8 @@ EXPECTED_PATHS = {
     "/model-router/stub-test",
     "/tools/execution-stub",
     "/n8n-workflows",
+    "/agents/{agent_id}/active-skills",
+    "/agents/{agent_id}/skills/imported/{skill_id}",
 }
 
 

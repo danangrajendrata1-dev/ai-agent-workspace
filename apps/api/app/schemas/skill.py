@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 SkillSourceType = Literal["manual", "github", "template"]
 SkillRiskLevel = Literal["low", "medium", "high"]
 SkillStatus = Literal["active", "inactive", "disabled"]
+SkillImportStatus = Literal["manual", "preview", "imported", "rejected", "disabled"]
+SkillType = Literal["prompt_skill", "knowledge_skill", "tool_skill", "workflow_skill"]
+SkillSecurityStatus = Literal["safe", "warning", "blocked"]
 
 
 class SkillCreate(BaseModel):
@@ -86,6 +89,31 @@ class SkillListResponse(BaseModel):
     items: list[SkillResponse]
 
 
+class SkillLibraryItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    skill_type: SkillType
+    source_url: str | None
+    source_reference: str | None
+    source_branch: str | None
+    file_path: str | None
+    status: SkillStatus
+    import_status: SkillImportStatus
+    security_status: SkillSecurityStatus
+    risk_level: SkillRiskLevel
+    warnings: list[str] = Field(default_factory=list)
+    resource_references: list[str] = Field(default_factory=list)
+    created_at: datetime
+    is_attachable: bool = True
+    attach_block_reason: str | None = None
+
+
+class SkillLibraryListResponse(BaseModel):
+    items: list[SkillLibraryItemResponse]
+
+
 class AgentSkillAssignRequest(BaseModel):
     skill_id: uuid.UUID
     is_enabled: bool = True
@@ -99,4 +127,8 @@ class AgentSkillResponse(BaseModel):
     skill_id: uuid.UUID
     is_enabled: bool
     created_at: datetime
-    skill: SkillResponse
+    skill: SkillLibraryItemResponse
+
+
+class AgentSkillListResponse(BaseModel):
+    items: list[AgentSkillResponse]

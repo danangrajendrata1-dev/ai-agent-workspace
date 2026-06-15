@@ -37,11 +37,6 @@ def get_current_user(
 
 
 def require_owner(current_user=Depends(get_current_user)):
-    if not is_admin_role(current_user.role):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions.",
-        )
     return current_user
 
 
