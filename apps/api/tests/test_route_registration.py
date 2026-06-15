@@ -3,6 +3,7 @@ EXPECTED_PATHS = {
     "/auth/login",
     "/auth/me",
     "/auth/register",
+    "/model-provider-settings",
     "/model-providers",
     "/agents",
     "/skills",

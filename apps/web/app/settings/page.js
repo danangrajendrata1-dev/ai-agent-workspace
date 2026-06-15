@@ -8,14 +8,85 @@ import LoadingState from "../../components/LoadingState";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import SimpleTable from "../../components/SimpleTable";
 import StatusBadge from "../../components/StatusBadge";
-import { get, getCurrentUser } from "../../lib/apiClient";
+import {
+  get,
+  getCurrentUser,
+  getModelProviderSettings,
+  updateModelProviderSettings,
+} from "../../lib/apiClient";
 import { maskSensitiveReference, truncateText } from "../../lib/format";
+
+
+const MODEL_PROVIDER_OPTIONS = [
+  {
+    id: "openai",
+    label: "OpenAI",
+    description: "Preferred for general-purpose chat, reasoning, and writing."
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    description: "Good for structured analysis, long context, and careful output."
+  },
+  {
+    id: "google_gemini",
+    label: "Google Gemini",
+    description: "Useful for fast responses and broad multimodal workflows."
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    description: "Metadata-only label for routing through a preferred model hub."
+  },
+  {
+    id: "ollama_local",
+    label: "Ollama Local",
+    description: "Marks a local model preference without connecting to runtime."
+  },
+  {
+    id: "custom",
+    label: "Custom",
+    description: "Use any custom provider label that fits your workspace notes."
+  }
+];
+
+
+const CONNECTION_STATUS_LABELS = {
+  not_connected: "Not connected",
+  metadata_configured: "Metadata configured"
+};
+
+
+function getConnectionStatusLabel(value) {
+  return CONNECTION_STATUS_LABELS[value] || "Not connected";
+}
+
+
+function getConnectionStatusTone(value) {
+  return value === "metadata_configured" ? "success" : "neutral";
+}
+
+
+function normalizeInputValue(value) {
+  return value ?? "";
+}
 
 
 export default function SettingsPage() {
   const [state, setState] = useState({
     loading: true,
     currentUser: null,
+    providerSettings: {
+      item: null,
+      error: "",
+      saving: false,
+      saveError: "",
+      saveSuccess: ""
+    },
+    providerForm: {
+      preferred_provider: "",
+      preferred_model: ""
+    },
     sections: {
       providers: { items: [], error: "" },
       tools: { items: [], error: "" },
@@ -28,8 +99,9 @@ export default function SettingsPage() {
     let isMounted = true;
 
     async function loadSettingsData() {
-      const [currentUserResult, providersResult, toolsResult, skillsResult] = await Promise.allSettled([
+      const [currentUserResult, providerSettingsResult, providersResult, toolsResult, skillsResult] = await Promise.allSettled([
         getCurrentUser(),
+        getModelProviderSettings(),
         get("/model-providers"),
         get("/tools"),
         get("/skills")
@@ -46,10 +118,29 @@ export default function SettingsPage() {
       const workflowsResult = canUseN8n
         ? await Promise.allSettled([get("/n8n-workflows")]).then(([result]) => result)
         : null;
+      if (!isMounted) {
+        return;
+      }
+      const providerSettings =
+        providerSettingsResult.status === "fulfilled" ? providerSettingsResult.value : null;
 
       setState({
         loading: false,
         currentUser,
+        providerSettings: {
+          item: providerSettings,
+          error:
+            providerSettingsResult.status === "fulfilled"
+              ? ""
+              : "Failed to load model provider settings.",
+          saving: false,
+          saveError: "",
+          saveSuccess: ""
+        },
+        providerForm: {
+          preferred_provider: normalizeInputValue(providerSettings?.preferred_provider),
+          preferred_model: normalizeInputValue(providerSettings?.preferred_model)
+        },
         sections: {
           providers:
             providersResult.status === "fulfilled"
@@ -146,16 +237,91 @@ export default function SettingsPage() {
     }
   ];
 
-  const currentSubscriptionPlan = state.currentUser?.subscription_plan || "free";
-  const currentUserRole = state.currentUser?.role || "user";
-  const n8nStateNote =
-    currentUserRole === "admin"
-      ? "Admin bypasses n8n access and workflow limits."
-      : currentSubscriptionPlan === "pro"
-        ? "Pro plan can save 1 workflow draft."
-        : currentSubscriptionPlan === "executive"
-          ? "Executive plan can save up to 10 workflow drafts."
-          : "Free plan is locked. Upgrade to Pro or Executive to save workflows.";
+  const currentConnectionStatus = state.providerSettings.item?.connection_status || "not_connected";
+  const currentConnectionLabel = getConnectionStatusLabel(currentConnectionStatus);
+  const currentConnectionTone = getConnectionStatusTone(currentConnectionStatus);
+
+  async function handleSaveModelProviderSettings(event) {
+    event.preventDefault();
+
+    setState((prev) => ({
+      ...prev,
+      providerSettings: {
+        ...prev.providerSettings,
+        saving: true,
+        saveError: "",
+        saveSuccess: ""
+      }
+    }));
+
+    try {
+      const payload = {
+        preferred_provider: state.providerForm.preferred_provider || null,
+        preferred_model: state.providerForm.preferred_model.trim() || null
+      };
+      const result = await updateModelProviderSettings(payload);
+
+      setState((prev) => ({
+        ...prev,
+        providerSettings: {
+          ...prev.providerSettings,
+          item: result,
+          saving: false,
+          saveError: "",
+          saveSuccess: "Model provider metadata saved safely."
+        },
+        providerForm: {
+          preferred_provider: normalizeInputValue(result.preferred_provider),
+          preferred_model: normalizeInputValue(result.preferred_model)
+        }
+      }));
+    } catch (error) {
+      setState((prev) => ({
+        ...prev,
+        providerSettings: {
+          ...prev.providerSettings,
+          saving: false,
+          saveError: error instanceof Error ? error.message : "Failed to save model provider settings.",
+          saveSuccess: ""
+        }
+      }));
+    }
+  }
+
+  function handleProviderSelect(providerId) {
+    setState((prev) => {
+      const nextProvider = prev.providerForm.preferred_provider === providerId ? "" : providerId;
+
+      return {
+        ...prev,
+        providerForm: {
+          ...prev.providerForm,
+          preferred_provider: nextProvider
+        },
+        providerSettings: {
+          ...prev.providerSettings,
+          saveError: "",
+          saveSuccess: ""
+        }
+      };
+    });
+  }
+
+  function handleModelChange(event) {
+    const { value } = event.target;
+    setState((prev) => ({
+      ...prev,
+      providerForm: {
+        ...prev.providerForm,
+        preferred_model: value
+      },
+      providerSettings: {
+        ...prev.providerSettings,
+        saveError: "",
+        saveSuccess: ""
+      }
+    }));
+  }
 
   function renderSection(title, rows, columns, emptyMessage, error) {
     return (
@@ -170,13 +336,122 @@ export default function SettingsPage() {
     );
   }
 
+  function renderProviderSettingsSection() {
+    if (state.providerSettings.error) {
+      return (
+        <section className="space-y-3">
+          <h2 className="text-xl text-ink">Model Provider Settings</h2>
+          <ErrorState
+            title="Model provider settings unavailable"
+            description={state.providerSettings.error}
+          />
+        </section>
+      );
+    }
+
+    return (
+      <section className="space-y-3">
+        <h2 className="text-xl text-ink">Model Provider Settings</h2>
+        <div className="rounded-[28px] border border-[var(--border)] bg-white p-6 shadow-panel">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl space-y-2">
+              <p className="text-sm leading-7 text-[color:var(--muted)]">
+                Choose a preferred provider and model name. This only saves your preferred provider/model metadata. API keys and OAuth connections are not enabled yet.
+              </p>
+              <p className="text-sm leading-7 text-[color:var(--muted)]">
+                Leave both fields blank to keep the workspace in Not connected mode.
+              </p>
+            </div>
+            <StatusBadge tone={currentConnectionTone} label={currentConnectionLabel} />
+          </div>
+
+          <form className="mt-6 space-y-5" onSubmit={handleSaveModelProviderSettings}>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {MODEL_PROVIDER_OPTIONS.map((option) => {
+                const isSelected = state.providerForm.preferred_provider === option.id;
+
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => handleProviderSelect(option.id)}
+                    className={`rounded-[24px] border p-4 text-left transition ${
+                      isSelected
+                        ? "border-[color:var(--accent)] bg-[#f7f1e0]"
+                        : "border-[var(--border)] bg-[#fbfaf5] hover:border-[color:var(--accent-soft)]"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-base text-ink">{option.label}</h3>
+                        <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                          Metadata only
+                        </p>
+                      </div>
+                      {isSelected ? <StatusBadge tone="success" label="Selected" /> : null}
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">{option.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            <label className="block space-y-2">
+              <span className="text-sm uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                Preferred model name / id
+              </span>
+              <input
+                type="text"
+                value={state.providerForm.preferred_model}
+                onChange={handleModelChange}
+                placeholder="gpt-4o-mini"
+                className="w-full rounded-2xl border border-[var(--border)] bg-[#fbfaf5] px-4 py-3 text-sm text-ink outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)]"
+              />
+            </label>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="submit"
+                disabled={state.providerSettings.saving}
+                className="rounded-full border border-[color:var(--accent)] bg-[color:var(--accent)] px-5 py-3 text-sm font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {state.providerSettings.saving ? "Saving..." : "Save metadata"}
+              </button>
+              <p className="text-sm leading-6 text-[color:var(--muted)]">
+                No API keys are stored here. This screen only keeps safe preference metadata.
+              </p>
+            </div>
+
+            {state.providerSettings.saveError ? (
+              <p className="text-sm leading-6 text-[color:var(--danger)]">
+                {state.providerSettings.saveError}
+              </p>
+            ) : null}
+            {state.providerSettings.saveSuccess ? (
+              <p className="text-sm leading-6 text-[color:var(--success)]">
+                {state.providerSettings.saveSuccess}
+              </p>
+            ) : null}
+          </form>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <ProtectedRoute>
-      <AppShell title="Settings" description="Read-only backend configuration lists from safe GET endpoints. No create, update, delete, import, or execution actions are triggered here.">
+      <AppShell
+        title="Settings"
+        description="Read-only backend configuration lists and safe metadata settings from authenticated endpoints."
+      >
         {state.loading ? (
-          <LoadingState title="Loading settings data" description="Fetching safe provider, tool, skill, and n8n workflow lists..." />
+          <LoadingState
+            title="Loading settings data"
+            description="Fetching safe provider, tool, skill, workflow, and model preference data..."
+          />
         ) : (
           <div className="space-y-6">
+            {renderProviderSettingsSection()}
             {renderSection(
               "Model Providers",
               state.sections.providers.items,
@@ -205,9 +480,6 @@ export default function SettingsPage() {
               "No n8n workflow registry records are available yet.",
               state.sections.workflows.error
             )}
-            <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#f5f1e6] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
-              {n8nStateNote}
-            </div>
           </div>
         )}
       </AppShell>

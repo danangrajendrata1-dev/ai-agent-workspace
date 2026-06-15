@@ -101,6 +101,11 @@ export function get(pathname, options) {
   return request("GET", pathname, undefined, options);
 }
 
+
+export function patch(pathname, body, options) {
+  return request("PATCH", pathname, body, options);
+}
+
 export async function getCurrentUser(options = {}) {
   const token = getToken();
 
@@ -157,6 +162,16 @@ export function getSkills(options) {
 
 export function getModelProviders(options) {
   return get("/model-providers", options);
+}
+
+
+export function getModelProviderSettings(options) {
+  return get("/model-provider-settings", options);
+}
+
+
+export function updateModelProviderSettings(payload, options) {
+  return patch("/model-provider-settings", payload, options);
 }
 
 export function getActivityLogs(options) {

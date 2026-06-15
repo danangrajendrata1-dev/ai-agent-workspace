@@ -3,7 +3,23 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.middleware import RequestIDMiddleware
-from app.routes import agents, approvals, auth, github_imports, health, logs, memories, model_providers, model_router, n8n_workflows, skills, tasks, tool_execution, tools
+from app.routes import (
+    agents,
+    approvals,
+    auth,
+    github_imports,
+    health,
+    logs,
+    memories,
+    model_provider_settings,
+    model_providers,
+    model_router,
+    n8n_workflows,
+    skills,
+    tasks,
+    tool_execution,
+    tools,
+)
 
 settings = get_settings()
 
@@ -23,6 +39,7 @@ app.add_middleware(
 app.add_middleware(RequestIDMiddleware)
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(model_provider_settings.router)
 app.include_router(model_providers.router)
 app.include_router(agents.router)
 app.include_router(skills.router)

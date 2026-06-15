@@ -17,6 +17,7 @@ from app.models.memory import Memory  # noqa: F401
 from app.models.n8n_workflow import N8nWorkflow  # noqa: F401
 from app.models.model_usage_log import ModelUsageLog  # noqa: F401
 from app.models.model_provider import ModelProvider  # noqa: F401
+from app.models.model_provider_setting import ModelProviderSetting  # noqa: F401
 from app.models.skill import Skill  # noqa: F401
 from app.models.task import Task  # noqa: F401
 from app.models.task_step import TaskStep  # noqa: F401
