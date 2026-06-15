@@ -11,3 +11,4 @@ python-jose[cryptography]
 email-validator
 httpx
 pytest
+psycopg2-binary
