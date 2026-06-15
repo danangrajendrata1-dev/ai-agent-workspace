@@ -11,12 +11,15 @@ import {
   approveGithubSkillImport,
   attachImportedSkillToAgent,
   createAgent,
+  createHandoffDraft,
   detachImportedSkillFromAgent,
   get,
   getActivityLogs,
   getAgent,
   getAgentActiveSkills,
   getCurrentUser,
+  getHandoffDraft,
+  getHandoffDrafts,
   getPendingApprovals,
   getModelProviders,
   getTasks,
@@ -172,6 +175,60 @@ function buildRoutingPreviewResultViewModel(payload) {
         )
       : [],
     note: payload?.note || "Preview only, no execution."
+  };
+}
+
+function buildHandoffDraftAgentViewModel(agent) {
+  if (!agent) {
+    return null;
+  }
+
+  return {
+    id: String(agent?.agent_id || agent?.id || ""),
+    agentId: String(agent?.agent_id || agent?.id || ""),
+    name: agent?.name || "Unknown agent",
+    slug: agent?.slug || "",
+    description: agent?.description || "",
+    roleDescription: agent?.role_description || ""
+  };
+}
+
+function buildHandoffDraftSkillMatchViewModel(match, index) {
+  return {
+    id: String(match?.skill_id || buildAgentId("handoff-skill", index)),
+    skillId: String(match?.skill_id || ""),
+    title: match?.title || `Matched skill ${index + 1}`,
+    skillType: match?.skill_type || "prompt_skill",
+    matchReason: match?.match_reason || ""
+  };
+}
+
+function buildHandoffDraftViewModel(draft, index) {
+  return {
+    id: String(draft?.id || buildAgentId("handoff-draft", index)),
+    taskText: draft?.task_text || "",
+    routingConfidence: draft?.routing_confidence || "low",
+    routingReasons: Array.isArray(draft?.routing_reasons) ? draft.routing_reasons : [],
+    recommendedAgentId: draft?.recommended_agent_id ? String(draft.recommended_agent_id) : "",
+    selectedAgentId: draft?.selected_agent_id ? String(draft.selected_agent_id) : "",
+    recommendedAgent: buildHandoffDraftAgentViewModel(draft?.recommended_agent),
+    selectedAgent: buildHandoffDraftAgentViewModel(draft?.selected_agent),
+    activeSkillMatches: Array.isArray(draft?.active_skill_matches)
+      ? draft.active_skill_matches.map((match, matchIndex) =>
+          buildHandoffDraftSkillMatchViewModel(match, matchIndex)
+        )
+      : [],
+    draftPayload: {
+      taskSummary: draft?.draft_payload?.task_summary || "",
+      handoffMessage: draft?.draft_payload?.handoff_message || "",
+      suggestedSteps: Array.isArray(draft?.draft_payload?.suggested_steps)
+        ? draft.draft_payload.suggested_steps
+        : [],
+      safetyNote: draft?.draft_payload?.safety_note || "Draft only, no execution."
+    },
+    status: draft?.status || "draft",
+    createdAt: draft?.created_at || "",
+    updatedAt: draft?.updated_at || ""
   };
 }
 
@@ -559,6 +616,15 @@ export default function DashboardPage() {
   const [routingPreviewResult, setRoutingPreviewResult] = useState(null);
   const [routingPreviewNotice, setRoutingPreviewNotice] = useState("");
   const [isPreviewingAgentMatch, setIsPreviewingAgentMatch] = useState(false);
+  const [handoffDrafts, setHandoffDrafts] = useState([]);
+  const [isLoadingHandoffDrafts, setIsLoadingHandoffDrafts] = useState(true);
+  const [handoffDraftsNotice, setHandoffDraftsNotice] = useState("");
+  const [selectedHandoffDraftId, setSelectedHandoffDraftId] = useState("");
+  const [selectedHandoffDraftDetail, setSelectedHandoffDraftDetail] = useState(null);
+  const [isLoadingHandoffDraftDetail, setIsLoadingHandoffDraftDetail] = useState(false);
+  const [handoffDraftDetailNotice, setHandoffDraftDetailNotice] = useState("");
+  const [handoffDraftActionNotice, setHandoffDraftActionNotice] = useState("");
+  const [isCreatingHandoffDraft, setIsCreatingHandoffDraft] = useState(false);
   const [providerLoadNotice, setProviderLoadNotice] = useState("");
   const [savedWorkflows, setSavedWorkflows] = useState([]);
   const [isLoadingSavedWorkflows, setIsLoadingSavedWorkflows] = useState(true);
@@ -705,7 +771,8 @@ export default function DashboardPage() {
         get("/agents"),
         getSkills(),
         getSkillLibrary(),
-        getModelProviders()
+        getModelProviders(),
+        getHandoffDrafts({ query: { limit: 20, offset: 0 } })
       ]);
 
       if (!isMounted) {
@@ -717,7 +784,8 @@ export default function DashboardPage() {
         agentsResult,
         skillsResult,
         skillLibraryResult,
-        providersResult
+        providersResult,
+        handoffDraftsResult
       ] = results;
       const currentUser =
         currentUserResult.status === "fulfilled" ? currentUserResult.value : null;
@@ -769,6 +837,20 @@ export default function DashboardPage() {
         setProviderLoadNotice("Daftar provider belum bisa dimuat. Form tetap bisa dipakai.");
       }
       setIsLoadingProviders(false);
+
+      if (handoffDraftsResult.status === "fulfilled") {
+        const nextDrafts = normalizeCollection(handoffDraftsResult.value).map(buildHandoffDraftViewModel);
+        setHandoffDrafts(nextDrafts);
+        setHandoffDraftsNotice("");
+        setSelectedHandoffDraftId((current) =>
+          nextDrafts.some((draft) => draft.id === current) ? current : nextDrafts[0]?.id || ""
+        );
+      } else {
+        setHandoffDrafts([]);
+        setHandoffDraftsNotice("Draft history belum bisa dimuat.");
+        setSelectedHandoffDraftId("");
+      }
+      setIsLoadingHandoffDrafts(false);
 
       if (currentUser?.role === "admin" || (currentUser?.subscription_plan || "free") !== "free") {
         await loadSavedWorkflows({
@@ -1057,6 +1139,47 @@ export default function DashboardPage() {
     );
   }, [importedGithubSkills, selectedImportedGithubSkillId]);
 
+  useEffect(() => {
+    if (!selectedHandoffDraftId) {
+      setSelectedHandoffDraftDetail(null);
+      setHandoffDraftDetailNotice("");
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadHandoffDraftDetail() {
+      setIsLoadingHandoffDraftDetail(true);
+
+      try {
+        const response = await getHandoffDraft(selectedHandoffDraftId);
+        if (!isMounted) {
+          return;
+        }
+
+        setSelectedHandoffDraftDetail(buildHandoffDraftViewModel(response));
+        setHandoffDraftDetailNotice("");
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setSelectedHandoffDraftDetail(null);
+        setHandoffDraftDetailNotice(getSafeErrorMessage(error, "Draft detail unavailable."));
+      } finally {
+        if (isMounted) {
+          setIsLoadingHandoffDraftDetail(false);
+        }
+      }
+    }
+
+    loadHandoffDraftDetail();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedHandoffDraftId]);
+
   function bringCardToFront(cardKey) {
     setZIndexSeed((current) => {
       const next = current + 1;
@@ -1263,6 +1386,73 @@ export default function DashboardPage() {
       setActiveAgentSkillsNotice(getSafeErrorMessage(error, "Unable to detach imported skill."));
     } finally {
       setSkillAssignmentActionId("");
+    }
+  }
+
+  async function refreshHandoffDrafts(options = {}) {
+    const { isMounted = true } = options;
+
+    try {
+      const response = await getHandoffDrafts({ query: { limit: 20, offset: 0 } });
+      if (!isMounted) {
+        return [];
+      }
+
+      const nextDrafts = normalizeCollection(response).map(buildHandoffDraftViewModel);
+      setHandoffDrafts(nextDrafts);
+      setHandoffDraftsNotice("");
+      if (nextDrafts.length === 0) {
+        setSelectedHandoffDraftId("");
+      } else {
+        setSelectedHandoffDraftId((current) =>
+          nextDrafts.some((draft) => draft.id === current) ? current : nextDrafts[0].id
+        );
+      }
+      return nextDrafts;
+    } catch (error) {
+      if (!isMounted) {
+        return [];
+      }
+
+      setHandoffDrafts([]);
+      setHandoffDraftsNotice(getSafeErrorMessage(error, "Draft history unavailable."));
+      setSelectedHandoffDraftId("");
+      return [];
+    } finally {
+      if (isMounted) {
+        setIsLoadingHandoffDrafts(false);
+      }
+    }
+  }
+
+  async function handleCreateHandoffDraft() {
+    const taskText = routingPreviewResult?.taskText?.trim();
+    if (!taskText) {
+      setHandoffDraftActionNotice("Preview a task first.");
+      return;
+    }
+
+    setIsCreatingHandoffDraft(true);
+    setHandoffDraftActionNotice("Saving draft handoff...");
+
+    try {
+      const payload = {
+        task_text: taskText
+      };
+      if (routingPreviewResult?.recommendedAgent?.agentId) {
+        payload.selected_agent_id = routingPreviewResult.recommendedAgent.agentId;
+      }
+
+      const response = await createHandoffDraft(payload);
+      const nextDraft = buildHandoffDraftViewModel(response);
+      setHandoffDraftActionNotice("Draft handoff saved.");
+      setSelectedHandoffDraftId(nextDraft.id);
+      setSelectedHandoffDraftDetail(nextDraft);
+      await refreshHandoffDrafts();
+    } catch (error) {
+      setHandoffDraftActionNotice(getSafeErrorMessage(error, "Failed to save draft handoff."));
+    } finally {
+      setIsCreatingHandoffDraft(false);
     }
   }
 
@@ -2969,6 +3159,23 @@ export default function DashboardPage() {
                                 {routingPreviewResult.confidence} confidence
                               </span>
                             </div>
+                            <div className="mt-4 flex flex-wrap items-center gap-3">
+                              <button
+                                type="button"
+                                onClick={handleCreateHandoffDraft}
+                                disabled={
+                                  isCreatingHandoffDraft ||
+                                  !routingPreviewResult.recommendedAgent ||
+                                  !routingPreviewResult.taskText.trim()
+                                }
+                                className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+                              >
+                                {isCreatingHandoffDraft ? "Saving draft..." : "Create Draft Handoff"}
+                              </button>
+                              <p className="text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                                Draft only, no execution.
+                              </p>
+                            </div>
 
                             <div className="mt-4 grid gap-3 sm:grid-cols-2">
                               {(routingPreviewResult.reasons.length
@@ -3078,6 +3285,223 @@ export default function DashboardPage() {
                       ) : (
                         <div className="mt-4 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.18)] bg-white px-4 py-3 text-sm text-[rgba(62,54,46,0.62)]">
                           Preview only, no execution. Enter a task to see the best agent match.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
+                            Draft History
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                            Saved handoff drafts
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.72)]">
+                          Last 20 drafts
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.64)]">
+                        Draft history is immutable. Create a new draft if the task changes.
+                      </p>
+
+                      {handoffDraftsNotice ? (
+                        <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                          {truncateText(handoffDraftsNotice, 180)}
+                        </div>
+                      ) : null}
+
+                      {handoffDraftActionNotice ? (
+                        <div className="mt-4 rounded-[14px] border border-[rgba(96,112,86,0.16)] bg-[rgba(96,112,86,0.08)] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                          {truncateText(handoffDraftActionNotice, 180)}
+                        </div>
+                      ) : null}
+
+                      {isLoadingHandoffDrafts ? (
+                        <div className="mt-4 space-y-3">
+                          <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white" />
+                          <div className="h-16 animate-pulse rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white" />
+                        </div>
+                      ) : handoffDrafts.length ? (
+                        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+                          <div className="space-y-3">
+                            {handoffDrafts.map((draft) => {
+                              const isSelected = selectedHandoffDraftId === draft.id;
+                              return (
+                                <button
+                                  key={draft.id}
+                                  type="button"
+                                  onClick={() => setSelectedHandoffDraftId(draft.id)}
+                                  className={`w-full rounded-[16px] border px-4 py-3 text-left transition ${
+                                    isSelected
+                                      ? "border-[rgba(163,106,88,0.28)] bg-white shadow-[0_10px_26px_rgba(62,54,46,0.08)]"
+                                      : "border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] hover:bg-[#efe7d6]"
+                                  }`}
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-[#3E362E]">
+                                        {truncateText(draft.draftPayload.taskSummary || draft.taskText, 64)}
+                                      </p>
+                                      <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                                        {draft.selectedAgent?.name || "No selected agent"} | {draft.routingConfidence}
+                                      </p>
+                                    </div>
+                                    <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                                      {draft.status}
+                                    </span>
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[rgba(62,54,46,0.58)]">
+                                    <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-2.5 py-1">
+                                      Recommended: {draft.recommendedAgent?.name || "Unavailable"}
+                                    </span>
+                                    <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-2.5 py-1">
+                                      {formatDateTime(draft.createdAt)}
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                  Draft detail
+                                </p>
+                                <p className="mt-1 text-base font-semibold text-[#3E362E]">
+                                  {selectedHandoffDraftDetail?.selectedAgent?.name ||
+                                    selectedHandoffDraftDetail?.recommendedAgent?.name ||
+                                    "Select a draft"}
+                                </p>
+                              </div>
+                              <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                                {selectedHandoffDraftDetail?.routingConfidence || "low"} confidence
+                              </span>
+                            </div>
+
+                            {isLoadingHandoffDraftDetail ? (
+                              <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                                Loading draft detail...
+                              </div>
+                            ) : handoffDraftDetailNotice ? (
+                              <div className="mt-4 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                                {truncateText(handoffDraftDetailNotice, 180)}
+                              </div>
+                            ) : selectedHandoffDraftDetail ? (
+                              <div className="mt-4 space-y-4">
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                  <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                                    <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                                      Recommended agent
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                                      {selectedHandoffDraftDetail.recommendedAgent?.name || "Unavailable"}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                                    <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                                      Selected agent
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                                      {selectedHandoffDraftDetail.selectedAgent?.name || "Unavailable"}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                                  <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                                    Reasons
+                                  </p>
+                                  <div className="mt-2 space-y-2">
+                                    {selectedHandoffDraftDetail.routingReasons.length ? (
+                                      selectedHandoffDraftDetail.routingReasons.map((reason, index) => (
+                                        <p key={`handoff-reason-${index}`} className="text-sm leading-6 text-[#3E362E]">
+                                          {reason}
+                                        </p>
+                                      ))
+                                    ) : (
+                                      <p className="text-sm leading-6 text-[rgba(62,54,46,0.64)]">
+                                        No routing reasons recorded.
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                                  <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                                    Matched active skills
+                                  </p>
+                                  {selectedHandoffDraftDetail.activeSkillMatches.length ? (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {selectedHandoffDraftDetail.activeSkillMatches.map((match) => (
+                                        <div
+                                          key={match.id}
+                                          className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]"
+                                        >
+                                          <span className="font-medium">{match.title}</span>
+                                          <span className="mx-1 text-[rgba(62,54,46,0.42)]">|</span>
+                                          <span>{match.skillType}</span>
+                                          {match.matchReason ? (
+                                            <span className="ml-2 text-[rgba(62,54,46,0.54)]">
+                                              {truncateText(match.matchReason, 48)}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="mt-2 text-sm text-[rgba(62,54,46,0.64)]">
+                                      No matched active skills recorded.
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                                  <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                                    Handoff message
+                                  </p>
+                                  <p className="mt-2 text-sm leading-6 text-[#3E362E]">
+                                    {selectedHandoffDraftDetail.draftPayload.handoffMessage}
+                                  </p>
+                                </div>
+
+                                <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                                  <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                                    Suggested steps
+                                  </p>
+                                  <div className="mt-2 space-y-2">
+                                    {selectedHandoffDraftDetail.draftPayload.suggestedSteps.length ? (
+                                      selectedHandoffDraftDetail.draftPayload.suggestedSteps.map((step, index) => (
+                                        <p key={`handoff-step-${index}`} className="text-sm leading-6 text-[#3E362E]">
+                                          {step}
+                                        </p>
+                                      ))
+                                    ) : (
+                                      <p className="text-sm leading-6 text-[rgba(62,54,46,0.64)]">
+                                        No suggested steps recorded.
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <p className="text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                                  {selectedHandoffDraftDetail.draftPayload.safetyNote}
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="mt-4 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.18)] bg-[#F5F1E6] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                                Select a draft to review the handoff preview.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-4 rounded-[16px] border border-dashed border-[rgba(62,54,46,0.18)] bg-white px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+                          No saved handoff drafts yet.
                         </div>
                       )}
                     </div>

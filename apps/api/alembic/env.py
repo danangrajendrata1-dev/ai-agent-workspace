@@ -13,6 +13,7 @@ from app.models.approval_request import ApprovalRequest  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.base import Base
 from app.models.github_import import GitHubImport  # noqa: F401
+from app.models.handoff_draft import HandoffDraft  # noqa: F401
 from app.models.memory import Memory  # noqa: F401
 from app.models.n8n_workflow import N8nWorkflow  # noqa: F401
 from app.models.model_provider_api_key import ModelProviderApiKey  # noqa: F401

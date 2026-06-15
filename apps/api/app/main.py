@@ -9,6 +9,7 @@ from app.routes import (
     auth,
     github_imports,
     health,
+    handoff_drafts,
     logs,
     memories,
     model_provider_keys,
@@ -46,6 +47,7 @@ app.include_router(model_providers.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(github_imports.router)
+app.include_router(handoff_drafts.router)
 app.include_router(tools.router)
 app.include_router(memories.router)
 app.include_router(tasks.router)

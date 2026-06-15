@@ -171,6 +171,19 @@ export function getAgentActiveSkills(id, options) {
   return get(`/agents/${id}/active-skills`, options);
 }
 
+export function createHandoffDraft(payload, options) {
+  return post("/handoff-drafts", payload, options);
+}
+
+export function getHandoffDrafts(options) {
+  return get("/handoff-drafts", options);
+}
+
+export function getHandoffDraft(id, options) {
+  ensureIdentifier(id, "handoff draft");
+  return get(`/handoff-drafts/${id}`, options);
+}
+
 export function createAgent(payload, options) {
   return post("/agents", payload, options);
 }

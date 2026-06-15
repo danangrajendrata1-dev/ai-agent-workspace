@@ -6,6 +6,7 @@ from app.models.agent_tool import AgentTool
 from app.models.approval_request import ApprovalRequest
 from app.models.audit_log import AuditLog
 from app.models.github_import import GitHubImport
+from app.models.handoff_draft import HandoffDraft
 from app.models.memory import Memory
 from app.models.n8n_workflow import N8nWorkflow
 from app.models.model_provider_api_key import ModelProviderApiKey
@@ -28,6 +29,7 @@ __all__ = [
     "ApprovalRequest",
     "AuditLog",
     "GitHubImport",
+    "HandoffDraft",
     "Memory",
     "N8nWorkflow",
     "ModelProviderApiKey",
