@@ -8,6 +8,7 @@ import FloatingCard from "../../components/FloatingCard";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import AgentChatPanel from "../../components/AgentChatPanel";
+import WorkspaceChatPanel from "../../components/WorkspaceChatPanel";
 import {
   approveGithubSkillImport,
   attachImportedSkillToAgent,
@@ -3144,6 +3145,9 @@ export default function DashboardPage() {
                           />
                         </div>
                       ) : null}
+                      <div className="mt-4">
+                        <WorkspaceChatPanel />
+                      </div>
                     </div>
 
                     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">

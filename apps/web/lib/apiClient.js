@@ -182,6 +182,13 @@ export function chatWithAgent(agentId, messages) {
   });
 }
 
+export function orchestratorChat(taskText, messages) {
+  return post(`/orchestrator/chat`, {
+    task_text: taskText,
+    messages,
+  });
+}
+
 export function createHandoffDraft(payload, options) {
   return post("/handoff-drafts", payload, options);
 }

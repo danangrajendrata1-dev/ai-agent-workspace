@@ -71,3 +71,4 @@ n8n/
 .obsidian-bridge/logs/
 .obsidian-bridge/*.log
 .obsidian-bridge/*.tmp
+.obsidian-bridge.json

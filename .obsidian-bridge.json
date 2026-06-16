@@ -1,5 +1,5 @@
 {
-  "obsidian_vault_path": "C:/",
+  "obsidian_vault_path": "C:/AYANA",
   "ollama_endpoint": "http://localhost:11434/api/chat",
   "default_model": "qwen2.5:3b",
   "projects_root": "Projects",
