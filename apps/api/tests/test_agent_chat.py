@@ -418,9 +418,17 @@ def test_service_success_uses_prompt_skill_content_and_ignores_other_skills():
     assert result.provider == "openai"
     assert result.model == "gpt-4o-mini"
     assert result.prompt_skills_used == ["Prompt Skill"]
+    assert result.knowledge_skills_used == ["Knowledge Skill"]
+    assert result.knowledge_truncated is False
     assert result.warning is None
-    assert captured["system_prompt"] == "You are a careful workspace assistant."
-    assert "Knowledge content should never reach the prompt." not in captured["system_prompt"]
+    assert captured["system_prompt"] == (
+        "You are a careful workspace assistant.\n\n"
+        "--- KNOWLEDGE CONTEXT ---\n"
+        "[Knowledge Skill]\n"
+        "Knowledge content should never reach the prompt.\n"
+        "--- END KNOWLEDGE CONTEXT ---"
+    )
+    assert "Knowledge content should never reach the prompt." in captured["system_prompt"]
     assert "Tool content should never reach the prompt." not in captured["system_prompt"]
     assert "Workflow content should never reach the prompt." not in captured["system_prompt"]
 
@@ -430,24 +438,317 @@ def test_service_uses_default_system_prompt_when_no_prompt_skills_active():
     user_id = uuid.uuid4()
     user = SimpleNamespace(id=user_id, role="user")
     agent = build_agent(owner_id=user_id)
-    knowledge_skill = build_skill(
-        name="Knowledge Skill",
-        content="Knowledge content should be ignored.",
+    tool_skill = build_skill(
+        name="Tool Skill",
+        content="Tool content should be ignored.",
         source_type="github",
         source_id=uuid.uuid4(),
     )
     assignment = build_assignment(
-        skill=knowledge_skill,
+        skill=tool_skill,
         created_at=datetime(2026, 1, 2, tzinfo=UTC),
     )
     setting = SimpleNamespace(preferred_provider="openai", preferred_model="gpt-4o-mini")
     api_key_record = SimpleNamespace(encrypted_api_key="encrypted")
     captured = {}
     import_data_map = {
-        knowledge_skill.source_id: build_github_import_data(
+        tool_skill.source_id: build_github_import_data(
+            skill_import_type="manifest_skill",
+            content_preview="Tool content should be ignored.",
+            risky_resource_paths=["tools/run.sh"],
+        )
+    }
+
+    def fake_call_provider_chat_completion(**kwargs):
+        captured.update(kwargs)
+        return {
+            "reply": "Assistant reply",
+            "prompt_tokens": None,
+            "completion_tokens": None,
+        }
+
+    def fake_serialize_github_import(github_import):
+        return SimpleNamespace(model_dump=lambda: import_data_map[github_import.id])
+
+    with patch("app.services.agent_chat_service.agent_repository.get_by_id", return_value=agent), patch(
+        "app.services.agent_chat_service.model_provider_setting_repository.get_by_owner_id",
+        return_value=setting,
+    ), patch(
+        "app.services.agent_chat_service.model_provider_api_key_repository.get_by_owner_and_provider",
+        return_value=api_key_record,
+        ), patch(
+            "app.services.agent_chat_service.decrypt_api_key",
+            return_value="decrypted-api-key",
+        ), patch(
+            "app.services.agent_chat_service.agent_skill_repository.list_agent_skills",
+            return_value=[assignment],
+        ), patch(
+            "app.services.agent_chat_service.github_import_repository.get_by_id",
+            side_effect=lambda _db, import_id: SimpleNamespace(id=import_id),
+        ), patch(
+            "app.services.agent_chat_service.serialize_github_import",
+            side_effect=fake_serialize_github_import,
+        ), patch(
+            "app.services.agent_chat_service.call_provider_chat_completion",
+            side_effect=fake_call_provider_chat_completion,
+        ), patch(
+            "app.services.agent_chat_service.log_service.record_activity",
+        return_value=None,
+    ):
+        result = chat_with_agent(
+            db,
+            owner_id=user_id,
+            agent_id=agent.id,
+            payload=AgentChatRequest(messages=[{"role": "user", "content": "Hello"}]),
+            current_user=user,
+        )
+
+    assert result.prompt_skills_used == []
+    assert result.knowledge_skills_used == []
+    assert result.knowledge_truncated is False
+    assert result.warning is None
+    assert captured["system_prompt"] == "You are a helpful AI assistant."
+    assert "--- KNOWLEDGE CONTEXT ---" not in captured["system_prompt"]
+
+
+def test_service_multiple_knowledge_skills_are_deterministic():
+    db = build_db()
+    user_id = uuid.uuid4()
+    user = SimpleNamespace(id=user_id, role="user")
+    agent = build_agent(owner_id=user_id)
+    prompt_skill = build_skill(
+        name="Prompt Skill",
+        content="You are a careful workspace assistant.",
+    )
+    knowledge_a = build_skill(
+        name="Alpha Knowledge",
+        content="Alpha knowledge content.",
+        source_type="github",
+        source_id=uuid.uuid4(),
+    )
+    knowledge_b = build_skill(
+        name="Beta Knowledge",
+        content="Beta knowledge content.",
+        source_type="github",
+        source_id=uuid.uuid4(),
+    )
+    prompt_assignment = build_assignment(
+        skill=prompt_skill,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    knowledge_b_assignment = build_assignment(
+        skill=knowledge_b,
+        created_at=datetime(2026, 1, 3, tzinfo=UTC),
+    )
+    knowledge_a_assignment = build_assignment(
+        skill=knowledge_a,
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    setting = SimpleNamespace(preferred_provider="openai", preferred_model="gpt-4o-mini")
+    api_key_record = SimpleNamespace(encrypted_api_key="encrypted")
+    captured = {}
+    import_data_map = {
+        knowledge_a.source_id: build_github_import_data(
             skill_import_type="markdown_instruction",
-            content_preview="Knowledge instruction with reference files.",
-            safe_resource_paths=["docs/reference.md"],
+            content_preview="Alpha knowledge instruction.",
+            safe_resource_paths=["docs/alpha.md"],
+        ),
+        knowledge_b.source_id: build_github_import_data(
+            skill_import_type="markdown_instruction",
+            content_preview="Beta knowledge instruction.",
+            safe_resource_paths=["docs/beta.md"],
+        ),
+    }
+
+    def fake_serialize_github_import(github_import):
+        return SimpleNamespace(model_dump=lambda: import_data_map[github_import.id])
+
+    def fake_call_provider_chat_completion(**kwargs):
+        captured.update(kwargs)
+        return {
+            "reply": "Assistant reply",
+            "prompt_tokens": None,
+            "completion_tokens": None,
+        }
+
+    with patch("app.services.agent_chat_service.agent_repository.get_by_id", return_value=agent), patch(
+        "app.services.agent_chat_service.model_provider_setting_repository.get_by_owner_id",
+        return_value=setting,
+    ), patch(
+        "app.services.agent_chat_service.model_provider_api_key_repository.get_by_owner_and_provider",
+        return_value=api_key_record,
+    ), patch(
+        "app.services.agent_chat_service.decrypt_api_key",
+        return_value="decrypted-api-key",
+    ), patch(
+        "app.services.agent_chat_service.agent_skill_repository.list_agent_skills",
+        return_value=[prompt_assignment, knowledge_b_assignment, knowledge_a_assignment],
+    ), patch(
+        "app.services.agent_chat_service.github_import_repository.get_by_id",
+        side_effect=lambda _db, import_id: SimpleNamespace(id=import_id),
+    ), patch(
+        "app.services.agent_chat_service.serialize_github_import",
+        side_effect=fake_serialize_github_import,
+    ), patch(
+        "app.services.agent_chat_service.call_provider_chat_completion",
+        side_effect=fake_call_provider_chat_completion,
+    ), patch(
+        "app.services.agent_chat_service.log_service.record_activity",
+        return_value=None,
+    ):
+        result = chat_with_agent(
+            db,
+            owner_id=user_id,
+            agent_id=agent.id,
+            payload=AgentChatRequest(messages=[{"role": "user", "content": "Hello"}]),
+            current_user=user,
+        )
+
+    assert result.knowledge_skills_used == ["Alpha Knowledge", "Beta Knowledge"]
+    assert result.knowledge_truncated is False
+    knowledge_block = captured["system_prompt"].split("--- KNOWLEDGE CONTEXT ---\n", 1)[1].rsplit(
+        "\n--- END KNOWLEDGE CONTEXT ---",
+        1,
+    )[0]
+    assert knowledge_block.index("[Alpha Knowledge]") < knowledge_block.index("[Beta Knowledge]")
+
+
+def test_service_truncates_knowledge_context_at_limit():
+    db = build_db()
+    user_id = uuid.uuid4()
+    user = SimpleNamespace(id=user_id, role="user")
+    agent = build_agent(owner_id=user_id)
+    prompt_skill = build_skill(
+        name="Prompt Skill",
+        content="You are a careful workspace assistant.",
+    )
+    long_content = "L" * 5000
+    knowledge_a = build_skill(
+        name="Knowledge A",
+        content=long_content,
+        source_type="github",
+        source_id=uuid.uuid4(),
+    )
+    knowledge_b = build_skill(
+        name="Knowledge B",
+        content=long_content,
+        source_type="github",
+        source_id=uuid.uuid4(),
+    )
+    prompt_assignment = build_assignment(
+        skill=prompt_skill,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    knowledge_a_assignment = build_assignment(
+        skill=knowledge_a,
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    knowledge_b_assignment = build_assignment(
+        skill=knowledge_b,
+        created_at=datetime(2026, 1, 3, tzinfo=UTC),
+    )
+    setting = SimpleNamespace(preferred_provider="openai", preferred_model="gpt-4o-mini")
+    api_key_record = SimpleNamespace(encrypted_api_key="encrypted")
+    captured = {}
+    import_data_map = {
+        knowledge_a.source_id: build_github_import_data(
+            skill_import_type="markdown_instruction",
+            content_preview="Knowledge A instruction.",
+            safe_resource_paths=["docs/a.md"],
+        ),
+        knowledge_b.source_id: build_github_import_data(
+            skill_import_type="markdown_instruction",
+            content_preview="Knowledge B instruction.",
+            safe_resource_paths=["docs/b.md"],
+        ),
+    }
+
+    def fake_serialize_github_import(github_import):
+        return SimpleNamespace(model_dump=lambda: import_data_map[github_import.id])
+
+    def fake_call_provider_chat_completion(**kwargs):
+        captured.update(kwargs)
+        return {
+            "reply": "Assistant reply",
+            "prompt_tokens": None,
+            "completion_tokens": None,
+        }
+
+    with patch("app.services.agent_chat_service.agent_repository.get_by_id", return_value=agent), patch(
+        "app.services.agent_chat_service.model_provider_setting_repository.get_by_owner_id",
+        return_value=setting,
+    ), patch(
+        "app.services.agent_chat_service.model_provider_api_key_repository.get_by_owner_and_provider",
+        return_value=api_key_record,
+    ), patch(
+        "app.services.agent_chat_service.decrypt_api_key",
+        return_value="decrypted-api-key",
+    ), patch(
+        "app.services.agent_chat_service.agent_skill_repository.list_agent_skills",
+        return_value=[prompt_assignment, knowledge_a_assignment, knowledge_b_assignment],
+    ), patch(
+        "app.services.agent_chat_service.github_import_repository.get_by_id",
+        side_effect=lambda _db, import_id: SimpleNamespace(id=import_id),
+    ), patch(
+        "app.services.agent_chat_service.serialize_github_import",
+        side_effect=fake_serialize_github_import,
+    ), patch(
+        "app.services.agent_chat_service.call_provider_chat_completion",
+        side_effect=fake_call_provider_chat_completion,
+    ), patch(
+        "app.services.agent_chat_service.log_service.record_activity",
+        return_value=None,
+    ):
+        result = chat_with_agent(
+            db,
+            owner_id=user_id,
+            agent_id=agent.id,
+            payload=AgentChatRequest(messages=[{"role": "user", "content": "Hello"}]),
+            current_user=user,
+        )
+
+    assert result.knowledge_truncated is True
+    assert result.warning == "Knowledge context truncated due to length limit"
+    knowledge_block = captured["system_prompt"].split("--- KNOWLEDGE CONTEXT ---\n", 1)[1].rsplit(
+        "\n--- END KNOWLEDGE CONTEXT ---",
+        1,
+    )[0]
+    assert len(knowledge_block) <= 8000
+    assert "[Knowledge A]" in knowledge_block
+    assert "Knowledge context truncated due to length limit" in result.warning
+
+
+def test_service_skips_empty_knowledge_skill_content():
+    db = build_db()
+    user_id = uuid.uuid4()
+    user = SimpleNamespace(id=user_id, role="user")
+    agent = build_agent(owner_id=user_id)
+    prompt_skill = build_skill(
+        name="Prompt Skill",
+        content="You are a careful workspace assistant.",
+    )
+    empty_knowledge = build_skill(
+        name="Empty Knowledge",
+        content="   ",
+        source_type="github",
+        source_id=uuid.uuid4(),
+    )
+    prompt_assignment = build_assignment(
+        skill=prompt_skill,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    knowledge_assignment = build_assignment(
+        skill=empty_knowledge,
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    setting = SimpleNamespace(preferred_provider="openai", preferred_model="gpt-4o-mini")
+    api_key_record = SimpleNamespace(encrypted_api_key="encrypted")
+    captured = {}
+    import_data_map = {
+        empty_knowledge.source_id: build_github_import_data(
+            skill_import_type="markdown_instruction",
+            content_preview="Empty knowledge instruction.",
+            safe_resource_paths=["docs/empty.md"],
         )
     }
 
@@ -473,7 +774,7 @@ def test_service_uses_default_system_prompt_when_no_prompt_skills_active():
         return_value="decrypted-api-key",
     ), patch(
         "app.services.agent_chat_service.agent_skill_repository.list_agent_skills",
-        return_value=[assignment],
+        return_value=[prompt_assignment, knowledge_assignment],
     ), patch(
         "app.services.agent_chat_service.github_import_repository.get_by_id",
         side_effect=lambda _db, import_id: SimpleNamespace(id=import_id),
@@ -495,9 +796,10 @@ def test_service_uses_default_system_prompt_when_no_prompt_skills_active():
             current_user=user,
         )
 
-    assert result.prompt_skills_used == []
-    assert result.warning is None
-    assert captured["system_prompt"] == "You are a helpful AI assistant."
+    assert result.knowledge_skills_used == []
+    assert result.knowledge_truncated is False
+    assert result.warning == "Skipped knowledge skill 'Empty Knowledge' because it has no usable content."
+    assert "--- KNOWLEDGE CONTEXT ---" not in captured["system_prompt"]
 
 
 def test_service_skips_empty_prompt_skill_content_with_warning():
@@ -616,13 +918,20 @@ def test_service_success_response_does_not_expose_raw_provider_response_or_api_k
     assert result.reply == "Assistant reply"
     assert result.provider == "openai"
     assert result.model == "gpt-4o-mini"
+    assert result.prompt_skills_used == ["Prompt Skill"]
+    assert result.knowledge_skills_used == []
+    assert result.knowledge_truncated is False
     assert "raw_response" not in result.model_dump()
     assert "encrypted-secret-value" not in result.model_dump_json()
     assert "decrypted-api-key" not in result.model_dump_json()
     assert recorded["metadata_json"]["provider"] == "openai"
     assert recorded["metadata_json"]["model"] == "gpt-4o-mini"
+    assert recorded["metadata_json"]["prompt_skill_count"] == 1
+    assert recorded["metadata_json"]["knowledge_skill_count"] == 0
+    assert recorded["metadata_json"]["knowledge_truncated"] is False
     assert "raw_response" not in recorded["metadata_json"]
     assert "encrypted-secret-value" not in str(recorded["metadata_json"])
+    assert "Prompt Skill" not in str(recorded["metadata_json"])
 
 
 def test_chat_route_rate_limit_blocks_21st_request(client):

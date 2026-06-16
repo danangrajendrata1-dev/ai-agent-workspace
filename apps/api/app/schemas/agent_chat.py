@@ -31,4 +31,6 @@ class AgentChatResponse(BaseModel):
     provider: str
     model: str
     prompt_skills_used: list[str]
+    knowledge_skills_used: list[str]
+    knowledge_truncated: bool
     warning: str | None = None

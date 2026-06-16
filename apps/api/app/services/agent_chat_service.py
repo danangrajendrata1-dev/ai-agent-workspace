@@ -32,6 +32,9 @@ from app.services.github_import_service import serialize_github_import
 
 
 CHAT_DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
+CHAT_KNOWLEDGE_CONTEXT_HEADER = "--- KNOWLEDGE CONTEXT ---"
+CHAT_KNOWLEDGE_CONTEXT_FOOTER = "--- END KNOWLEDGE CONTEXT ---"
+CHAT_KNOWLEDGE_CONTEXT_CHAR_LIMIT = 8000
 CHAT_RATE_LIMIT_MAX_REQUESTS = 20
 CHAT_RATE_LIMIT_WINDOW_SECONDS = 60
 CHAT_RATE_LIMIT_MESSAGE = "Terlalu banyak pesan, tunggu sebentar"
@@ -158,9 +161,33 @@ def _infer_skill_type(skill, github_import_data: dict | None) -> str:
     return "prompt_skill"
 
 
-def _compile_prompt_system_prompt(db: Session, *, agent_id: uuid.UUID) -> tuple[str, list[str], str | None]:
+def _clean_text(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())
+
+
+def _extract_skill_title(skill) -> str:
+    for field_name in ("name", "title", "slug"):
+        candidate = _clean_text(getattr(skill, field_name, None))
+        if candidate:
+            return candidate
+
+    skill_id = getattr(skill, "id", None)
+    return str(skill_id) if skill_id is not None else "Unknown skill"
+
+
+def _extract_skill_content(skill) -> str:
+    for field_name in ("content", "instruction_text", "prompt", "text"):
+        candidate = _clean_text(getattr(skill, field_name, None))
+        if candidate:
+            return candidate
+    return ""
+
+
+def _load_active_skill_context_entries(db: Session, *, agent_id: uuid.UUID) -> tuple[list[dict], list[str]]:
     assignments = agent_skill_repository.list_agent_skills(db, agent_id)
-    prompt_skill_entries: list[tuple[datetime, str, str, str]] = []
+    entries: list[dict] = []
     warnings: list[str] = []
 
     for assignment in assignments:
@@ -172,23 +199,89 @@ def _compile_prompt_system_prompt(db: Session, *, agent_id: uuid.UUID) -> tuple[
 
         github_import_data = _load_github_import_data(db, skill)
         skill_type = _infer_skill_type(skill, github_import_data)
-        if skill_type != "prompt_skill":
+        if skill_type not in {"prompt_skill", "knowledge_skill"}:
             continue
 
-        content = " ".join(str(getattr(skill, "content", "") or "").split())
+        title = _extract_skill_title(skill)
+        content = _extract_skill_content(skill)
         if not content:
-            warnings.append(f"Skipped prompt skill '{skill.name}' because it has no usable content.")
+            warnings.append(f"Skipped {skill_type.replace('_', ' ')} '{title}' because it has no usable content.")
             continue
 
         created_at = getattr(assignment, "created_at", None) or datetime.min.replace(tzinfo=UTC)
-        prompt_skill_entries.append((created_at, str(skill.name or ""), str(skill.id), content))
+        entries.append(
+            {
+                "created_at": created_at,
+                "title": title,
+                "skill_id": str(skill.id),
+                "content": content,
+                "skill_type": skill_type,
+            }
+        )
 
-    prompt_skill_entries.sort(key=lambda item: (item[0], item[1].lower(), item[2]))
-    prompt_skills_used = [entry[1] for entry in prompt_skill_entries]
-    compiled_contents = [entry[3] for entry in prompt_skill_entries]
+    entries.sort(key=lambda item: (item["created_at"], item["title"].lower(), item["skill_id"]))
+    return entries, warnings
+
+
+def _compile_prompt_system_prompt(entries: list[dict]) -> tuple[str, list[str]]:
+    prompt_entries = [entry for entry in entries if entry["skill_type"] == "prompt_skill"]
+    compiled_contents = [entry["content"] for entry in prompt_entries]
+    prompt_skills_used = [entry["title"] for entry in prompt_entries]
     system_prompt = "\n\n".join(compiled_contents) if compiled_contents else CHAT_DEFAULT_SYSTEM_PROMPT
-    warning = "; ".join(warnings) if warnings else None
-    return system_prompt, prompt_skills_used, warning
+    return system_prompt, prompt_skills_used
+
+
+def _build_knowledge_context(entries: list[dict]) -> tuple[str, list[str], bool]:
+    knowledge_entries = [entry for entry in entries if entry["skill_type"] == "knowledge_skill"]
+    if not knowledge_entries:
+        return "", [], False
+
+    wrapper_overhead = (
+        len(CHAT_KNOWLEDGE_CONTEXT_HEADER)
+        + len(CHAT_KNOWLEDGE_CONTEXT_FOOTER)
+        + len("\n")
+        + len("\n")
+    )
+    available_body_chars = max(0, CHAT_KNOWLEDGE_CONTEXT_CHAR_LIMIT - wrapper_overhead)
+    rendered_parts: list[str] = []
+    knowledge_skills_used: list[str] = []
+    remaining = available_body_chars
+    truncated = False
+
+    for entry in knowledge_entries:
+        separator = "\n\n" if rendered_parts else ""
+        title_block = f"[{entry['title']}]\n"
+        entry_length = len(separator) + len(title_block)
+
+        if remaining <= entry_length:
+            truncated = True
+            break
+
+        if separator:
+            rendered_parts.append(separator)
+            remaining -= len(separator)
+
+        rendered_parts.append(title_block)
+        remaining -= len(title_block)
+
+        content = entry["content"]
+        if len(content) <= remaining:
+            rendered_parts.append(content)
+            remaining -= len(content)
+            knowledge_skills_used.append(entry["title"])
+            continue
+
+        rendered_parts.append(content[:remaining])
+        knowledge_skills_used.append(entry["title"])
+        truncated = True
+        remaining = 0
+        break
+
+    body = "".join(rendered_parts).strip()
+    if not body:
+        return "", [], False
+
+    return f"{CHAT_KNOWLEDGE_CONTEXT_HEADER}\n{body}\n{CHAT_KNOWLEDGE_CONTEXT_FOOTER}", knowledge_skills_used, truncated
 
 
 def _post_json(url: str, headers: dict[str, str], body: dict, timeout: float) -> tuple[int, str]:
@@ -396,7 +489,9 @@ def _log_chat_attempt(
     provider: str,
     model: str,
     success: bool,
-    prompt_skills_used: list[str],
+    prompt_skill_count: int,
+    knowledge_skill_count: int,
+    knowledge_truncated: bool,
     prompt_tokens: int | None,
     completion_tokens: int | None,
 ) -> None:
@@ -413,8 +508,9 @@ def _log_chat_attempt(
             "provider": provider,
             "model": model,
             "success": success,
-            "prompt_skills_used": prompt_skills_used,
-            "prompt_skill_count": len(prompt_skills_used),
+            "prompt_skill_count": prompt_skill_count,
+            "knowledge_skill_count": knowledge_skill_count,
+            "knowledge_truncated": knowledge_truncated,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
         },
@@ -433,7 +529,16 @@ def chat_with_agent(
     _rate_limit_bucket(owner_id)
     agent = _resolve_agent_for_chat(db, owner_id=owner_id, agent_id=agent_id, current_user=current_user)
     normalized_messages = [message.model_dump() for message in payload.messages]
-    system_prompt, prompt_skills_used, warning = _compile_prompt_system_prompt(db, agent_id=agent.id)
+    active_skill_entries, warnings = _load_active_skill_context_entries(db, agent_id=agent.id)
+    system_prompt, prompt_skills_used = _compile_prompt_system_prompt(active_skill_entries)
+    knowledge_context, knowledge_skills_used, knowledge_truncated = _build_knowledge_context(
+        active_skill_entries
+    )
+    response_warnings = list(warnings)
+    if knowledge_truncated:
+        response_warnings.append("Knowledge context truncated due to length limit")
+    if knowledge_context:
+        system_prompt = f"{system_prompt}\n\n{knowledge_context}"
     provider, model = _load_provider_configuration(db, owner_id=owner_id)
 
     api_key_record = model_provider_api_key_repository.get_by_owner_and_provider(db, owner_id, provider)
@@ -474,7 +579,9 @@ def chat_with_agent(
             provider=provider,
             model=model,
             success=True,
-            prompt_skills_used=prompt_skills_used,
+            prompt_skill_count=len(prompt_skills_used),
+            knowledge_skill_count=len(knowledge_skills_used),
+            knowledge_truncated=knowledge_truncated,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )
@@ -485,7 +592,9 @@ def chat_with_agent(
             provider=provider,
             model=model,
             prompt_skills_used=prompt_skills_used,
-            warning=warning,
+            knowledge_skills_used=knowledge_skills_used,
+            knowledge_truncated=knowledge_truncated,
+            warning="; ".join(response_warnings) if response_warnings else None,
         )
     except AgentChatUnauthorizedError:
         _log_chat_attempt(
@@ -495,7 +604,9 @@ def chat_with_agent(
             provider=provider,
             model=model,
             success=False,
-            prompt_skills_used=prompt_skills_used,
+            prompt_skill_count=len(prompt_skills_used),
+            knowledge_skill_count=len(knowledge_skills_used),
+            knowledge_truncated=knowledge_truncated,
             prompt_tokens=None,
             completion_tokens=None,
         )
@@ -513,7 +624,9 @@ def chat_with_agent(
             provider=provider,
             model=model,
             success=False,
-            prompt_skills_used=prompt_skills_used,
+            prompt_skill_count=len(prompt_skills_used),
+            knowledge_skill_count=len(knowledge_skills_used),
+            knowledge_truncated=knowledge_truncated,
             prompt_tokens=None,
             completion_tokens=None,
         )

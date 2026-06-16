@@ -94,7 +94,11 @@ export default function AgentChatPanel({ agent, providerLabel }) {
         model: response.model,
         promptSkillsUsed: Array.isArray(response.prompt_skills_used)
           ? response.prompt_skills_used
-          : []
+          : [],
+        knowledgeSkillsUsed: Array.isArray(response.knowledge_skills_used)
+          ? response.knowledge_skills_used
+          : [],
+        knowledgeTruncated: Boolean(response.knowledge_truncated)
       });
       setWarning(response.warning || "");
     } catch (chatError) {
@@ -162,6 +166,25 @@ export default function AgentChatPanel({ agent, providerLabel }) {
             </span>
           ))}
         </div>
+      ) : null}
+
+      {responseMeta?.knowledgeSkillsUsed?.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {responseMeta.knowledgeSkillsUsed.map((skillName) => (
+            <span
+              key={skillName}
+              className="rounded-full border border-[rgba(105,92,72,0.18)] bg-[rgba(105,92,72,0.08)] px-3 py-1 text-[11px] text-[rgba(105,92,72,0.92)]"
+            >
+              Knowledge: {skillName}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {responseMeta?.knowledgeTruncated ? (
+        <p className="mt-2 text-xs leading-5 text-[rgba(62,54,46,0.58)]">
+          Sebagian knowledge dipotong karena terlalu panjang.
+        </p>
       ) : null}
 
       {warning ? (
