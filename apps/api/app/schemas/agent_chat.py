@@ -20,6 +20,19 @@ class ChatMessage(BaseModel):
         return cleaned
 
 
+class WorkflowSuggestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: str
+    template_name: str
+    skill_id: str
+    skill_title: str
+    reason: str
+    consent_required: bool
+    binding_exists: bool
+    execution_available: bool
+
+
 class AgentChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -37,4 +50,5 @@ class AgentChatResponse(BaseModel):
     prompt_skills_used: list[str]
     knowledge_skills_used: list[str]
     knowledge_truncated: bool
+    workflow_suggestions: list[WorkflowSuggestion] = Field(default_factory=list)
     warning: str | None = None

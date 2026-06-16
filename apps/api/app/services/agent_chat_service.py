@@ -30,6 +30,7 @@ from app.schemas.agent_chat import AgentChatRequest, AgentChatResponse
 from app.services import log_service
 from app.services.github_import_service import serialize_github_import
 from app.services import session_service
+from app.services import workflow_suggestion_service
 
 
 CHAT_DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
@@ -183,6 +184,22 @@ def _extract_skill_content(skill) -> str:
         candidate = _clean_text(getattr(skill, field_name, None))
         if candidate:
             return candidate
+    return ""
+
+
+def _extract_latest_user_message_content(messages) -> str:
+    for message in reversed(messages or []):
+        role = getattr(message, "role", None) if not isinstance(message, dict) else message.get("role")
+        content = getattr(message, "content", None) if not isinstance(message, dict) else message.get("content")
+        if role == "user" and isinstance(content, str) and content.strip():
+            return content.strip()
+
+    if messages:
+        last_message = messages[-1]
+        content = getattr(last_message, "content", None) if not isinstance(last_message, dict) else last_message.get("content")
+        if isinstance(content, str):
+            return content.strip()
+
     return ""
 
 
@@ -550,6 +567,7 @@ def chat_with_agent(
             )
 
     normalized_messages = [message.model_dump() for message in payload.messages]
+    latest_user_message_text = _extract_latest_user_message_content(payload.messages)
     active_skill_entries, warnings = _load_active_skill_context_entries(db, agent_id=agent.id)
     system_prompt, prompt_skills_used = _compile_prompt_system_prompt(active_skill_entries)
     knowledge_context, knowledge_skills_used, knowledge_truncated = _build_knowledge_context(
@@ -602,6 +620,16 @@ def chat_with_agent(
         )
         prompt_tokens = provider_result.get("prompt_tokens")
         completion_tokens = provider_result.get("completion_tokens")
+        workflow_suggestions = []
+        try:
+            workflow_suggestions = workflow_suggestion_service.get_workflow_suggestions_for_agent(
+                db,
+                user=current_user,
+                agent_id=agent.id,
+                task_text=latest_user_message_text,
+            )
+        except Exception:
+            workflow_suggestions = []
         _log_chat_attempt(
             db,
             owner_id=owner_id,
@@ -626,6 +654,7 @@ def chat_with_agent(
             prompt_skills_used=prompt_skills_used,
             knowledge_skills_used=knowledge_skills_used,
             knowledge_truncated=knowledge_truncated,
+            workflow_suggestions=workflow_suggestions,
             warning="; ".join(response_warnings) if response_warnings else None,
         )
     except AgentChatUnauthorizedError:

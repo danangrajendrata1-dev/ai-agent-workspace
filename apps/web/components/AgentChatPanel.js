@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { chatWithAgent, deleteSession, getSession, listSessions } from "../lib/apiClient";
 import { formatDateTime } from "../lib/format";
+import WorkflowSuggestionList from "./WorkflowSuggestionList";
 
 
 function getFriendlyChatErrorMessage(error) {
@@ -254,7 +255,10 @@ export default function AgentChatPanel({ agent, providerLabel }) {
         knowledgeSkillsUsed: Array.isArray(response.knowledge_skills_used)
           ? response.knowledge_skills_used
           : [],
-        knowledgeTruncated: Boolean(response.knowledge_truncated)
+        knowledgeTruncated: Boolean(response.knowledge_truncated),
+        workflowSuggestions: Array.isArray(response.workflow_suggestions)
+          ? response.workflow_suggestions
+          : []
       });
       setWarning(response.warning || "");
       void loadSessions();
@@ -349,6 +353,8 @@ export default function AgentChatPanel({ agent, providerLabel }) {
           Sebagian knowledge dipotong karena terlalu panjang.
         </p>
       ) : null}
+
+      <WorkflowSuggestionList suggestions={responseMeta?.workflowSuggestions || []} />
 
       {warning ? (
         <div className="mt-3 rounded-[14px] border border-[rgba(163,142,88,0.18)] bg-[rgba(163,142,88,0.08)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.74)]">

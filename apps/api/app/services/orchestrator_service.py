@@ -127,6 +127,7 @@ def _route_to_agent(
             reply=ORCHESTRATOR_FALLBACK_REPLY,
             routing_reasons=list(preview.reasons or []),
             status="fallback",
+            workflow_suggestions=[],
         )
         session_summary = session_service.upsert_chat_session(
             db,
@@ -176,6 +177,7 @@ def _route_to_agent(
             prompt_skills_used=list(getattr(agent_result, "prompt_skills_used", []) or []),
             knowledge_skills_used=list(getattr(agent_result, "knowledge_skills_used", []) or []),
             knowledge_truncated=bool(getattr(agent_result, "knowledge_truncated", False)),
+            workflow_suggestions=list(getattr(agent_result, "workflow_suggestions", []) or []),
             routing_reasons=list(preview.reasons or []),
             status="routed",
             warning=getattr(agent_result, "warning", None),
@@ -213,6 +215,7 @@ def _route_to_agent(
             reply=safe_reply,
             routing_reasons=list(preview.reasons or []),
             status="routed",
+            workflow_suggestions=[],
             warning=safe_reply,
         )
         session_summary = session_service.upsert_chat_session(
@@ -247,6 +250,7 @@ def _route_to_agent(
             reply=ORCHESTRATOR_FALLBACK_REPLY,
             routing_reasons=list(preview.reasons or []),
             status="routed",
+            workflow_suggestions=[],
             warning=ORCHESTRATOR_FALLBACK_REPLY,
         )
         session_summary = session_service.upsert_chat_session(

@@ -4,7 +4,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.schemas.agent_chat import ChatMessage
+from app.schemas.agent_chat import ChatMessage, WorkflowSuggestion
 
 
 class OrchestratorRequest(BaseModel):
@@ -35,6 +35,7 @@ class OrchestratorResponse(BaseModel):
     prompt_skills_used: list[str] = Field(default_factory=list)
     knowledge_skills_used: list[str] = Field(default_factory=list)
     knowledge_truncated: bool = False
+    workflow_suggestions: list[WorkflowSuggestion] = Field(default_factory=list)
     routing_reasons: list[str] = Field(default_factory=list)
     status: Literal["routed", "fallback"]
     warning: str | None = None
