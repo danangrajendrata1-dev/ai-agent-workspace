@@ -7,9 +7,12 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.workflow_webhook_client import WebhookCallResult, call_template_webhook
 from app.core.subscription_plans import is_admin_role
 from app.core.webhook_security import (
+    canonicalize_webhook_url,
     sanitize_error_message,
+    sanitize_payload_for_template,
     validate_safe_webhook_url,
 )
 from app.core.workflow_templates import get_workflow_template, get_workflow_templates
@@ -23,6 +26,8 @@ from app.repositories import (
 from app.schemas.workflow import (
     WorkflowConsentResponse,
     WorkflowExecutionSummary,
+    WorkflowExecutionRequest,
+    WorkflowExecutionResponse,
     WorkflowSkillBindingResponse,
     WorkflowTemplateResponse,
 )
@@ -32,6 +37,7 @@ from app.services import log_service, skill_service
 WORKFLOW_CONSENT_RATE_LIMIT_MAX_REQUESTS = 10
 WORKFLOW_BINDING_RATE_LIMIT_MAX_REQUESTS = 10
 WORKFLOW_LIST_RATE_LIMIT_MAX_REQUESTS = 20
+WORKFLOW_EXECUTE_RATE_LIMIT_MAX_REQUESTS = 5
 WORKFLOW_RATE_LIMIT_WINDOW_SECONDS = 60
 
 _rate_limit_lock = threading.Lock()
@@ -41,6 +47,13 @@ _rate_limit_state: dict[str, list[float]] = {}
 def clear_workflow_rate_limiter() -> None:
     with _rate_limit_lock:
         _rate_limit_state.clear()
+
+
+def _safe_record_activity(record_fn, db: Session, **kwargs) -> None:
+    try:
+        record_fn(db, **kwargs)
+    except Exception:
+        db.rollback()
 
 
 def _rate_limit_bucket(owner_id: uuid.UUID, action: str, max_requests: int) -> list[float]:
@@ -94,6 +107,7 @@ def _serialize_template(template: dict, consent: WorkflowConsentResponse | None 
         id=str(template["id"]),
         name=str(template["name"]),
         description=str(template["description"]),
+        input_schema=dict(template.get("input_schema") or {}),
         template_version=str(template["template_version"]),
         risk_level=str(template["risk_level"]),
         output_type=str(template["output_type"]),
@@ -167,6 +181,19 @@ def _resolve_owned_workflow_skill(db: Session, *, user, skill_id: uuid.UUID):
     return None
 
 
+def _resolve_owned_workflow_skill_for_agent(db: Session, *, user, agent_id: uuid.UUID, skill_id: uuid.UUID):
+    active_skills = skill_service.list_active_agent_skills(
+        db,
+        owner_id=user.id,
+        agent_id=agent_id,
+        current_user=user,
+    )
+    for assignment in active_skills:
+        if assignment.skill_id == skill_id:
+            return assignment
+    return None
+
+
 def _get_skill_type_from_assignment(assignment) -> str | None:
     if isinstance(assignment, dict):
         skill = assignment.get("skill")
@@ -225,7 +252,8 @@ def create_workflow_consent(db: Session, *, user, template_id: str) -> WorkflowC
         template_id=template_id,
         template_version=str(template["template_version"]),
     )
-    log_service.record_activity(
+    _safe_record_activity(
+        log_service.record_activity,
         db,
         actor_type="user",
         actor_id=user.id,
@@ -296,7 +324,8 @@ def create_workflow_skill_binding(
         template_id=template_id,
         template_version=str(template["template_version"]),
     )
-    log_service.record_activity(
+    _safe_record_activity(
+        log_service.record_activity,
         db,
         actor_type="user",
         actor_id=user.id,
@@ -337,7 +366,8 @@ def delete_workflow_skill_binding(db: Session, *, user, binding_id: uuid.UUID) -
         )
 
     workflow_skill_binding_repository.delete_binding(db, binding=binding)
-    log_service.record_activity(
+    _safe_record_activity(
+        log_service.record_activity,
         db,
         actor_type="user",
         actor_id=user.id,
@@ -370,3 +400,216 @@ def list_workflow_executions(
         offset=offset,
     )
     return [_serialize_execution(execution) for execution in executions]
+
+
+def _load_agent_for_execution(db: Session, *, user, agent_id: uuid.UUID):
+    if is_admin_role(getattr(user, "role", None)):
+        agent = agent_repository.get_by_id_for_admin(db, agent_id)
+    else:
+        agent = agent_repository.get_by_id(db, user.id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    return agent
+
+
+def _load_owned_workflow_skill_binding(
+    db: Session,
+    *,
+    user,
+    agent_id: uuid.UUID,
+    skill_id: uuid.UUID,
+    template_id: str,
+    template_version: str,
+):
+    binding = workflow_skill_binding_repository.get_binding(
+        db,
+        user_id=user.id,
+        skill_id=skill_id,
+        template_id=template_id,
+    )
+    if binding is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow binding not found for the current user.",
+        )
+    if binding.template_version != template_version:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workflow binding version mismatch.",
+        )
+
+    assignment = _resolve_owned_workflow_skill_for_agent(db, user=user, agent_id=agent_id, skill_id=skill_id)
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow skill not found on the selected agent.",
+        )
+
+    skill_type = _get_skill_type_from_assignment(assignment)
+    if skill_type != "workflow_skill":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Skill must be a workflow_skill.",
+        )
+
+    if getattr(assignment, "is_enabled", None) is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workflow skill must be active.",
+        )
+
+    return binding, assignment
+
+
+def _build_execution_response(
+    *,
+    template: dict,
+    status_value: str,
+    success: bool,
+    execution_id,
+    output_summary: str | None,
+    error_message: str | None,
+    http_status_code: int | None,
+) -> WorkflowExecutionResponse:
+    return WorkflowExecutionResponse(
+        success=success,
+        status=status_value,
+        template_id=str(template["id"]),
+        template_version=str(template["template_version"]),
+        execution_id=str(execution_id) if execution_id is not None else None,
+        output_summary=output_summary,
+        error_message=error_message,
+        http_status_code=http_status_code,
+    )
+
+
+def execute_workflow_template(
+    db: Session,
+    *,
+    user,
+    template_id: str,
+    request: WorkflowExecutionRequest,
+) -> WorkflowExecutionResponse:
+    _require_owner_access(user)
+    _rate_limit_bucket(user.id, "execute", WORKFLOW_EXECUTE_RATE_LIMIT_MAX_REQUESTS)
+
+    template = _load_workflow_template_or_404(template_id)
+    _ensure_template_enabled(template)
+    _ensure_template_url_safe(template)
+
+    try:
+        agent_id = uuid.UUID(request.agent_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid agent_id.")
+
+    try:
+        skill_id = uuid.UUID(request.skill_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid skill_id.")
+
+    agent = _load_agent_for_execution(db, user=user, agent_id=agent_id)
+    _load_owned_workflow_skill_binding(
+        db,
+        user=user,
+        agent_id=agent.id,
+        skill_id=skill_id,
+        template_id=template_id,
+        template_version=str(template["template_version"]),
+    )
+
+    consent = workflow_consent_repository.get_consent(
+        db,
+        user_id=user.id,
+        template_id=template_id,
+        template_version=str(template["template_version"]),
+    )
+    if consent is None:
+        return _build_execution_response(
+            template=template,
+            status_value="consent_required",
+            success=False,
+            execution_id=None,
+            output_summary=None,
+            error_message="Consent is required before this workflow can run.",
+            http_status_code=428,
+        )
+
+    try:
+        sanitized_payload = sanitize_payload_for_template(template, request.input_payload)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Input payload exceeds maximum size for this template.",
+        )
+
+    canonical_webhook_url = canonicalize_webhook_url(str(template["webhook_url"]))
+    webhook_result: WebhookCallResult = call_template_webhook(canonical_webhook_url, sanitized_payload)
+
+    if webhook_result.timed_out:
+        execution_status = "timeout"
+        success = False
+        error_message = webhook_result.error_message or "Webhook request timed out."
+    elif webhook_result.success:
+        execution_status = "success"
+        success = True
+        error_message = None
+    else:
+        execution_status = "failed"
+        success = False
+        error_message = webhook_result.error_message or "Webhook request failed."
+
+    output_summary = webhook_result.response_summary
+    if success and not output_summary:
+        output_summary = "Workflow webhook completed successfully."
+
+    execution = workflow_execution_repository.create_execution(
+        db,
+        {
+            "user_id": user.id,
+            "agent_id": agent.id,
+            "skill_id": skill_id,
+            "template_id": template_id,
+            "template_version": str(template["template_version"]),
+            "consent_id": consent.id,
+            "webhook_url": canonical_webhook_url,
+            "input_payload_sanitized": sanitized_payload,
+            "output_summary": output_summary,
+            "status": execution_status,
+            "error_message": sanitize_error_message(error_message) if error_message else None,
+            "http_status_code": webhook_result.status_code,
+        },
+    )
+    db.commit()
+    db.refresh(execution)
+
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=user.id,
+        request_id=None,
+        event_type="workflow.execute.recorded",
+        message="Workflow template execution recorded.",
+        metadata_json={
+            "user_id": str(user.id),
+            "agent_id": str(agent.id),
+            "skill_id": str(skill_id),
+            "template_id": template_id,
+            "template_version": str(template["template_version"]),
+            "execution_id": str(execution.id),
+            "status": execution_status,
+            "success": success,
+            "http_status_code": webhook_result.status_code,
+            "response_truncated": webhook_result.response_truncated,
+        },
+    )
+    db.commit()
+
+    return _build_execution_response(
+        template=template,
+        status_value=execution_status,
+        success=success,
+        execution_id=execution.id,
+        output_summary=output_summary,
+        error_message=sanitize_error_message(error_message) if error_message else None,
+        http_status_code=webhook_result.status_code,
+    )

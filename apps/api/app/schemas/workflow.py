@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -8,6 +9,7 @@ class WorkflowTemplateResponse(BaseModel):
     id: str
     name: str
     description: str
+    input_schema: dict[str, str] = Field(default_factory=dict)
     template_version: str
     risk_level: str
     output_type: str
@@ -79,3 +81,20 @@ class WorkflowExecutionSummary(BaseModel):
 
 class WorkflowExecutionListResponse(BaseModel):
     items: list[WorkflowExecutionSummary]
+
+
+class WorkflowExecutionRequest(BaseModel):
+    agent_id: str = Field(min_length=1)
+    skill_id: str = Field(min_length=1)
+    input_payload: dict = Field(default_factory=dict)
+
+
+class WorkflowExecutionResponse(BaseModel):
+    success: bool
+    status: Literal["success", "failed", "timeout", "consent_required"]
+    template_id: str
+    template_version: str
+    execution_id: str | None = None
+    output_summary: str | None = None
+    error_message: str | None = None
+    http_status_code: int | None = None

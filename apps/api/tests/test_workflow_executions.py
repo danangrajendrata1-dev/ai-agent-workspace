@@ -1,0 +1,631 @@
+import uuid
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+from app.core.database import SessionLocal
+from app.core.workflow_webhook_client import WebhookCallResult
+from app.repositories import (
+    agent_repository,
+    skill_repository,
+    workflow_consent_repository,
+    workflow_execution_repository,
+    workflow_skill_binding_repository,
+)
+from app.services.workflow_service import clear_workflow_rate_limiter
+
+from .test_sessions import auth_headers, build_agent, build_user
+
+
+@pytest.fixture(autouse=True)
+def reset_workflow_rate_limiter():
+    clear_workflow_rate_limiter()
+
+
+def build_enabled_template(*, version: str = "1.0", webhook_url: str = "https://workflow.example.org/webhook/generate-pdf"):
+    return {
+        "id": "generate_pdf",
+        "name": "Generate PDF",
+        "description": "Membuat file PDF dari teks",
+        "webhook_url": webhook_url,
+        "input_schema": {"title": "string", "content": "string"},
+        "output_type": "json",
+        "enabled": True,
+        "template_version": version,
+        "risk_level": "medium",
+        "max_payload_bytes": 10000,
+    }
+
+
+def build_workflow_skill_assignment(skill_id, *, skill_type: str = "workflow_skill", is_enabled: bool = True):
+    skill_uuid = uuid.UUID(str(skill_id))
+    return SimpleNamespace(
+        skill_id=skill_uuid,
+        skill=SimpleNamespace(title="Workflow Skill", type=skill_type, status="active"),
+        is_enabled=is_enabled,
+    )
+
+
+def build_execution_context(
+    *,
+    user_prefix: str,
+    template_version: str = "1.0",
+    with_consent: bool = True,
+    with_binding: bool = True,
+):
+    with SessionLocal() as db:
+        user = build_user(db, email_prefix=user_prefix)
+        agent = build_agent(db, owner_id=user.id, name=f"{user_prefix}-agent")
+        skill = skill_repository.create(
+            db,
+            {
+                "name": f"{user_prefix} Workflow Skill",
+                "slug": f"{user_prefix}-workflow-skill-{uuid.uuid4().hex[:8]}",
+                "description": "Workflow skill for execution tests.",
+                "content": "Workflow skill content.",
+                "source_type": "manual",
+                "source_id": None,
+                "version_label": "1.0",
+                "risk_level": "medium",
+                "status": "active",
+            },
+        )
+        db.commit()
+        db.refresh(skill)
+
+        consent = None
+        if with_consent:
+            consent = workflow_consent_repository.create_consent(
+                db,
+                user_id=user.id,
+                template_id="generate_pdf",
+                template_version=template_version,
+            )
+
+        binding = None
+        if with_binding:
+            binding = workflow_skill_binding_repository.create_binding(
+                db,
+                user_id=user.id,
+                skill_id=skill.id,
+                template_id="generate_pdf",
+                template_version=template_version,
+            )
+
+        db.commit()
+        if consent is not None:
+            db.refresh(consent)
+        if binding is not None:
+            db.refresh(binding)
+
+        user_id = str(user.id)
+        agent_id = str(agent.id)
+        skill_id = str(skill.id)
+
+    return SimpleNamespace(
+        user=user,
+        agent=agent,
+        user_id=user_id,
+        agent_id=agent_id,
+        skill=skill,
+        skill_id=skill_id,
+        consent=consent,
+        binding=binding,
+    )
+
+
+def test_execute_route_requires_authentication(client):
+    response = client.post("/workflows/execute/generate_pdf", json={})
+
+    assert response.status_code == 401
+
+
+def test_execute_template_workflow_success_sanitizes_payload_and_saves_audit(client):
+    context = build_execution_context(user_prefix="workflow-exec-success")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+    webhook_result = WebhookCallResult(
+        success=True,
+        status_code=200,
+        response_summary="Generated PDF queued.",
+        error_message=None,
+        timed_out=False,
+        response_truncated=False,
+    )
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook",
+        return_value=webhook_result,
+    ) as mock_call, patch(
+        "app.services.workflow_service.log_service.record_activity",
+        return_value=None,
+    ):
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {
+                    "title": "  Monthly Report  ",
+                    "content": "  Keep this safe  ",
+                    "token": "secret-value",
+                    "extra": "drop me",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["status"] == "success"
+    assert payload["template_id"] == "generate_pdf"
+    assert payload["template_version"] == "1.0"
+    assert payload["output_summary"] == "Generated PDF queued."
+    assert payload["error_message"] is None
+    assert payload["http_status_code"] == 200
+    assert payload["execution_id"] is not None
+    mock_call.assert_called_once()
+    called_url, called_payload = mock_call.call_args.args[:2]
+    assert called_url == "https://workflow.example.org/webhook/generate-pdf"
+    assert called_payload == {"title": "Monthly Report", "content": "Keep this safe"}
+
+    with SessionLocal() as db:
+        executions = workflow_execution_repository.list_executions(db, user_id=context.user.id)
+        assert len(executions) == 1
+        execution = executions[0]
+        assert execution.status == "success"
+        assert execution.webhook_url == "https://workflow.example.org/webhook/generate-pdf"
+        assert execution.input_payload_sanitized == {"title": "Monthly Report", "content": "Keep this safe"}
+        assert execution.output_summary == "Generated PDF queued."
+        assert execution.error_message is None
+        assert execution.http_status_code == 200
+
+
+def test_execute_requires_consent_before_webhook_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-consent", with_consent=False)
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 428
+    payload = response.json()
+    assert payload["status"] == "consent_required"
+    assert payload["error_message"] == "Consent is required before this workflow can run."
+    mock_call.assert_not_called()
+
+    with SessionLocal() as db:
+        executions = workflow_execution_repository.list_executions(db, user_id=context.user.id)
+        assert executions == []
+
+
+def test_execute_rejects_disabled_template_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-disabled")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+    template["enabled"] = False
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 400
+    mock_call.assert_not_called()
+
+
+def test_execute_rejects_private_webhook_url_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-private")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template(webhook_url="https://127.0.0.1/webhook")
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "not allowed" in response.json()["detail"].lower()
+    mock_call.assert_not_called()
+
+
+def test_execute_rejects_version_mismatch_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-version")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template(version="2.0")
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "version mismatch" in response.json()["detail"].lower()
+    mock_call.assert_not_called()
+
+
+def test_execute_rejects_missing_binding_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-binding", with_binding=False)
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 404
+    mock_call.assert_not_called()
+
+
+def test_execute_rejects_non_workflow_skill_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-prompt")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id, skill_type="prompt_skill")],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "workflow_skill" in response.json()["detail"]
+    mock_call.assert_not_called()
+
+
+def test_execute_rejects_inactive_workflow_skill_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-inactive")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id, is_enabled=False)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "active" in response.json()["detail"].lower()
+    mock_call.assert_not_called()
+
+
+def test_execute_rejects_payload_exceeding_template_limit_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-size")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+    template["max_payload_bytes"] = 1
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "A", "content": "B"},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "maximum size" in response.json()["detail"].lower()
+    mock_call.assert_not_called()
+
+
+def test_execute_timeout_and_failed_http_are_audited(client):
+    context = build_execution_context(user_prefix="workflow-exec-fail")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+    timeout_result = WebhookCallResult(
+        success=False,
+        status_code=None,
+        response_summary=None,
+        error_message="Webhook request timed out.",
+        timed_out=True,
+        response_truncated=False,
+    )
+    failed_result = WebhookCallResult(
+        success=False,
+        status_code=500,
+        response_summary="Internal error summary.",
+        error_message="Webhook returned HTTP 500.",
+        timed_out=False,
+        response_truncated=True,
+    )
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook",
+        return_value=timeout_result,
+    ), patch(
+        "app.services.workflow_service.log_service.record_activity",
+        return_value=None,
+    ):
+        timeout_response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert timeout_response.status_code == 200
+    assert timeout_response.json()["status"] == "timeout"
+    assert timeout_response.json()["http_status_code"] is None
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook",
+        return_value=failed_result,
+    ), patch(
+        "app.services.workflow_service.log_service.record_activity",
+        return_value=None,
+    ):
+        failed_response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert failed_response.status_code == 200
+    assert failed_response.json()["status"] == "failed"
+    assert failed_response.json()["http_status_code"] == 500
+
+    with SessionLocal() as db:
+        executions = workflow_execution_repository.list_executions(db, user_id=context.user.id)
+        assert len(executions) == 2
+        statuses = {item.status for item in executions}
+        assert statuses == {"timeout", "failed"}
+
+
+def test_execute_rate_limits_after_five_requests(client):
+    context = build_execution_context(user_prefix="workflow-exec-ratelimit")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+    webhook_result = WebhookCallResult(
+        success=True,
+        status_code=200,
+        response_summary="Queued.",
+        error_message=None,
+        timed_out=False,
+        response_truncated=False,
+    )
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook",
+        return_value=webhook_result,
+    ) as mock_call, patch(
+        "app.services.workflow_service.log_service.record_activity",
+        return_value=None,
+    ):
+        responses = []
+        for _ in range(6):
+            responses.append(
+                client.post(
+                    "/workflows/execute/generate_pdf",
+                    headers=headers,
+                    json={
+                        "agent_id": context.agent_id,
+                        "skill_id": context.skill_id,
+                        "input_payload": {"title": "Monthly Report", "content": "Content"},
+                    },
+                )
+            )
+
+    assert [response.status_code for response in responses[:5]] == [200, 200, 200, 200, 200]
+    assert responses[5].status_code == 429
+    assert mock_call.call_count == 5
+
+
+def test_execute_rejects_missing_agent_or_other_user_agent_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-agent")
+    other_context = build_execution_context(user_prefix="workflow-exec-other")
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": other_context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+            },
+        )
+
+    assert response.status_code == 404
+    mock_call.assert_not_called()

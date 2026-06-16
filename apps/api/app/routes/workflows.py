@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -9,6 +10,8 @@ from app.schemas.workflow import (
     WorkflowConsentListResponse,
     WorkflowConsentResponse,
     WorkflowExecutionListResponse,
+    WorkflowExecutionRequest,
+    WorkflowExecutionResponse,
     WorkflowSkillBindingListResponse,
     WorkflowSkillBindingRequest,
     WorkflowSkillBindingResponse,
@@ -103,3 +106,21 @@ def list_workflow_executions(
             offset=offset,
         )
     )
+
+
+@router.post("/workflows/execute/{template_id}", response_model=WorkflowExecutionResponse)
+def execute_workflow_template(
+    template_id: str,
+    payload: WorkflowExecutionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    result = workflow_service.execute_workflow_template(
+        db,
+        user=current_user,
+        template_id=template_id,
+        request=payload,
+    )
+    if result.status == "consent_required":
+        return JSONResponse(status_code=status.HTTP_428_PRECONDITION_REQUIRED, content=result.model_dump(mode="json"))
+    return result

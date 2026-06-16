@@ -6,6 +6,7 @@ import {
   createWorkflowBinding,
   createWorkflowConsent,
   deleteWorkflowBinding,
+  executeWorkflowTemplate,
   listWorkflowBindings,
   listWorkflowConsents,
   listWorkflowExecutions,
@@ -49,6 +50,7 @@ function buildTemplateViewModel(template) {
     id: String(template?.id || ""),
     name: template?.name || "Unknown template",
     description: template?.description || "No description available.",
+    inputSchema: template?.input_schema && typeof template.input_schema === "object" ? template.input_schema : {},
     templateVersion: template?.template_version || "1.0",
     riskLevel: template?.risk_level || "medium",
     outputType: template?.output_type || "json",
@@ -100,6 +102,16 @@ function buildExecutionViewModel(execution) {
 }
 
 
+function createExecutionInputState(template) {
+  const inputSchema = template?.inputSchema && typeof template.inputSchema === "object" ? template.inputSchema : {};
+  const nextValues = {};
+  Object.keys(inputSchema).forEach((key) => {
+    nextValues[key] = "";
+  });
+  return nextValues;
+}
+
+
 function buildWorkflowSkillOption(assignment) {
   const nestedSkill = assignment?.skill || {};
   const skillType = nestedSkill?.type || nestedSkill?.skillType || nestedSkill?.skill_type || "workflow_skill";
@@ -119,12 +131,15 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
   const [executions, setExecutions] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [selectedSkillId, setSelectedSkillId] = useState("");
+  const [executionInputValues, setExecutionInputValues] = useState({});
+  const [isExecuting, setIsExecuting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingConsent, setIsSavingConsent] = useState("");
   const [isSavingBinding, setIsSavingBinding] = useState(false);
   const [deletingBindingId, setDeletingBindingId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [executionResult, setExecutionResult] = useState(null);
 
   const workflowSkills = useMemo(
     () =>
@@ -194,6 +209,27 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
       setSelectedSkillId(workflowSkills[0].id);
     }
   }, [workflowSkills, selectedSkillId]);
+
+  useEffect(() => {
+    setExecutionResult(null);
+  }, [activeAgent?.id, selectedSkillId, selectedTemplateId]);
+
+  useEffect(() => {
+    setExecutionInputValues((currentValues) => {
+      const currentTemplate = templates.find((template) => template.id === selectedTemplateId) || null;
+      if (!currentTemplate) {
+        return {};
+      }
+
+      const nextValues = createExecutionInputState(currentTemplate);
+      Object.keys(nextValues).forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(currentValues, key)) {
+          nextValues[key] = currentValues[key];
+        }
+      });
+      return nextValues;
+    });
+  }, [selectedTemplateId, templates]);
 
   const activeConsentLookup = useMemo(() => {
     const lookup = new Set();
@@ -274,12 +310,105 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
     [selectedTemplateId, templates]
   );
 
+  const selectedBinding = useMemo(() => {
+    if (!selectedSkillId || !selectedTemplateId) {
+      return null;
+    }
+
+    return (
+      bindings.find(
+        (binding) => binding.skillId === selectedSkillId && binding.templateId === selectedTemplateId
+      ) || null
+    );
+  }, [bindings, selectedSkillId, selectedTemplateId]);
+
+  const selectedConsent = useMemo(() => {
+    if (!selectedTemplate) {
+      return null;
+    }
+
+    return (
+      consents.find(
+        (consent) =>
+          consent.templateId === selectedTemplate.id &&
+          consent.templateVersion === selectedTemplate.templateVersion
+      ) || null
+    );
+  }, [consents, selectedTemplate]);
+
+  const executionFields = useMemo(() => Object.keys(selectedTemplate?.inputSchema || {}), [selectedTemplate]);
+
+  const canExecuteTemplate = Boolean(
+    activeAgent?.id &&
+      selectedTemplate?.enabled &&
+      selectedConsent &&
+      selectedBinding &&
+      selectedSkillId &&
+      executionFields.length
+  );
+
   const selectedTemplateBindingStatus = useMemo(() => {
     if (!selectedSkillId || !selectedTemplateId) {
       return false;
     }
     return bindingLookup.has(`${selectedSkillId}:${selectedTemplateId}`);
   }, [bindingLookup, selectedSkillId, selectedTemplateId]);
+
+  const handleExecutionInputChange = useCallback((fieldName, value) => {
+    setExecutionInputValues((currentValues) => ({
+      ...currentValues,
+      [fieldName]: value
+    }));
+  }, []);
+
+  const handleExecuteTemplateWorkflow = useCallback(async () => {
+    if (!canExecuteTemplate || isExecuting || !selectedTemplate) {
+      return;
+    }
+
+    setIsExecuting(true);
+    setError("");
+    setNotice("");
+    setExecutionResult(null);
+
+    const inputPayload = {};
+    executionFields.forEach((fieldName) => {
+      const value = executionInputValues[fieldName];
+      if (typeof value === "string") {
+        inputPayload[fieldName] = value.trim();
+      } else {
+        inputPayload[fieldName] = value;
+      }
+    });
+
+    try {
+      const result = await executeWorkflowTemplate(selectedTemplate.id, {
+        agent_id: activeAgent.id,
+        skill_id: selectedSkillId,
+        input_payload: inputPayload
+      });
+      setExecutionResult(result);
+      setNotice("Workflow template executed.");
+      await loadWorkflowData();
+    } catch (executeError) {
+      const safeMessage =
+        executeError && executeError.status === 428
+          ? "Consent is required before this workflow can run."
+          : getSafeErrorMessage(executeError, "Failed to execute workflow template.");
+      setError(safeMessage);
+    } finally {
+      setIsExecuting(false);
+    }
+  }, [
+    activeAgent,
+    canExecuteTemplate,
+    executionFields,
+    executionInputValues,
+    isExecuting,
+    loadWorkflowData,
+    selectedSkillId,
+    selectedTemplate
+  ]);
 
   return (
     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
@@ -542,6 +671,122 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                  Execute
+                </p>
+                <p className="mt-1 text-sm font-semibold text-[#3E362E]">Explicit template execution</p>
+              </div>
+              <span className="rounded-full border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                Advanced only
+              </span>
+            </div>
+
+            <p className="mt-3 text-xs leading-5 text-[rgba(62,54,46,0.62)]">
+              This will call a whitelisted external workflow template. No credentials will be sent.
+            </p>
+
+            {!activeAgent?.id ? (
+              <div className="mt-3 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.62)]">
+                Select an active agent before executing a workflow template.
+              </div>
+            ) : !selectedTemplate?.enabled ? (
+              <div className="mt-3 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.62)]">
+                Select an enabled workflow template to continue.
+              </div>
+            ) : !selectedConsent ? (
+              <div className="mt-3 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.62)]">
+                Consent is required before this workflow can run.
+              </div>
+            ) : !selectedBinding ? (
+              <div className="mt-3 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.62)]">
+                Bind a workflow skill to this template before executing it.
+              </div>
+            ) : executionFields.length ? (
+              <div className="mt-3 space-y-3">
+                <div className="rounded-[14px] border border-[rgba(96,112,86,0.18)] bg-[rgba(96,112,86,0.08)] px-4 py-3 text-xs leading-5 text-[#607056]">
+                  Consent and binding are ready. Review the payload before execution.
+                </div>
+                <div className="space-y-3">
+                  {executionFields.map((fieldName) => {
+                    const inputValue = executionInputValues[fieldName] || "";
+                    const isLongField =
+                      /content|description|body|message|notes/i.test(fieldName);
+                    return (
+                      <label key={fieldName} className="grid gap-2">
+                        <span className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                          {fieldName}
+                        </span>
+                        {isLongField ? (
+                          <textarea
+                            value={inputValue}
+                            onChange={(event) => handleExecutionInputChange(fieldName, event.target.value)}
+                            rows={4}
+                            className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-white px-3 py-2 text-sm text-[#3E362E] outline-none transition focus:border-[#A36A58]"
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={inputValue}
+                            onChange={(event) => handleExecutionInputChange(fieldName, event.target.value)}
+                            className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-white px-3 py-2 text-sm text-[#3E362E] outline-none transition focus:border-[#A36A58]"
+                          />
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleExecuteTemplateWorkflow}
+                  disabled={!canExecuteTemplate || isExecuting}
+                  className="w-full rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isExecuting ? "Executing..." : "Execute Template Workflow"}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-3 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.62)]">
+                Selected template does not define an input schema.
+              </div>
+            )}
+
+            {executionResult ? (
+              <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                      Execution result
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-[#3E362E]">{executionResult.status}</p>
+                  </div>
+                  {executionResult.execution_id ? (
+                    <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
+                      {executionResult.execution_id}
+                    </span>
+                  ) : null}
+                </div>
+                {executionResult.output_summary ? (
+                  <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+                    {truncateText(executionResult.output_summary, 180)}
+                  </p>
+                ) : null}
+                {executionResult.error_message ? (
+                  <p className="mt-2 text-sm leading-6 text-[#A36A58]">
+                    {executionResult.error_message}
+                  </p>
+                ) : null}
+                {executionResult.http_status_code ? (
+                  <p className="mt-2 text-xs leading-5 text-[rgba(62,54,46,0.56)]">
+                    HTTP status: {executionResult.http_status_code}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

@@ -34,7 +34,7 @@ def test_workflow_templates_list_returns_safe_fields(client):
     assert template["enabled"] is False
     assert template["consented"] is False
     assert "webhook_url" not in template
-    assert "input_schema" not in template
+    assert template["input_schema"] == {"title": "string", "content": "string"}
 
 
 def test_disabled_template_cannot_be_consented(client):

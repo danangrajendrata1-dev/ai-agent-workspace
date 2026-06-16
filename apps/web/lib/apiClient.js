@@ -62,12 +62,15 @@ async function parseResponse(response, options = {}) {
 
   if (!response.ok) {
     const message =
-      isJson && payload && typeof payload === "object" && "detail" in payload
-        ? payload.detail
+      isJson && payload && typeof payload === "object" && ("detail" in payload || "error_message" in payload || "message" in payload)
+        ? payload.detail || payload.error_message || payload.message
         : typeof payload === "string" && payload
           ? payload
           : "Request failed.";
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
 
   return payload;
@@ -222,6 +225,11 @@ export function deleteWorkflowBinding(bindingId) {
 
 export function listWorkflowExecutions() {
   return get("/workflows/executions");
+}
+
+export function executeWorkflowTemplate(templateId, payload) {
+  ensureIdentifier(templateId, "template");
+  return post(`/workflows/execute/${templateId}`, payload);
 }
 
 export function chatWithAgent(agentId, messages, sessionId) {
