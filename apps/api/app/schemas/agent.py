@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 AgentStatus = Literal["active", "inactive"]
+TaskDraftConfidence = Literal["high", "medium", "low", "none"]
 
 
 class AgentCreate(BaseModel):
@@ -159,3 +160,35 @@ class AgentRoutingPreviewResponse(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     active_skill_matches: list[AgentRoutingSkillMatchResponse] = Field(default_factory=list)
     note: str
+
+
+class TaskDraftRequest(BaseModel):
+    task_text: str = Field(min_length=1)
+
+    @field_validator("task_text", mode="before")
+    @classmethod
+    def strip_task_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class TaskDraftSkillMatch(BaseModel):
+    skill_id: str
+    title: str
+    skill_type: str
+    relevance_note: str
+
+
+class TaskDraftResponse(BaseModel):
+    task_text: str
+    selected_agent_id: str | None
+    selected_agent_name: str | None
+    confidence: TaskDraftConfidence
+    reasons: list[str] = Field(default_factory=list)
+    relevant_skills: list[TaskDraftSkillMatch] = Field(default_factory=list)
+    task_summary: str
+    safety_note: str
+    status: Literal["draft_only"]
+    candidate_agents: list[dict] = Field(default_factory=list)

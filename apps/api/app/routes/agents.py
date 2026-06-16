@@ -14,8 +14,10 @@ from app.schemas.agent import (
     AgentRoutingPreviewResponse,
     AgentResponse,
     AgentUpdate,
+    TaskDraftRequest,
+    TaskDraftResponse,
 )
-from app.services import agent_routing_service, agent_service
+from app.services import agent_routing_service, agent_service, agent_task_draft_service
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -33,6 +35,19 @@ def create_agent(
 @router.get("", response_model=AgentListResponse)
 def list_agents(db: Session = Depends(get_db), current_user=Depends(require_owner)):
     return AgentListResponse(items=agent_service.list_agents(db, owner_id=current_user.id))
+
+
+@router.post("/task-draft", response_model=TaskDraftResponse)
+def create_agent_task_draft(
+    payload: TaskDraftRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    return agent_task_draft_service.create_agent_task_draft(
+        db,
+        current_user=current_user,
+        task_text=payload.task_text,
+    )
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)

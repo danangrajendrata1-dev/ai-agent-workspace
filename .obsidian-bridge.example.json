@@ -1,0 +1,9 @@
+{
+  "obsidian_vault_path": "C:/Path/To/Your/Obsidian/Vault",
+  "ollama_endpoint": "http://localhost:11434/api/chat",
+  "default_model": "qwen2.5:3b",
+  "projects_root": "Projects",
+  "note_filename": "AI_SUMMARIES.md",
+  "max_diff_lines": 300,
+  "max_test_log_lines": 120
+}

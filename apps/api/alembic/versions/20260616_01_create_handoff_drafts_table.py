@@ -1,7 +1,7 @@
 """create handoff drafts table
 
-Revision ID: 20260616_01_create_handoff_drafts_table
-Revises: 20260615_03_create_model_provider_api_keys_table
+Revision ID: 20260616_01
+Revises: 20260615_03
 Create Date: 2026-06-16 00:00:00.000000
 """
 
@@ -11,8 +11,8 @@ from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
-revision = "20260616_01_create_handoff_drafts_table"
-down_revision = "20260615_03_create_model_provider_api_keys_table"
+revision = "20260616_01"
+down_revision = "20260615_03"
 branch_labels = None
 depends_on = None
 

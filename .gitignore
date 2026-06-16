@@ -68,3 +68,6 @@ n8n/*.db
 # local workspace / local automation files
 .agents/
 n8n/
+.obsidian-bridge/logs/
+.obsidian-bridge/*.log
+.obsidian-bridge/*.tmp

@@ -8,6 +8,7 @@ EXPECTED_PATHS = {
     "/model-provider-settings",
     "/model-providers",
     "/agents",
+    "/agents/task-draft",
     "/skills",
     "/skills/library",
     "/agents/routing-preview",

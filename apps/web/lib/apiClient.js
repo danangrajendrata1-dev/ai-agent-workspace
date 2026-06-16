@@ -166,6 +166,10 @@ export function previewAgentRouting(payload, options) {
   return post("/agents/routing-preview", payload, options);
 }
 
+export function generateTaskDraft(taskText, options) {
+  return post("/agents/task-draft", { task_text: taskText }, options);
+}
+
 export function getAgentActiveSkills(id, options) {
   ensureIdentifier(id, "agent");
   return get(`/agents/${id}/active-skills`, options);

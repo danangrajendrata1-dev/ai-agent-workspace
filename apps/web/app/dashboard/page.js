@@ -26,6 +26,7 @@ import {
   getSkills,
   getSkillLibrary,
   post,
+  generateTaskDraft,
   previewAgentRouting,
   previewGithubSkillImport
 } from "../../lib/apiClient";
@@ -175,6 +176,39 @@ function buildRoutingPreviewResultViewModel(payload) {
         )
       : [],
     note: payload?.note || "Preview only, no execution."
+  };
+}
+
+function buildTaskDraftRelevantSkillViewModel(skill, index) {
+  return {
+    id: String(skill?.skill_id || buildAgentId("task-draft-skill", index)),
+    skillId: String(skill?.skill_id || ""),
+    title: skill?.title || `Relevant skill ${index + 1}`,
+    skillType: skill?.skill_type || "prompt_skill",
+    relevanceNote: skill?.relevance_note || ""
+  };
+}
+
+function buildTaskDraftResultViewModel(payload) {
+  return {
+    taskText: payload?.task_text || "",
+    selectedAgentId: payload?.selected_agent_id ? String(payload.selected_agent_id) : null,
+    selectedAgentName: payload?.selected_agent_name || null,
+    confidence: payload?.confidence || "none",
+    reasons: Array.isArray(payload?.reasons) ? payload.reasons : [],
+    relevantSkills: Array.isArray(payload?.relevant_skills)
+      ? payload.relevant_skills.map((skill, index) => buildTaskDraftRelevantSkillViewModel(skill, index))
+      : [],
+    taskSummary: payload?.task_summary || "",
+    safetyNote:
+      payload?.safety_note ||
+      "This is a draft preview only. No agent has been run. No skill has been executed.",
+    status: payload?.status || "draft_only",
+    candidateAgents: Array.isArray(payload?.candidate_agents)
+      ? payload.candidate_agents.map((candidate, index) =>
+          buildRoutingPreviewCandidateViewModel(candidate, index)
+        )
+      : []
   };
 }
 
@@ -616,6 +650,9 @@ export default function DashboardPage() {
   const [routingPreviewResult, setRoutingPreviewResult] = useState(null);
   const [routingPreviewNotice, setRoutingPreviewNotice] = useState("");
   const [isPreviewingAgentMatch, setIsPreviewingAgentMatch] = useState(false);
+  const [taskDraftResult, setTaskDraftResult] = useState(null);
+  const [taskDraftNotice, setTaskDraftNotice] = useState("");
+  const [isGeneratingTaskDraft, setIsGeneratingTaskDraft] = useState(false);
   const [handoffDrafts, setHandoffDrafts] = useState([]);
   const [isLoadingHandoffDrafts, setIsLoadingHandoffDrafts] = useState(true);
   const [handoffDraftsNotice, setHandoffDraftsNotice] = useState("");
@@ -1460,6 +1497,8 @@ export default function DashboardPage() {
     setRoutingPreviewForm({ taskText: value });
     setRoutingPreviewNotice("");
     setRoutingPreviewResult(null);
+    setTaskDraftNotice("");
+    setTaskDraftResult(null);
   }
 
   async function handleRoutingPreviewSubmit(event) {
@@ -1484,6 +1523,33 @@ export default function DashboardPage() {
     } finally {
       setIsPreviewingAgentMatch(false);
     }
+  }
+
+  async function handleGenerateTaskDraft() {
+    const taskText = routingPreviewForm.taskText.trim();
+    if (!taskText) {
+      setTaskDraftNotice("Task text is required.");
+      return;
+    }
+
+    setIsGeneratingTaskDraft(true);
+    setTaskDraftNotice("Generating draft preview...");
+
+    try {
+      const response = await generateTaskDraft(taskText);
+      setTaskDraftResult(buildTaskDraftResultViewModel(response));
+      setTaskDraftNotice("Draft preview ready.");
+    } catch (error) {
+      setTaskDraftResult(null);
+      setTaskDraftNotice(getSafeErrorMessage(error, "Failed to generate task draft."));
+    } finally {
+      setIsGeneratingTaskDraft(false);
+    }
+  }
+
+  function handleClearTaskDraft() {
+    setTaskDraftResult(null);
+    setTaskDraftNotice("");
   }
 
   function handleGithubSkillPreviewFieldChange(field, value) {
@@ -3287,6 +3353,169 @@ export default function DashboardPage() {
                           Preview only, no execution. Enter a task to see the best agent match.
                         </div>
                       )}
+                    </div>
+
+                    <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
+                            Task Draft
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                            Handoff Preview
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                          Preview only
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.64)]">
+                        Menggunakan task text yang sama dari Routing Preview untuk membuat draft handoff lokal.
+                      </p>
+
+                      <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#E5E0D3] px-4 py-3">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                          Current task text
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-[#3E362E]">
+                          {routingPreviewForm.taskText.trim() || "Enter a task in Routing Preview first."}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleGenerateTaskDraft}
+                          disabled={isGeneratingTaskDraft || !routingPreviewForm.taskText.trim()}
+                          className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {isGeneratingTaskDraft ? "Generating..." : "Generate Task Draft"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearTaskDraft}
+                          disabled={isGeneratingTaskDraft && !taskDraftResult}
+                          className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-2.5 text-sm font-medium text-[#3E362E] transition hover:bg-[#efe7d6] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Clear Draft
+                        </button>
+                      </div>
+
+                      {taskDraftNotice ? (
+                        <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
+                          {truncateText(taskDraftNotice, 180)}
+                        </div>
+                      ) : null}
+
+                      {taskDraftResult ? (
+                        <div className="mt-4 space-y-4 rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                                Selected agent
+                              </p>
+                              <p className="mt-1 text-base font-semibold text-[#3E362E]">
+                                {taskDraftResult.selectedAgentName || "No recommendation"}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.14em] ${
+                                  taskDraftResult.status === "draft_only"
+                                    ? "border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] text-[#A36A58]"
+                                    : "border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] text-[rgba(62,54,46,0.7)]"
+                                }`}
+                              >
+                                Draft Only
+                              </span>
+                              <span
+                                className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.14em] ${
+                                  taskDraftResult.confidence === "high"
+                                    ? "border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] text-[#607056]"
+                                    : taskDraftResult.confidence === "medium"
+                                      ? "border-[rgba(163,142,88,0.2)] bg-[rgba(163,142,88,0.12)] text-[#9A7A35]"
+                                      : taskDraftResult.confidence === "low"
+                                        ? "border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] text-[#A36A58]"
+                                        : "border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] text-[rgba(62,54,46,0.7)]"
+                                }`}
+                              >
+                                {taskDraftResult.confidence} confidence
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {(taskDraftResult.reasons.length
+                              ? taskDraftResult.reasons
+                              : ["Preview only, no execution."]
+                            ).map((reason, index) => (
+                              <div
+                                key={`task-draft-reason-${index}`}
+                                className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3 text-sm leading-6 text-[#3E362E]"
+                              >
+                                {reason}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                              Relevant skills
+                            </p>
+                            {taskDraftResult.relevantSkills.length ? (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {taskDraftResult.relevantSkills.map((skill) => (
+                                  <span
+                                    key={skill.id}
+                                    className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]"
+                                  >
+                                    {skill.title} | {skill.skillType}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-sm text-[rgba(62,54,46,0.62)]">
+                                No relevant active skills found.
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                              Task Summary
+                            </p>
+                            <p className="mt-2 text-sm leading-6 text-[#3E362E]">
+                              {taskDraftResult.taskSummary || "No summary available."}
+                            </p>
+                          </div>
+
+                          <div className="rounded-[14px] border border-[rgba(163,142,88,0.18)] bg-[rgba(163,142,88,0.08)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.74)]">
+                            {taskDraftResult.safetyNote}
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                              Candidate agents
+                            </p>
+                            {taskDraftResult.candidateAgents.length ? (
+                              <div className="flex flex-wrap gap-2">
+                                {taskDraftResult.candidateAgents.map((candidate) => (
+                                  <span
+                                    key={candidate.id}
+                                    className="rounded-full border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]"
+                                  >
+                                    {candidate.name} | {candidate.score > 0 ? candidate.score : "low"}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-[rgba(62,54,46,0.62)]">
+                                No candidate agents available.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
