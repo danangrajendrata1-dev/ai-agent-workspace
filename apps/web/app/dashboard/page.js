@@ -1304,6 +1304,14 @@ export default function DashboardPage() {
     setActiveAgentId((current) => (current === agentId ? agentId : agentId));
   }
 
+  function handleClearActiveAssociate() {
+    setActiveAgentId(null);
+    setActiveAgentDetail(null);
+    setActiveAgentDetailNotice("");
+    setActiveAgentSkills([]);
+    setActiveAgentSkillsNotice("Select an active associate to view attached skills.");
+  }
+
   function handleAgentFormChange(field, value) {
     setAgentForm((current) => ({
       ...current,
@@ -2977,11 +2985,11 @@ export default function DashboardPage() {
                   <div className="flex-1 space-y-4">
                     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-5 py-4">
                       <p className="text-sm text-[rgba(62,54,46,0.7)]">
-                        {activeAgent
-                          ? `Ready to draft commands for ${activeAgent.name}.`
-                          : "Select active associate or start drafting locally."}
+                        Workspace Chat is the primary entrypoint. Use advanced tools only when you need manual routing or draft review.
                       </p>
                     </div>
+
+                    <WorkspaceChatPanel />
 
                     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-5 py-4">
                       <div className="flex items-center justify-between gap-3">
@@ -3008,12 +3016,39 @@ export default function DashboardPage() {
                         </div>
                       ) : null}
 
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-2.5 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
+                          Active skills: {activeAgentSkills.length}
+                        </span>
+                        {activeAgent ? (
+                          <button
+                            type="button"
+                            onClick={handleClearActiveAssociate}
+                            className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs font-medium text-[#3E362E] transition hover:bg-[#efe7d6]"
+                          >
+                            Clear selection
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <p className="mt-3 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+                        {activeAgentDetail
+                          ? truncateText(
+                              activeAgentDetail.role_description ||
+                                activeAgentDetail.description ||
+                                "No summary available.",
+                              180
+                            )
+                          : "Select an associate from the sidebar for direct agent chat. Workspace Chat stays primary."}
+                      </p>
+
                       {activeAgentDetailNotice ? (
                         <p className="mt-3 text-sm text-[rgba(62,54,46,0.64)]">
                           {activeAgentDetailNotice}
                         </p>
                       ) : null}
 
+                      <div className="hidden">
                       {isLoadingActiveAgentDetail ? (
                         <p className="mt-3 text-sm text-[rgba(62,54,46,0.64)]">
                           Loading active agent detail...
@@ -3138,18 +3173,33 @@ export default function DashboardPage() {
                             )}
                           </div>
 
-                          <AgentChatPanel
-                            key={activeAgentDetail.id}
-                            agent={activeAgentDetail}
-                            providerLabel={activeAgentProviderLabel}
-                          />
-                        </div>
-                      ) : null}
-                      <div className="mt-4">
-                        <WorkspaceChatPanel />
                       </div>
+                      ) : null}
                     </div>
 
+                    {activeAgentDetail ? (
+                      <AgentChatPanel
+                        key={activeAgentDetail.id}
+                        agent={activeAgentDetail}
+                        providerLabel={activeAgentProviderLabel}
+                      />
+                    ) : null}
+
+                    <details className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
+                            Advanced Preview Tools
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+                            Routing Preview, Task Draft, Draft History
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-white px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.72)]">
+                          Expand
+                        </span>
+                      </summary>
+                      <div className="mt-4 space-y-4">
                     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -3745,6 +3795,8 @@ export default function DashboardPage() {
                         </div>
                       )}
                     </div>
+                      </div>
+                    </details>
 
                     {draftPreview ? (
                       <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-5 py-4">
@@ -3802,6 +3854,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </div>
+            </div>
             </section>
 
               <aside className="border-t border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4 xl:h-screen xl:border-l xl:border-t-0 xl:overflow-hidden">
