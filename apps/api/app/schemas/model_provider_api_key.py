@@ -11,6 +11,7 @@ from app.core.provider_api_keys import (
 
 ModelProviderApiKeyProvider = Literal["openai", "anthropic", "google_gemini", "openrouter", "custom"]
 ModelProviderApiKeyStatus = Literal["connected", "not_connected"]
+ProviderTestProvider = ModelProviderApiKeyProvider
 
 
 class ModelProviderApiKeySaveRequest(BaseModel):
@@ -46,3 +47,13 @@ class ModelProviderApiKeyListResponse(BaseModel):
 
 class ModelProviderApiKeyDeleteResponse(ModelProviderApiKeyStatusResponse):
     pass
+
+
+class ProviderTestRequest(BaseModel):
+    provider: ProviderTestProvider
+
+
+class ProviderTestResponse(BaseModel):
+    success: bool
+    provider: ProviderTestProvider
+    message: str

@@ -17,6 +17,7 @@ from app.routes import (
     model_providers,
     model_router,
     n8n_workflows,
+    providers,
     skills,
     tasks,
     tool_execution,
@@ -44,6 +45,7 @@ app.include_router(auth.router)
 app.include_router(model_provider_settings.router)
 app.include_router(model_provider_keys.router)
 app.include_router(model_providers.router)
+app.include_router(providers.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(github_imports.router)

@@ -17,7 +17,8 @@ from app.schemas.agent import (
     TaskDraftRequest,
     TaskDraftResponse,
 )
-from app.services import agent_routing_service, agent_service, agent_task_draft_service
+from app.schemas.agent_chat import AgentChatRequest, AgentChatResponse
+from app.services import agent_chat_service, agent_routing_service, agent_service, agent_task_draft_service
 
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -57,6 +58,22 @@ def get_agent(
     current_user=Depends(require_owner),
 ):
     return agent_service.get_agent(db, owner_id=current_user.id, agent_id=agent_id)
+
+
+@router.post("/{agent_id}/chat", response_model=AgentChatResponse)
+def chat_with_agent(
+    agent_id: uuid.UUID,
+    payload: AgentChatRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    return agent_chat_service.chat_with_agent(
+        db,
+        owner_id=current_user.id,
+        agent_id=agent_id,
+        payload=payload,
+        current_user=current_user,
+    )
 
 
 @router.patch("/{agent_id}", response_model=AgentResponse)
