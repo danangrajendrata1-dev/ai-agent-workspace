@@ -189,6 +189,41 @@ export function deleteSession(sessionId) {
   return remove(`/sessions/${sessionId}`);
 }
 
+export function listWorkflowTemplates() {
+  return get("/workflows/templates");
+}
+
+export function createWorkflowConsent(templateId) {
+  ensureIdentifier(templateId, "template");
+  return post(`/workflows/consent/${templateId}`);
+}
+
+export function listWorkflowConsents() {
+  return get("/workflows/consents");
+}
+
+export function listWorkflowBindings() {
+  return get("/workflows/bindings");
+}
+
+export function createWorkflowBinding(skillId, templateId) {
+  ensureIdentifier(skillId, "skill");
+  ensureIdentifier(templateId, "template");
+  return post("/workflows/bindings", {
+    skill_id: skillId,
+    template_id: templateId,
+  });
+}
+
+export function deleteWorkflowBinding(bindingId) {
+  ensureIdentifier(bindingId, "binding");
+  return remove(`/workflows/bindings/${bindingId}`);
+}
+
+export function listWorkflowExecutions() {
+  return get("/workflows/executions");
+}
+
 export function chatWithAgent(agentId, messages, sessionId) {
   ensureIdentifier(agentId, "agent");
   return post(`/agents/${agentId}/chat`, {

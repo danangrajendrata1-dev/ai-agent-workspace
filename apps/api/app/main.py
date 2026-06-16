@@ -19,6 +19,7 @@ from app.routes import (
     n8n_workflows,
     orchestrator,
     providers,
+    workflows,
     sessions,
     skills,
     tasks,
@@ -60,5 +61,6 @@ app.include_router(logs.router)
 app.include_router(model_router.router)
 app.include_router(orchestrator.router)
 app.include_router(sessions.router)
+app.include_router(workflows.router)
 app.include_router(tool_execution.router)
 app.include_router(n8n_workflows.router)

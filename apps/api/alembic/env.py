@@ -22,6 +22,9 @@ from app.models.model_usage_log import ModelUsageLog  # noqa: F401
 from app.models.model_provider import ModelProvider  # noqa: F401
 from app.models.model_provider_setting import ModelProviderSetting  # noqa: F401
 from app.models.skill import Skill  # noqa: F401
+from app.models.workflow_consent import WorkflowConsent  # noqa: F401
+from app.models.workflow_execution import WorkflowExecution  # noqa: F401
+from app.models.workflow_skill_template_binding import WorkflowSkillTemplateBinding  # noqa: F401
 from app.models.task import Task  # noqa: F401
 from app.models.task_step import TaskStep  # noqa: F401
 from app.models.tool import Tool  # noqa: F401

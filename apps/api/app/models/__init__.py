@@ -15,6 +15,9 @@ from app.models.model_provider_setting import ModelProviderSetting
 from app.models.model_usage_log import ModelUsageLog
 from app.models.model_provider import ModelProvider
 from app.models.skill import Skill
+from app.models.workflow_consent import WorkflowConsent
+from app.models.workflow_execution import WorkflowExecution
+from app.models.workflow_skill_template_binding import WorkflowSkillTemplateBinding
 from app.models.task import Task
 from app.models.task_step import TaskStep
 from app.models.tool import Tool
@@ -39,6 +42,9 @@ __all__ = [
     "ModelUsageLog",
     "ModelProvider",
     "Skill",
+    "WorkflowConsent",
+    "WorkflowExecution",
+    "WorkflowSkillTemplateBinding",
     "Task",
     "TaskStep",
     "Tool",

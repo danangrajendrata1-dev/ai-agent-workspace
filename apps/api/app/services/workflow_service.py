@@ -1,0 +1,372 @@
+from __future__ import annotations
+
+import threading
+import time
+import uuid
+
+from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.core.subscription_plans import is_admin_role
+from app.core.webhook_security import (
+    sanitize_error_message,
+    validate_safe_webhook_url,
+)
+from app.core.workflow_templates import get_workflow_template, get_workflow_templates
+from app.repositories import (
+    agent_repository,
+    skill_repository,
+    workflow_consent_repository,
+    workflow_execution_repository,
+    workflow_skill_binding_repository,
+)
+from app.schemas.workflow import (
+    WorkflowConsentResponse,
+    WorkflowExecutionSummary,
+    WorkflowSkillBindingResponse,
+    WorkflowTemplateResponse,
+)
+from app.services import log_service, skill_service
+
+
+WORKFLOW_CONSENT_RATE_LIMIT_MAX_REQUESTS = 10
+WORKFLOW_BINDING_RATE_LIMIT_MAX_REQUESTS = 10
+WORKFLOW_LIST_RATE_LIMIT_MAX_REQUESTS = 20
+WORKFLOW_RATE_LIMIT_WINDOW_SECONDS = 60
+
+_rate_limit_lock = threading.Lock()
+_rate_limit_state: dict[str, list[float]] = {}
+
+
+def clear_workflow_rate_limiter() -> None:
+    with _rate_limit_lock:
+        _rate_limit_state.clear()
+
+
+def _rate_limit_bucket(owner_id: uuid.UUID, action: str, max_requests: int) -> list[float]:
+    now = time.monotonic()
+    key = f"{owner_id}:{action}"
+    with _rate_limit_lock:
+        bucket = _rate_limit_state.setdefault(key, [])
+        bucket[:] = [timestamp for timestamp in bucket if now - timestamp < WORKFLOW_RATE_LIMIT_WINDOW_SECONDS]
+        if len(bucket) >= max_requests:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Terlalu banyak pesan, tunggu sebentar",
+            )
+        bucket.append(now)
+        return bucket
+
+
+def _require_owner_access(current_user) -> None:
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials.")
+    if is_admin_role(getattr(current_user, "role", None)):
+        return
+
+
+def _load_workflow_template_or_404(template_id: str) -> dict:
+    template = get_workflow_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow template not found.")
+    return template
+
+
+def _ensure_template_enabled(template: dict) -> None:
+    if not template.get("enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workflow template is disabled.",
+        )
+
+
+def _ensure_template_url_safe(template: dict) -> None:
+    is_safe, reason = validate_safe_webhook_url(str(template.get("webhook_url") or ""))
+    if not is_safe:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=reason or "Workflow template URL is not safe.",
+        )
+
+
+def _serialize_template(template: dict, consent: WorkflowConsentResponse | None = None) -> WorkflowTemplateResponse:
+    return WorkflowTemplateResponse(
+        id=str(template["id"]),
+        name=str(template["name"]),
+        description=str(template["description"]),
+        template_version=str(template["template_version"]),
+        risk_level=str(template["risk_level"]),
+        output_type=str(template["output_type"]),
+        enabled=bool(template["enabled"]),
+        max_payload_bytes=int(template["max_payload_bytes"]),
+        consented=bool(consent is not None),
+        consented_at=getattr(consent, "consented_at", None),
+    )
+
+
+def _serialize_consent(consent) -> WorkflowConsentResponse:
+    template = get_workflow_template(str(consent.template_id)) or {"name": consent.template_id}
+    return WorkflowConsentResponse(
+        id=consent.id,
+        user_id=consent.user_id,
+        template_id=consent.template_id,
+        template_name=str(template.get("name") or consent.template_id),
+        template_version=consent.template_version,
+        consented_at=consent.consented_at,
+    )
+
+
+def _serialize_binding(db: Session, binding) -> WorkflowSkillBindingResponse:
+    skill = skill_repository.get_by_id(db, binding.skill_id)
+    template = get_workflow_template(str(binding.template_id)) or {"name": binding.template_id}
+    skill_name = getattr(skill, "name", None) if skill is not None else None
+    return WorkflowSkillBindingResponse(
+        id=binding.id,
+        user_id=binding.user_id,
+        skill_id=binding.skill_id,
+        skill_name=skill_name or "Deleted skill",
+        skill_type="workflow_skill",
+        template_id=binding.template_id,
+        template_name=str(template.get("name") or binding.template_id),
+        template_version=binding.template_version,
+        created_at=binding.created_at,
+    )
+
+
+def _serialize_execution(execution) -> WorkflowExecutionSummary:
+    template = get_workflow_template(str(execution.template_id)) or {"name": execution.template_id}
+    return WorkflowExecutionSummary(
+        id=execution.id,
+        user_id=execution.user_id,
+        agent_id=execution.agent_id,
+        skill_id=execution.skill_id,
+        template_id=execution.template_id,
+        template_name=str(template.get("name") or execution.template_id),
+        template_version=execution.template_version,
+        consent_id=execution.consent_id,
+        status=execution.status,
+        error_message=sanitize_error_message(execution.error_message) if execution.error_message else None,
+        http_status_code=execution.http_status_code,
+        output_summary=execution.output_summary,
+        executed_at=execution.executed_at,
+    )
+
+
+def _resolve_owned_workflow_skill(db: Session, *, user, skill_id: uuid.UUID):
+    owned_agents = agent_repository.list_by_owner(db, user.id)
+    for agent in owned_agents:
+        active_skills = skill_service.list_active_agent_skills(
+            db,
+            owner_id=user.id,
+            agent_id=agent.id,
+            current_user=user,
+        )
+        for assignment in active_skills:
+            if assignment.skill_id == skill_id:
+                return assignment
+    return None
+
+
+def _get_skill_type_from_assignment(assignment) -> str | None:
+    if isinstance(assignment, dict):
+        skill = assignment.get("skill")
+    else:
+        skill = getattr(assignment, "skill", None)
+
+    if skill is None:
+        return None
+
+    if isinstance(skill, dict):
+        skill_type = skill.get("type") or skill.get("skill_type")
+    else:
+        skill_type = getattr(skill, "type", None) or getattr(skill, "skill_type", None)
+
+    if skill_type:
+        return str(skill_type)
+    return None
+
+
+def list_workflow_templates_for_user(db: Session, *, user) -> list[WorkflowTemplateResponse]:
+    _require_owner_access(user)
+    templates = get_workflow_templates(include_disabled=True)
+    consents = {
+        (consent.template_id, consent.template_version): consent
+        for consent in workflow_consent_repository.list_consents(db, user_id=user.id)
+    }
+    return [
+        _serialize_template(
+            template,
+            consents.get((template["id"], template["template_version"])),
+        )
+        for template in templates
+    ]
+
+
+def create_workflow_consent(db: Session, *, user, template_id: str) -> WorkflowConsentResponse:
+    _require_owner_access(user)
+    _rate_limit_bucket(user.id, "consent", WORKFLOW_CONSENT_RATE_LIMIT_MAX_REQUESTS)
+
+    template = _load_workflow_template_or_404(template_id)
+    _ensure_template_enabled(template)
+    _ensure_template_url_safe(template)
+
+    existing = workflow_consent_repository.get_consent(
+        db,
+        user_id=user.id,
+        template_id=template_id,
+        template_version=str(template["template_version"]),
+    )
+    if existing is not None:
+        return _serialize_consent(existing)
+
+    consent = workflow_consent_repository.create_consent(
+        db,
+        user_id=user.id,
+        template_id=template_id,
+        template_version=str(template["template_version"]),
+    )
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=user.id,
+        request_id=None,
+        event_type="workflow.consent.created",
+        message="Workflow template consent recorded.",
+        metadata_json={
+            "user_id": str(user.id),
+            "template_id": template_id,
+            "template_version": str(template["template_version"]),
+        },
+    )
+    db.commit()
+    db.refresh(consent)
+    return _serialize_consent(consent)
+
+
+def list_workflow_consents(db: Session, *, user) -> list[WorkflowConsentResponse]:
+    _require_owner_access(user)
+    consents = workflow_consent_repository.list_consents(db, user_id=user.id)
+    return [_serialize_consent(consent) for consent in consents]
+
+
+def create_workflow_skill_binding(
+    db: Session,
+    *,
+    user,
+    skill_id: uuid.UUID,
+    template_id: str,
+) -> WorkflowSkillBindingResponse:
+    _require_owner_access(user)
+    _rate_limit_bucket(user.id, "binding", WORKFLOW_BINDING_RATE_LIMIT_MAX_REQUESTS)
+
+    template = _load_workflow_template_or_404(template_id)
+    _ensure_template_enabled(template)
+    _ensure_template_url_safe(template)
+
+    assignment = _resolve_owned_workflow_skill(db, user=user, skill_id=skill_id)
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow skill not found for the current user.",
+        )
+    if getattr(assignment.skill, "status", None) != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workflow skill must be active.",
+        )
+    if _get_skill_type_from_assignment(assignment) != "workflow_skill":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Skill must be a workflow_skill.",
+        )
+
+    existing = workflow_skill_binding_repository.get_binding(
+        db,
+        user_id=user.id,
+        skill_id=skill_id,
+        template_id=template_id,
+    )
+    if existing is not None and existing.template_version == str(template["template_version"]):
+        return _serialize_binding(db, existing)
+
+    binding = workflow_skill_binding_repository.create_binding(
+        db,
+        user_id=user.id,
+        skill_id=skill_id,
+        template_id=template_id,
+        template_version=str(template["template_version"]),
+    )
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=user.id,
+        request_id=None,
+        event_type="workflow.binding.created",
+        message="Workflow skill binding recorded.",
+        metadata_json={
+            "user_id": str(user.id),
+            "skill_id": str(skill_id),
+            "template_id": template_id,
+            "template_version": str(template["template_version"]),
+        },
+    )
+    db.commit()
+    db.refresh(binding)
+    return _serialize_binding(db, binding)
+
+
+def list_workflow_skill_bindings(db: Session, *, user) -> list[WorkflowSkillBindingResponse]:
+    _require_owner_access(user)
+    bindings = workflow_skill_binding_repository.list_bindings(db, user_id=user.id)
+    return [_serialize_binding(db, binding) for binding in bindings]
+
+
+def delete_workflow_skill_binding(db: Session, *, user, binding_id: uuid.UUID) -> None:
+    _require_owner_access(user)
+    _rate_limit_bucket(user.id, "binding", WORKFLOW_BINDING_RATE_LIMIT_MAX_REQUESTS)
+
+    binding = workflow_skill_binding_repository.get_binding_by_id(
+        db,
+        user_id=user.id,
+        binding_id=binding_id,
+    )
+    if binding is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow binding not found.",
+        )
+
+    workflow_skill_binding_repository.delete_binding(db, binding=binding)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=user.id,
+        request_id=None,
+        event_type="workflow.binding.deleted",
+        message="Workflow skill binding deleted.",
+        metadata_json={
+            "user_id": str(user.id),
+            "binding_id": str(binding_id),
+            "skill_id": str(binding.skill_id),
+            "template_id": binding.template_id,
+        },
+    )
+    db.commit()
+
+
+def list_workflow_executions(
+    db: Session,
+    *,
+    user,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[WorkflowExecutionSummary]:
+    _require_owner_access(user)
+    _rate_limit_bucket(user.id, "execution_list", WORKFLOW_LIST_RATE_LIMIT_MAX_REQUESTS)
+    executions = workflow_execution_repository.list_executions(
+        db,
+        user_id=user.id,
+        limit=limit,
+        offset=offset,
+    )
+    return [_serialize_execution(execution) for execution in executions]

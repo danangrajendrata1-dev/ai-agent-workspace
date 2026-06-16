@@ -9,6 +9,7 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import AgentChatPanel from "../../components/AgentChatPanel";
 import WorkspaceChatPanel from "../../components/WorkspaceChatPanel";
+import WorkflowToolsPanel from "../../components/WorkflowToolsPanel";
 import {
   approveGithubSkillImport,
   attachImportedSkillToAgent,
@@ -3795,6 +3796,10 @@ export default function DashboardPage() {
                         </div>
                       )}
                     </div>
+                    <WorkflowToolsPanel
+                      activeAgent={activeAgentDetail}
+                      activeAgentSkills={activeAgentSkills}
+                    />
                       </div>
                     </details>
 
