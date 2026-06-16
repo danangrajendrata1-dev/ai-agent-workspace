@@ -15,6 +15,7 @@ import {
   getModelProviderKeyStatuses,
   getModelProviderSettings,
   saveModelProviderApiKey,
+  testProviderConnection,
   updateModelProviderSettings,
 } from "../../lib/apiClient";
 import { formatDateTime } from "../../lib/format";
@@ -108,8 +109,11 @@ export default function SettingsPage() {
       error: "",
       saving: false,
       deletingProvider: "",
+      testingProvider: "",
       saveError: "",
       saveSuccess: "",
+      testError: "",
+      testSuccess: "",
       selectedProvider: "openai",
       apiKey: ""
     },
@@ -178,8 +182,11 @@ export default function SettingsPage() {
               : "Failed to load model provider API keys.",
           saving: false,
           deletingProvider: "",
+          testingProvider: "",
           saveError: "",
           saveSuccess: "",
+          testError: "",
+          testSuccess: "",
           selectedProvider: getDefaultApiKeyProvider(providerSettings, apiKeyStatuses),
           apiKey: ""
         },
@@ -354,15 +361,17 @@ export default function SettingsPage() {
       return;
     }
 
-    setState((prev) => ({
-      ...prev,
-      apiKeyVault: {
-        ...prev.apiKeyVault,
-        saving: true,
-        saveError: "",
-        saveSuccess: ""
-      }
-    }));
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          saving: true,
+          saveError: "",
+          saveSuccess: "",
+          testError: "",
+          testSuccess: ""
+        }
+      }));
 
     try {
       const result = await saveModelProviderApiKey(provider, { api_key: apiKey });
@@ -375,6 +384,8 @@ export default function SettingsPage() {
           saving: false,
           saveError: "",
           saveSuccess: "API key saved encrypted. It is not used for model calls yet.",
+          testError: "",
+          testSuccess: "",
           apiKey: ""
         }
       }));
@@ -385,7 +396,9 @@ export default function SettingsPage() {
           ...prev.apiKeyVault,
           saving: false,
           saveError: error instanceof Error ? error.message : "Failed to save API key.",
-          saveSuccess: ""
+          saveSuccess: "",
+          testError: "",
+          testSuccess: ""
         }
       }));
     }
@@ -396,15 +409,17 @@ export default function SettingsPage() {
       return;
     }
 
-    setState((prev) => ({
-      ...prev,
-      apiKeyVault: {
-        ...prev.apiKeyVault,
-        deletingProvider: provider,
-        saveError: "",
-        saveSuccess: ""
-      }
-    }));
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          deletingProvider: provider,
+          saveError: "",
+          saveSuccess: "",
+          testError: "",
+          testSuccess: ""
+        }
+      }));
 
     try {
       const result = await deleteModelProviderApiKey(provider);
@@ -417,6 +432,8 @@ export default function SettingsPage() {
           deletingProvider: "",
           saveError: "",
           saveSuccess: "API key disconnected safely.",
+          testError: "",
+          testSuccess: "",
           apiKey: prev.apiKeyVault.selectedProvider === provider ? "" : prev.apiKeyVault.apiKey
         }
       }));
@@ -427,7 +444,9 @@ export default function SettingsPage() {
           ...prev.apiKeyVault,
           deletingProvider: "",
           saveError: error instanceof Error ? error.message : "Failed to disconnect API key.",
-          saveSuccess: ""
+          saveSuccess: "",
+          testError: "",
+          testSuccess: ""
         }
       }));
     }
@@ -441,7 +460,9 @@ export default function SettingsPage() {
         ...prev.apiKeyVault,
         selectedProvider: value,
         saveError: "",
-        saveSuccess: ""
+        saveSuccess: "",
+        testError: "",
+        testSuccess: ""
       }
     }));
   }
@@ -454,9 +475,59 @@ export default function SettingsPage() {
         ...prev.apiKeyVault,
         apiKey: value,
         saveError: "",
+        saveSuccess: "",
+        testError: "",
+        testSuccess: ""
+      }
+    }));
+  }
+
+  async function handleTestModelProviderConnection(provider) {
+    if (!provider) {
+      return;
+    }
+
+    setState((prev) => ({
+      ...prev,
+      apiKeyVault: {
+        ...prev.apiKeyVault,
+        testingProvider: provider,
+        testError: "",
+        testSuccess: "",
+        saveError: "",
         saveSuccess: ""
       }
     }));
+
+    try {
+      const result = await testProviderConnection(provider);
+
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          testingProvider: "",
+          testError: result?.success ? "" : `Connection failed: ${result?.message || "Connection failed."}`,
+          testSuccess: result?.success ? "Connection successful" : ""
+        }
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Connection failed.";
+      const safeMessage =
+        message === "Too many attempts. Try again later."
+          ? "Terlalu banyak percobaan, coba lagi sebentar"
+          : `Connection failed: ${message}`;
+
+      setState((prev) => ({
+        ...prev,
+        apiKeyVault: {
+          ...prev.apiKeyVault,
+          testingProvider: "",
+          testError: safeMessage,
+          testSuccess: ""
+        }
+      }));
+    }
   }
 
   function handleProviderSelect(providerId) {
@@ -540,14 +611,24 @@ export default function SettingsPage() {
       label: "Action",
       render: (_, row) =>
         row.connection_status === "connected" ? (
-          <button
-            type="button"
-            onClick={() => handleDeleteModelProviderApiKey(row.provider)}
-            disabled={state.apiKeyVault.deletingProvider === row.provider}
-            className="rounded-full border border-[color:var(--danger)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--danger)] transition hover:bg-[#fff4f4] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {state.apiKeyVault.deletingProvider === row.provider ? "Disconnecting..." : "Disconnect"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleTestModelProviderConnection(row.provider)}
+              disabled={state.apiKeyVault.testingProvider === row.provider}
+              className="rounded-full border border-[color:var(--accent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--accent)] transition hover:bg-[#f7f1e0] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {state.apiKeyVault.testingProvider === row.provider ? "Testing..." : "Test Connection"}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDeleteModelProviderApiKey(row.provider)}
+              disabled={state.apiKeyVault.deletingProvider === row.provider}
+              className="rounded-full border border-[color:var(--danger)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--danger)] transition hover:bg-[#fff4f4] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {state.apiKeyVault.deletingProvider === row.provider ? "Disconnecting..." : "Disconnect"}
+            </button>
+          </div>
         ) : (
           "-"
         )
@@ -638,6 +719,12 @@ export default function SettingsPage() {
             ) : null}
             {state.apiKeyVault.saveSuccess ? (
               <p className="text-sm leading-6 text-[color:var(--success)]">{state.apiKeyVault.saveSuccess}</p>
+            ) : null}
+            {state.apiKeyVault.testError ? (
+              <p className="text-sm leading-6 text-[color:var(--danger)]">{state.apiKeyVault.testError}</p>
+            ) : null}
+            {state.apiKeyVault.testSuccess ? (
+              <p className="text-sm leading-6 text-[color:var(--success)]">{state.apiKeyVault.testSuccess}</p>
             ) : null}
           </form>
 

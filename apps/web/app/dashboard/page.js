@@ -7,6 +7,7 @@ import CommandInput from "../../components/CommandInput";
 import FloatingCard from "../../components/FloatingCard";
 import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
+import AgentChatPanel from "../../components/AgentChatPanel";
 import {
   approveGithubSkillImport,
   attachImportedSkillToAgent,
@@ -3042,10 +3043,10 @@ export default function DashboardPage() {
                           </div>
 
                           <div className="grid gap-3 sm:grid-cols-2">
-                            <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
-                              <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
-                                Status
-                              </p>
+                          <div className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3">
+                            <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                              Status
+                            </p>
                               <p className="mt-1 text-sm font-semibold text-[#3E362E]">
                                 {activeAgentDetail.status || "unknown"}
                               </p>
@@ -3135,6 +3136,12 @@ export default function DashboardPage() {
                               </div>
                             )}
                           </div>
+
+                          <AgentChatPanel
+                            key={activeAgentDetail.id}
+                            agent={activeAgentDetail}
+                            providerLabel={activeAgentProviderLabel}
+                          />
                         </div>
                       ) : null}
                     </div>

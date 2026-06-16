@@ -175,6 +175,13 @@ export function getAgentActiveSkills(id, options) {
   return get(`/agents/${id}/active-skills`, options);
 }
 
+export function chatWithAgent(agentId, messages) {
+  ensureIdentifier(agentId, "agent");
+  return post(`/agents/${agentId}/chat`, {
+    messages,
+  });
+}
+
 export function createHandoffDraft(payload, options) {
   return post("/handoff-drafts", payload, options);
 }
@@ -235,6 +242,14 @@ export function deleteModelProviderApiKey(provider, options) {
   }
 
   return remove(`/model-provider-keys/${provider}`, options);
+}
+
+export function testProviderConnection(provider, options) {
+  if (!provider) {
+    throw new Error("Missing model provider identifier.");
+  }
+
+  return post("/providers/test-connection", { provider }, options);
 }
 
 export function getActivityLogs(options) {
