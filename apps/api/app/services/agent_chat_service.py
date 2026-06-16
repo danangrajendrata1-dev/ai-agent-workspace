@@ -29,6 +29,7 @@ from app.repositories import (
 from app.schemas.agent_chat import AgentChatRequest, AgentChatResponse
 from app.services import log_service
 from app.services.github_import_service import serialize_github_import
+from app.services import session_service
 
 
 CHAT_DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
@@ -486,6 +487,7 @@ def _log_chat_attempt(
     *,
     owner_id: uuid.UUID,
     agent_id: uuid.UUID,
+    session_id: uuid.UUID | None,
     provider: str,
     model: str,
     success: bool,
@@ -505,6 +507,7 @@ def _log_chat_attempt(
         metadata_json={
             "user_id": str(owner_id),
             "agent_id": str(agent_id),
+            "session_id": str(session_id) if session_id is not None else None,
             "provider": provider,
             "model": model,
             "success": success,
@@ -528,6 +531,24 @@ def chat_with_agent(
 ) -> AgentChatResponse:
     _rate_limit_bucket(owner_id)
     agent = _resolve_agent_for_chat(db, owner_id=owner_id, agent_id=agent_id, current_user=current_user)
+    existing_session = None
+    if payload.session_id is not None:
+        existing_session = session_service.load_session_for_owner(
+            db,
+            user_id=owner_id,
+            session_id=payload.session_id,
+        )
+        if existing_session.session_type != session_service.SESSION_TYPE_AGENT:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Session type mismatch.",
+            )
+        if existing_session.agent_id != agent.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Session does not belong to this agent.",
+            )
+
     normalized_messages = [message.model_dump() for message in payload.messages]
     active_skill_entries, warnings = _load_active_skill_context_entries(db, agent_id=agent.id)
     system_prompt, prompt_skills_used = _compile_prompt_system_prompt(active_skill_entries)
@@ -570,12 +591,22 @@ def chat_with_agent(
         if not reply:
             raise AgentChatUnauthorizedError()
 
+        session_record = session_service.upsert_chat_session(
+            db,
+            user_id=owner_id,
+            session_type=session_service.SESSION_TYPE_AGENT,
+            messages=normalized_messages,
+            assistant_reply=reply,
+            agent_id=agent.id,
+            session_id=existing_session.id if existing_session is not None else None,
+        )
         prompt_tokens = provider_result.get("prompt_tokens")
         completion_tokens = provider_result.get("completion_tokens")
         _log_chat_attempt(
             db,
             owner_id=owner_id,
             agent_id=agent.id,
+            session_id=session_record.id,
             provider=provider,
             model=model,
             success=True,
@@ -586,6 +617,7 @@ def chat_with_agent(
             completion_tokens=completion_tokens,
         )
         return AgentChatResponse(
+            session_id=session_record.id,
             agent_id=str(agent.id),
             agent_name=agent.name,
             reply=reply,
@@ -601,6 +633,7 @@ def chat_with_agent(
             db,
             owner_id=owner_id,
             agent_id=agent.id,
+            session_id=None,
             provider=provider,
             model=model,
             success=False,
@@ -621,6 +654,7 @@ def chat_with_agent(
             db,
             owner_id=owner_id,
             agent_id=agent.id,
+            session_id=None,
             provider=provider,
             model=model,
             success=False,

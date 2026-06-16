@@ -5,6 +5,7 @@ from app.models.agent_skill import AgentSkill
 from app.models.agent_tool import AgentTool
 from app.models.approval_request import ApprovalRequest
 from app.models.audit_log import AuditLog
+from app.models.chat_session import ChatSession
 from app.models.github_import import GitHubImport
 from app.models.handoff_draft import HandoffDraft
 from app.models.memory import Memory
@@ -28,6 +29,7 @@ __all__ = [
     "AgentTool",
     "ApprovalRequest",
     "AuditLog",
+    "ChatSession",
     "GitHubImport",
     "HandoffDraft",
     "Memory",

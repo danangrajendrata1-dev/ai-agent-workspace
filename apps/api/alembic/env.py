@@ -11,6 +11,7 @@ from app.models.agent_tool import AgentTool  # noqa: F401
 from app.models.activity_log import ActivityLog  # noqa: F401
 from app.models.approval_request import ApprovalRequest  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.chat_session import ChatSession  # noqa: F401
 from app.models.base import Base
 from app.models.github_import import GitHubImport  # noqa: F401
 from app.models.handoff_draft import HandoffDraft  # noqa: F401

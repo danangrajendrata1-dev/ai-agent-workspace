@@ -23,6 +23,15 @@ def reset_rate_limiter():
     clear_agent_chat_rate_limiter()
 
 
+@pytest.fixture(autouse=True)
+def stub_session_persistence():
+    with patch(
+        "app.services.agent_chat_service.session_service.upsert_chat_session",
+        return_value=SimpleNamespace(id=uuid.uuid4()),
+    ):
+        yield
+
+
 def build_agent(*, owner_id: uuid.UUID, name: str = "Agent Chat"):
     now = datetime.now(UTC)
     return SimpleNamespace(

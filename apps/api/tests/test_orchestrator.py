@@ -28,6 +28,15 @@ def mute_orchestrator_activity_log():
         yield
 
 
+@pytest.fixture(autouse=True)
+def stub_session_persistence():
+    with patch(
+        "app.services.orchestrator_service.session_service.upsert_chat_session",
+        return_value=SimpleNamespace(id=uuid.uuid4()),
+    ):
+        yield
+
+
 def build_agent(*, owner_id: uuid.UUID, name: str = "Workspace Agent"):
     now = datetime.now(UTC)
     return SimpleNamespace(

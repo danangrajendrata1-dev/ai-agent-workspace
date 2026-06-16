@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { chatWithAgent } from "../lib/apiClient";
+import { chatWithAgent, deleteSession, getSession, listSessions } from "../lib/apiClient";
+import { formatDateTime } from "../lib/format";
 
 
 function getFriendlyChatErrorMessage(error) {
@@ -31,9 +32,50 @@ function getFriendlyChatErrorMessage(error) {
   return message || "Failed to send message.";
 }
 
+function getSafeSessionMessage(error, fallbackMessage) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  return message || fallbackMessage;
+}
 
 function buildMessageId(role, index) {
   return `${role}-${index + 1}`;
+}
+
+function normalizeCollection(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (Array.isArray(payload?.sessions)) {
+    return payload.sessions;
+  }
+
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+
+  if (Array.isArray(payload?.results)) {
+    return payload.results;
+  }
+
+  return [];
+}
+
+function buildSessionViewModel(session) {
+  return {
+    id: String(session?.id || ""),
+    title: session?.title || "New chat",
+    sessionType: session?.session_type || "agent",
+    agentId: session?.agent_id ? String(session.agent_id) : null,
+    agentName: session?.agent_name || null,
+    messageCount: Number(session?.message_count || 0),
+    createdAt: session?.created_at || "",
+    updatedAt: session?.updated_at || ""
+  };
 }
 
 
@@ -41,19 +83,58 @@ export default function AgentChatPanel({ agent, providerLabel }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(true);
+  const [openingSessionId, setOpeningSessionId] = useState("");
+  const [deletingSessionId, setDeletingSessionId] = useState("");
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [responseMeta, setResponseMeta] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
+  const [sessions, setSessions] = useState([]);
   const scrollAnchorRef = useRef(null);
+
+  const loadSessions = useCallback(async () => {
+    if (!agent?.id) {
+      setSessions([]);
+      setIsLoadingSessions(false);
+      return;
+    }
+
+    setIsLoadingSessions(true);
+
+    try {
+      const response = await listSessions();
+      const nextSessions = normalizeCollection(response)
+        .filter((session) => session?.session_type === "agent" && String(session?.agent_id || "") === String(agent.id))
+        .map(buildSessionViewModel)
+        .filter((session) => Boolean(session.id))
+        .slice(0, 10);
+
+      setSessions(nextSessions);
+    } catch (sessionError) {
+      setSessions([]);
+      setError((currentError) => currentError || getSafeSessionMessage(sessionError, "Session list unavailable."));
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, [agent?.id]);
 
   useEffect(() => {
     setMessages([]);
     setDraft("");
     setIsSending(false);
+    setIsLoadingSessions(true);
+    setOpeningSessionId("");
+    setDeletingSessionId("");
     setError("");
     setWarning("");
     setResponseMeta(null);
+    setSessionId(null);
   }, [agent?.id]);
+
+  useEffect(() => {
+    void loadSessions();
+  }, [loadSessions]);
 
   useEffect(() => {
     if (!scrollAnchorRef.current) {
@@ -62,6 +143,80 @@ export default function AgentChatPanel({ agent, providerLabel }) {
 
     scrollAnchorRef.current.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [messages, isSending]);
+
+  const activeSession = useMemo(
+    () => sessions.find((item) => item.id === sessionId) || null,
+    [sessionId, sessions]
+  );
+
+  const currentSessionLabel = activeSession?.title || (sessionId ? "Loaded session" : "New chat");
+  const canSend = Boolean(agent?.id) && Boolean(draft.trim()) && !isSending;
+
+  const handleNewChat = useCallback(() => {
+    setMessages([]);
+    setDraft("");
+    setError("");
+    setWarning("");
+    setResponseMeta(null);
+    setSessionId(null);
+  }, []);
+
+  const handleOpenSession = useCallback(
+    async (targetSession) => {
+      if (!targetSession?.id || openingSessionId) {
+        return;
+      }
+
+      setOpeningSessionId(targetSession.id);
+      setError("");
+      setWarning("");
+
+      try {
+        const response = await getSession(targetSession.id);
+        const nextMessages = Array.isArray(response?.messages)
+          ? response.messages.map((message) => ({
+              role: message.role,
+              content: message.content
+            }))
+          : [];
+
+        setMessages(nextMessages);
+        setSessionId(targetSession.id);
+        setDraft("");
+        setResponseMeta(null);
+      } catch (sessionError) {
+        setError(getSafeSessionMessage(sessionError, "Unable to open session."));
+      } finally {
+        setOpeningSessionId("");
+      }
+    },
+    [openingSessionId]
+  );
+
+  const handleDeleteSession = useCallback(
+    async (targetSession) => {
+      if (!targetSession?.id || deletingSessionId) {
+        return;
+      }
+
+      setDeletingSessionId(targetSession.id);
+      setError("");
+
+      try {
+        await deleteSession(targetSession.id);
+        setSessions((currentSessions) => currentSessions.filter((item) => item.id !== targetSession.id));
+
+        if (sessionId === targetSession.id) {
+          handleNewChat();
+        }
+      } catch (sessionError) {
+        setError(getSafeSessionMessage(sessionError, "Unable to delete session."));
+      } finally {
+        setDeletingSessionId("");
+      }
+    },
+    [deletingSessionId, handleNewChat, sessionId]
+  );
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -84,11 +239,12 @@ export default function AgentChatPanel({ agent, providerLabel }) {
     setIsSending(true);
 
     try {
-      const response = await chatWithAgent(agent.id, nextMessages);
+      const response = await chatWithAgent(agent.id, nextMessages, sessionId);
       setMessages((currentMessages) => [
         ...currentMessages,
         { role: "assistant", content: response.reply }
       ]);
+      setSessionId(response.session_id || sessionId || null);
       setResponseMeta({
         provider: response.provider,
         model: response.model,
@@ -101,6 +257,7 @@ export default function AgentChatPanel({ agent, providerLabel }) {
         knowledgeTruncated: Boolean(response.knowledge_truncated)
       });
       setWarning(response.warning || "");
+      void loadSessions();
     } catch (chatError) {
       setError(getFriendlyChatErrorMessage(chatError));
     } finally {
@@ -114,9 +271,8 @@ export default function AgentChatPanel({ agent, providerLabel }) {
     setError("");
     setWarning("");
     setResponseMeta(null);
+    setSessionId(null);
   }
-
-  const canSend = Boolean(agent?.id) && Boolean(draft.trim()) && !isSending;
 
   return (
     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
@@ -129,12 +285,19 @@ export default function AgentChatPanel({ agent, providerLabel }) {
             {agent?.name || "Select an active agent"}
           </p>
           <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.64)]">
-            Prompt skill only. Chat history stays in React state for this session.
+            Prompt skill only. Sessions are owner-only and encrypted at rest.
           </p>
         </div>
-        <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
-          Prompt skill only
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+            Prompt skill only
+          </span>
+          {sessionId ? (
+            <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
+              Session: {currentSessionLabel}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -199,6 +362,82 @@ export default function AgentChatPanel({ agent, providerLabel }) {
         </div>
       ) : null}
 
+      <div className="mt-4 rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+              Session history
+            </p>
+            <p className="mt-1 text-sm font-semibold text-[#3E362E]">
+              Recent agent sessions
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleNewChat}
+            className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs font-medium text-[#3E362E] transition hover:bg-[#efe7d6]"
+          >
+            New Chat
+          </button>
+        </div>
+
+        <div className="mt-3 max-h-[196px] overflow-y-auto pr-1">
+          {isLoadingSessions ? (
+            <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3 text-sm text-[rgba(62,54,46,0.64)]">
+              Loading sessions...
+            </div>
+          ) : sessions.length ? (
+            <div className="space-y-2">
+              {sessions.map((item) => {
+                const isActive = item.id === sessionId;
+                return (
+                  <div
+                    key={item.id}
+                    className={`rounded-[14px] border px-4 py-3 ${
+                      isActive
+                        ? "border-[rgba(163,106,88,0.22)] bg-[rgba(163,106,88,0.08)]"
+                        : "border-[rgba(62,54,46,0.12)] bg-[#F5F1E6]"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
+                        <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                          {item.messageCount} messages
+                          {item.updatedAt ? ` Updated ${formatDateTime(item.updatedAt)}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSession(item)}
+                          disabled={openingSessionId === item.id || deletingSessionId === item.id}
+                          className="rounded-full border border-[rgba(62,54,46,0.14)] bg-white px-3 py-1.5 text-xs font-medium text-[#3E362E] transition hover:bg-[#efe7d6] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {openingSessionId === item.id ? "Opening..." : "Open"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSession(item)}
+                          disabled={deletingSessionId === item.id || openingSessionId === item.id}
+                          className="rounded-full border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-3 py-1.5 text-xs font-medium text-[#A36A58] transition hover:bg-[rgba(163,106,88,0.12)] disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {deletingSessionId === item.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.6)]">
+              No saved agent sessions yet.
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="scrollbar-thin mt-4 max-h-[320px] overflow-y-auto rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-white p-3">
         {messages.length ? (
           <div className="space-y-3">
@@ -243,7 +482,7 @@ export default function AgentChatPanel({ agent, providerLabel }) {
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs leading-6 text-[rgba(62,54,46,0.58)]">
-            History chat hanya ada di state React dan hilang saat refresh.
+            Session tersimpan per user dan terenkripsi di database.
           </p>
           <div className="flex flex-wrap gap-2">
             <button

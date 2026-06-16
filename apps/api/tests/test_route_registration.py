@@ -15,6 +15,8 @@ EXPECTED_PATHS = {
     "/skills/library",
     "/agents/routing-preview",
     "/orchestrator/chat",
+    "/sessions",
+    "/sessions/{session_id}",
     "/handoff-drafts",
     "/handoff-drafts/{draft_id}",
     "/handoff-drafts/{draft_id}/archive",

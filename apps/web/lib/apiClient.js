@@ -175,17 +175,33 @@ export function getAgentActiveSkills(id, options) {
   return get(`/agents/${id}/active-skills`, options);
 }
 
-export function chatWithAgent(agentId, messages) {
+export function listSessions() {
+  return get("/sessions");
+}
+
+export function getSession(sessionId) {
+  ensureIdentifier(sessionId, "session");
+  return get(`/sessions/${sessionId}`);
+}
+
+export function deleteSession(sessionId) {
+  ensureIdentifier(sessionId, "session");
+  return remove(`/sessions/${sessionId}`);
+}
+
+export function chatWithAgent(agentId, messages, sessionId) {
   ensureIdentifier(agentId, "agent");
   return post(`/agents/${agentId}/chat`, {
     messages,
+    session_id: sessionId || null,
   });
 }
 
-export function orchestratorChat(taskText, messages) {
+export function orchestratorChat(taskText, messages, sessionId) {
   return post(`/orchestrator/chat`, {
     task_text: taskText,
     messages,
+    session_id: sessionId || null,
   });
 }
 

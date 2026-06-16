@@ -63,10 +63,26 @@ def get_api_key_last4(api_key: str) -> str:
 
 def get_api_key_fernet() -> Fernet:
     encryption_key = get_settings().provider_api_key_encryption_key
+    return _build_fernet(
+        encryption_key,
+        detail="Provider API key encryption is not configured.",
+    )
+
+
+def get_chat_session_fernet() -> Fernet:
+    settings = get_settings()
+    encryption_key = settings.chat_session_encryption_key or settings.provider_api_key_encryption_key
+    return _build_fernet(
+        encryption_key,
+        detail="Chat session encryption is not configured.",
+    )
+
+
+def _build_fernet(encryption_key: str | None, *, detail: str) -> Fernet:
     if not encryption_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Provider API key encryption is not configured.",
+            detail=detail,
         )
 
     try:
@@ -74,7 +90,7 @@ def get_api_key_fernet() -> Fernet:
     except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Provider API key encryption is not configured.",
+            detail=detail,
         )
 
 

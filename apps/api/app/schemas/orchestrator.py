@@ -1,5 +1,7 @@
 from typing import Literal
 
+import uuid
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.agent_chat import ChatMessage
@@ -8,6 +10,7 @@ from app.schemas.agent_chat import ChatMessage
 class OrchestratorRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    session_id: uuid.UUID | None = None
     task_text: str = Field(..., min_length=1, max_length=4000)
     messages: list[ChatMessage] = Field(default_factory=list, max_length=50)
 
@@ -21,6 +24,7 @@ class OrchestratorRequest(BaseModel):
 
 
 class OrchestratorResponse(BaseModel):
+    session_id: uuid.UUID | None = None
     task_text: str
     routed_to_agent_id: str | None
     routed_to_agent_name: str | None

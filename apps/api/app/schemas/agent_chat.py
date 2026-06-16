@@ -1,5 +1,7 @@
 from typing import Literal
 
+import uuid
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -21,10 +23,12 @@ class ChatMessage(BaseModel):
 class AgentChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    session_id: uuid.UUID | None = None
     messages: list[ChatMessage] = Field(..., min_length=1, max_length=50)
 
 
 class AgentChatResponse(BaseModel):
+    session_id: uuid.UUID | None = None
     agent_id: str
     agent_name: str
     reply: str
