@@ -274,6 +274,8 @@ def get_workflow_suggestions_for_agent(
         if len(deduped) >= 3:
             break
 
+    # execution_available is UI guidance only; the backend always revalidates consent,
+    # binding, template safety, and skill ownership before any webhook call.
     return [
         WorkflowSuggestion(
             template_id=candidate.template_id,

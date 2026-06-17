@@ -26,6 +26,7 @@ EXPECTED_PATHS = {
     "/workflows/executions",
     "/workflows/executions/history",
     "/workflows/execute/{template_id}",
+    "/workflows/chat-confirm-execute/{template_id}",
     "/handoff-drafts",
     "/handoff-drafts/{draft_id}",
     "/handoff-drafts/{draft_id}/archive",

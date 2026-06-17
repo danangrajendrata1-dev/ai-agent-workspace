@@ -309,6 +309,41 @@ def test_execute_requires_consent_before_webhook_call(client):
         assert executions == []
 
 
+def test_execute_rejects_frontend_execution_available_field_without_call(client):
+    context = build_execution_context(user_prefix="workflow-exec-frontend-flag", with_consent=False)
+    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    headers = auth_headers(context.user.id)
+    template = build_enabled_template()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=current_user), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.skill_service.list_active_agent_skills",
+        return_value=[build_workflow_skill_assignment(context.skill_id)],
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            "/workflows/execute/generate_pdf",
+            headers=headers,
+            json={
+                "agent_id": context.agent_id,
+                "skill_id": context.skill_id,
+                "input_payload": {"title": "Monthly Report", "content": "Content"},
+                "execution_available": True,
+            },
+        )
+
+    assert response.status_code == 428
+    payload = response.json()
+    assert payload["status"] == "consent_required"
+    mock_call.assert_not_called()
+
+
 def test_chat_confirm_execute_requires_consent_before_webhook_call(client):
     context = build_execution_context(user_prefix="workflow-chat-confirm-consent", with_consent=False)
     current_user = SimpleNamespace(id=context.user.id, role=context.user.role)

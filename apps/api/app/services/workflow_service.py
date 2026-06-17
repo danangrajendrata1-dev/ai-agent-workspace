@@ -608,6 +608,8 @@ def execute_workflow_template(
     template_id: str,
     request: WorkflowExecutionRequest,
 ) -> WorkflowExecutionResponse:
+    # This path never trusts frontend suggestion metadata; consent and bindings are
+    # revalidated server-side before the webhook is called.
     _require_owner_access(user)
     _rate_limit_bucket(user.id, "execute", WORKFLOW_EXECUTE_RATE_LIMIT_MAX_REQUESTS)
 
@@ -740,6 +742,8 @@ def execute_workflow_template_from_chat_confirmation(
     template_id: str,
     request: WorkflowChatExecutionRequest,
 ) -> WorkflowExecutionResponse:
+    # Chat confirmation must be explicit per run and then reuse the same execution
+    # validation path as manual execution.
     if not request.confirmed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
