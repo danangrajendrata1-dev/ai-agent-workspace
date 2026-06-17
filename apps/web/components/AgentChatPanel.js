@@ -320,7 +320,7 @@ export default function AgentChatPanel({ agent, providerLabel }) {
             : response?.status === "timeout"
               ? "Workflow execution timed out."
               : response?.status === "consent_required"
-                ? "Consent is required before this workflow can run."
+                ? "Consent is required or was revoked before this workflow can run."
                 : "Workflow execution failed.";
 
         setWorkflowExecutionStates((currentStates) => ({
@@ -331,7 +331,12 @@ export default function AgentChatPanel({ agent, providerLabel }) {
           }
         }));
       } catch (executeError) {
-        const safeMessage = executeError instanceof Error ? executeError.message.trim() : "";
+        const safeMessage =
+          executeError && executeError.status === 428
+            ? "Consent is required or was revoked before this workflow can run."
+            : executeError instanceof Error
+              ? executeError.message.trim()
+              : "";
         setWorkflowExecutionStates((currentStates) => ({
           ...currentStates,
           [executionKey]: {

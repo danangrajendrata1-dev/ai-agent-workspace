@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -100,6 +101,197 @@ def test_workflow_consent_create_is_idempotent_and_owner_specific(client):
         assert len(consents) == 1
         assert consents[0].template_version == "1.0"
         assert consents[0].template_id == "generate_pdf"
+
+
+def test_workflow_consent_list_returns_only_current_user_items_and_safe_fields(client):
+    template_map = {
+        "generate_pdf": {
+            "id": "generate_pdf",
+            "name": "Generate PDF",
+            "description": "Membuat file PDF dari teks",
+            "webhook_url": "https://workflow.example.com/webhook/generate-pdf",
+            "input_schema": {"title": "string", "content": "string"},
+            "output_type": "json",
+            "enabled": True,
+            "template_version": "1.0",
+            "risk_level": "medium",
+            "max_payload_bytes": 10000,
+        },
+        "generate_report": {
+            "id": "generate_report",
+            "name": "Generate Report",
+            "description": "Membuat ringkasan laporan",
+            "webhook_url": "https://workflow.example.com/webhook/generate-report",
+            "input_schema": {"title": "string"},
+            "output_type": "json",
+            "enabled": True,
+            "template_version": "2.0",
+            "risk_level": "medium",
+            "max_payload_bytes": 10000,
+        },
+    }
+
+    with SessionLocal() as db:
+        user_one = build_user(db, email_prefix="workflow-consent-list-one")
+        user_two = build_user(db, email_prefix="workflow-consent-list-two")
+        consent_active = workflow_consent_repository.create_consent(
+            db,
+            user_id=user_one.id,
+            template_id="generate_pdf",
+            template_version="1.0",
+        )
+        consent_revoked = workflow_consent_repository.create_consent(
+            db,
+            user_id=user_one.id,
+            template_id="generate_report",
+            template_version="2.0",
+        )
+        consent_revoked.revoked_at = datetime.now(UTC)
+        workflow_consent_repository.create_consent(
+            db,
+            user_id=user_two.id,
+            template_id="generate_pdf",
+            template_version="1.0",
+        )
+        db.commit()
+        db.refresh(consent_active)
+        db.refresh(consent_revoked)
+
+    def lookup_template(template_id: str):
+        return template_map.get(template_id)
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user_one), patch(
+        "app.services.workflow_service.get_workflow_template",
+        side_effect=lookup_template,
+    ):
+        response = client.get("/workflows/consents?limit=50", headers=auth_headers(user_one.id))
+        response_limited = client.get("/workflows/consents?limit=1", headers=auth_headers(user_one.id))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 2
+    statuses = {item["status"] for item in payload["items"]}
+    assert statuses == {"active", "revoked"}
+    assert response_limited.status_code == 200
+    assert len(response_limited.json()["items"]) == 1
+    for item in payload["items"]:
+        assert item["user_id"] == str(user_one.id)
+        assert "webhook_url" not in item
+        assert "input_payload_sanitized" not in item
+        assert "output_summary" not in item
+        assert "raw_response" not in item
+        assert "headers" not in item
+        assert "credentials" not in item
+        assert "prompt" not in item
+        assert "chat" not in item
+        assert "knowledge" not in item
+        assert item["template_name"] in {"Generate PDF", "Generate Report"}
+        assert item["revoked_at"] is None or item["status"] == "revoked"
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user_two), patch(
+        "app.services.workflow_service.get_workflow_template",
+        side_effect=lookup_template,
+    ):
+        response_other = client.get("/workflows/consents", headers=auth_headers(user_two.id))
+
+    assert response_other.status_code == 200
+    other_payload = response_other.json()
+    assert len(other_payload["items"]) == 1
+    assert other_payload["items"][0]["user_id"] == str(user_two.id)
+
+
+def test_workflow_consent_list_empty_returns_safe_empty_list(client):
+    with SessionLocal() as db:
+        user = build_user(db, email_prefix="workflow-consent-empty")
+        db.commit()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user):
+        response = client.get("/workflows/consents", headers=auth_headers(user.id))
+
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+
+
+def test_workflow_consent_revoke_is_owner_only_and_safe(client):
+    template = {
+        "id": "generate_pdf",
+        "name": "Generate PDF",
+        "description": "Membuat file PDF dari teks",
+        "webhook_url": "https://workflow.example.com/webhook/generate-pdf",
+        "input_schema": {"title": "string", "content": "string"},
+        "output_type": "json",
+        "enabled": True,
+        "template_version": "1.0",
+        "risk_level": "medium",
+        "max_payload_bytes": 10000,
+    }
+
+    with SessionLocal() as db:
+        user_one = build_user(db, email_prefix="workflow-consent-revoke-one")
+        user_two = build_user(db, email_prefix="workflow-consent-revoke-two")
+        consent = workflow_consent_repository.create_consent(
+            db,
+            user_id=user_one.id,
+            template_id="generate_pdf",
+            template_version="1.0",
+        )
+        db.commit()
+        db.refresh(consent)
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user_one), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.call_template_webhook"
+    ) as mock_call:
+        response = client.post(
+            f"/workflows/consents/{consent.id}/revoke",
+            headers=auth_headers(user_one.id),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "revoked"
+    assert payload["revoked_at"]
+    assert payload["template_id"] == "generate_pdf"
+    mock_call.assert_not_called()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user_one), patch(
+        "app.services.workflow_service.get_workflow_template",
+        return_value=template,
+    ), patch(
+        "app.services.workflow_service.validate_safe_webhook_url",
+        return_value=(True, None),
+    ), patch(
+        "app.services.workflow_service.log_service.record_activity",
+        return_value=None,
+    ):
+        restore_response = client.post(
+            "/workflows/consent/generate_pdf",
+            headers=auth_headers(user_one.id),
+        )
+
+    assert restore_response.status_code == 201
+    assert restore_response.json()["id"] == str(consent.id)
+    assert restore_response.json()["status"] == "active"
+    assert restore_response.json()["revoked_at"] is None
+
+    with SessionLocal() as db:
+        refreshed = workflow_consent_repository.get_consent_by_id(
+            db,
+            user_id=user_one.id,
+            consent_id=consent.id,
+        )
+        assert refreshed is not None
+        assert refreshed.revoked_at is None
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user_two):
+        response_other = client.post(
+            f"/workflows/consents/{consent.id}/revoke",
+            headers=auth_headers(user_two.id),
+        )
+
+    assert response_other.status_code == 404
 
 
 def test_workflow_binding_create_list_delete_are_owner_only(client):

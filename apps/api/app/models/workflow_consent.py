@@ -28,3 +28,7 @@ class WorkflowConsent(Base):
         nullable=False,
         server_default=func.now(),
     )
+    revoked_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
