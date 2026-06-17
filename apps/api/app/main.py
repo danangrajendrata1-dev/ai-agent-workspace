@@ -19,6 +19,7 @@ from app.routes import (
     n8n_workflows,
     orchestrator,
     providers,
+    runtime,
     workflows,
     sessions,
     skills,
@@ -51,6 +52,7 @@ app.include_router(model_providers.router)
 app.include_router(providers.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
+app.include_router(runtime.router)
 app.include_router(github_imports.router)
 app.include_router(handoff_drafts.router)
 app.include_router(tools.router)

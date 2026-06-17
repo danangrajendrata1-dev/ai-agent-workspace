@@ -8,6 +8,7 @@ EXPECTED_PATHS = {
     "/model-provider-settings",
     "/model-providers",
     "/providers/test-connection",
+    "/runtime/capabilities",
     "/agents",
     "/agents/task-draft",
     "/agents/{agent_id}/chat",

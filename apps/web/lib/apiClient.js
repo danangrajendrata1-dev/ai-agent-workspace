@@ -244,6 +244,10 @@ export function listWorkflowExecutionHistory(limit = 10, offset = 0) {
   });
 }
 
+export function getRuntimeCapabilities(options) {
+  return get("/runtime/capabilities", options);
+}
+
 export function executeWorkflowTemplate(templateId, payload) {
   ensureIdentifier(templateId, "template");
   return post(`/workflows/execute/${templateId}`, payload);

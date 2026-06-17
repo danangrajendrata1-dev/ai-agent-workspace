@@ -14,6 +14,7 @@ import {
   getCurrentUser,
   getModelProviderKeyStatuses,
   getModelProviderSettings,
+  getRuntimeCapabilities,
   saveModelProviderApiKey,
   testProviderConnection,
   updateModelProviderSettings,
@@ -93,6 +94,49 @@ function getDefaultApiKeyProvider(providerSettings, apiKeyItems) {
 }
 
 
+function buildRuntimeCapabilityViewModel(capability) {
+  return {
+    id: String(capability?.key || ""),
+    key: capability?.key || "",
+    label: capability?.label || capability?.key || "Unknown capability",
+    status: capability?.status || "disabled",
+    description: capability?.description || "",
+    requiresConfirmation: Boolean(capability?.requires_confirmation),
+    userVisible: Boolean(capability?.user_visible)
+  };
+}
+
+
+function getRuntimeCapabilityStatusLabel(status) {
+  switch (status) {
+    case "suggestion_only":
+      return "Suggestion only";
+    case "explicit_confirm":
+      return "Explicit confirmation required";
+    case "forbidden":
+      return "Forbidden";
+    case "disabled":
+    default:
+      return "Disabled";
+  }
+}
+
+
+function getRuntimeCapabilityStatusTone(status) {
+  switch (status) {
+    case "suggestion_only":
+      return "neutral";
+    case "explicit_confirm":
+      return "warning";
+    case "forbidden":
+      return "danger";
+    case "disabled":
+    default:
+      return "neutral";
+  }
+}
+
+
 export default function SettingsPage() {
   const [state, setState] = useState({
     loading: true,
@@ -125,7 +169,8 @@ export default function SettingsPage() {
       providers: { items: [], error: "" },
       tools: { items: [], error: "" },
       skills: { items: [], error: "" },
-      workflows: { items: [], error: "" }
+      workflows: { items: [], error: "" },
+      runtimeCapabilities: { items: [], error: "" }
     }
   });
 
@@ -133,13 +178,14 @@ export default function SettingsPage() {
     let isMounted = true;
 
     async function loadSettingsData() {
-      const [currentUserResult, providerSettingsResult, apiKeyStatusesResult, providersResult, toolsResult, skillsResult] = await Promise.allSettled([
+      const [currentUserResult, providerSettingsResult, apiKeyStatusesResult, providersResult, toolsResult, skillsResult, runtimeCapabilitiesResult] = await Promise.allSettled([
         getCurrentUser(),
         getModelProviderSettings(),
         getModelProviderKeyStatuses(),
         get("/model-providers"),
         get("/tools"),
-        get("/skills")
+        get("/skills"),
+        getRuntimeCapabilities()
       ]);
 
       if (!isMounted) {
@@ -160,6 +206,12 @@ export default function SettingsPage() {
         providerSettingsResult.status === "fulfilled" ? providerSettingsResult.value : null;
       const apiKeyStatuses =
         apiKeyStatusesResult.status === "fulfilled" ? apiKeyStatusesResult.value?.items || [] : [];
+      const runtimeCapabilities =
+        runtimeCapabilitiesResult.status === "fulfilled"
+          ? normalizeCollection(runtimeCapabilitiesResult.value)
+              .map(buildRuntimeCapabilityViewModel)
+              .filter((item) => item.userVisible)
+          : [];
 
       setState({
         loading: false,
@@ -207,6 +259,10 @@ export default function SettingsPage() {
             skillsResult.status === "fulfilled"
               ? { items: skillsResult.value?.items || [], error: "" }
               : { items: [], error: "Failed to load skills." },
+          runtimeCapabilities:
+            runtimeCapabilitiesResult.status === "fulfilled"
+              ? { items: runtimeCapabilities, error: "" }
+              : { items: [], error: "Failed to load runtime capabilities." },
           workflows:
             workflowsResult === null
               ? { items: [], error: "" }
@@ -287,6 +343,30 @@ export default function SettingsPage() {
       key: "status",
       label: "Status",
       render: (value) => <StatusBadge tone={value === "active" ? "success" : "warning"} label={value || "unknown"} />
+    }
+  ];
+
+  const runtimeCapabilityColumns = [
+    { key: "label", label: "Capability" },
+    {
+      key: "status",
+      label: "Status",
+      render: (value) => (
+        <StatusBadge
+          tone={getRuntimeCapabilityStatusTone(value)}
+          label={getRuntimeCapabilityStatusLabel(value)}
+        />
+      )
+    },
+    {
+      key: "requiresConfirmation",
+      label: "Confirmation",
+      render: (value) => (value ? "Required" : "Not required")
+    },
+    {
+      key: "description",
+      label: "Description",
+      render: (value) => truncateText(value, 96)
     }
   ];
 
@@ -887,6 +967,13 @@ export default function SettingsPage() {
               workflowColumns,
               "No n8n workflow registry records are available yet.",
               state.sections.workflows.error
+            )}
+            {renderSection(
+              "Runtime Capability Matrix",
+              state.sections.runtimeCapabilities.items,
+              runtimeCapabilityColumns,
+              "No runtime capabilities are available yet.",
+              state.sections.runtimeCapabilities.error
             )}
           </div>
         )}
