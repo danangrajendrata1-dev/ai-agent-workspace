@@ -232,6 +232,12 @@ export function executeWorkflowTemplate(templateId, payload) {
   return post(`/workflows/execute/${templateId}`, payload);
 }
 
+
+export function confirmWorkflowExecution(templateId, payload) {
+  ensureIdentifier(templateId, "template");
+  return post(`/workflows/chat-confirm-execute/${templateId}`, payload);
+}
+
 export function chatWithAgent(agentId, messages, sessionId) {
   ensureIdentifier(agentId, "agent");
   return post(`/agents/${agentId}/chat`, {

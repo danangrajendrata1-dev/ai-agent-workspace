@@ -2,9 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { deleteSession, getSession, listSessions, orchestratorChat } from "../lib/apiClient";
+import {
+  confirmWorkflowExecution,
+  deleteSession,
+  getSession,
+  listSessions,
+  orchestratorChat
+} from "../lib/apiClient";
 import { formatDateTime } from "../lib/format";
-import WorkflowSuggestionList from "./WorkflowSuggestionList";
+import WorkflowSuggestionList, { buildWorkflowSuggestionKey } from "./WorkflowSuggestionList";
 
 
 function getFriendlyWorkspaceChatErrorMessage(error) {
@@ -82,6 +88,7 @@ export default function WorkspaceChatPanel() {
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [responseMeta, setResponseMeta] = useState(null);
+  const [workflowExecutionStates, setWorkflowExecutionStates] = useState({});
   const [sessionId, setSessionId] = useState(null);
   const [sessions, setSessions] = useState([]);
   const scrollAnchorRef = useRef(null);
@@ -124,6 +131,7 @@ export default function WorkspaceChatPanel() {
   );
 
   const currentSessionLabel = activeSession?.title || (sessionId ? "Loaded session" : "New chat");
+  const routedAgentId = responseMeta?.routedToAgentId ? String(responseMeta.routedToAgentId) : "";
 
   const handleNewChat = useCallback(() => {
     setMessages([]);
@@ -131,6 +139,7 @@ export default function WorkspaceChatPanel() {
     setError("");
     setWarning("");
     setResponseMeta(null);
+    setWorkflowExecutionStates({});
     setSessionId(null);
   }, []);
 
@@ -161,6 +170,7 @@ export default function WorkspaceChatPanel() {
         setSessionId(targetSession.id);
         setDraft("");
         setResponseMeta(null);
+        setWorkflowExecutionStates({});
       } catch (sessionError) {
         setError(getSafeSessionMessage(sessionError, "Unable to open session."));
       } finally {
@@ -217,6 +227,7 @@ export default function WorkspaceChatPanel() {
 
     try {
       const response = await orchestratorChat(trimmedDraft, nextMessages, sessionId);
+      setWorkflowExecutionStates({});
       setMessages((currentMessages) => [
         ...currentMessages,
         { role: "assistant", content: response.reply }
@@ -252,6 +263,66 @@ export default function WorkspaceChatPanel() {
 
   const canSend = Boolean(draft.trim()) && !isSending;
   const isRouted = responseMeta?.status === "routed";
+
+  const handleConfirmWorkflowExecute = useCallback(
+    async (suggestion) => {
+      if (!routedAgentId || !suggestion?.template_id || !suggestion?.skill_id) {
+        return;
+      }
+
+      const executionKey = buildWorkflowSuggestionKey(suggestion);
+      setWorkflowExecutionStates((currentStates) => ({
+        ...currentStates,
+        [executionKey]: {
+          status: "executing",
+          message: "Submitting workflow execution..."
+        }
+      }));
+
+      try {
+        const response = await confirmWorkflowExecution(suggestion.template_id, {
+          agent_id: routedAgentId,
+          skill_id: String(suggestion.skill_id),
+          input_payload: {},
+          confirmed: true,
+          confirmation_source: "chat_suggestion"
+        });
+
+        const nextStatus =
+          response?.status === "success"
+            ? "success"
+            : response?.status === "timeout"
+              ? "error"
+              : "error";
+        const nextMessage =
+          response?.status === "success"
+            ? "Workflow executed successfully."
+            : response?.status === "timeout"
+              ? "Workflow execution timed out."
+              : response?.status === "consent_required"
+                ? "Consent is required before this workflow can run."
+                : "Workflow execution failed.";
+
+        setWorkflowExecutionStates((currentStates) => ({
+          ...currentStates,
+          [executionKey]: {
+            status: nextStatus,
+            message: nextMessage
+          }
+        }));
+      } catch (executeError) {
+        const safeMessage = executeError instanceof Error ? executeError.message.trim() : "";
+        setWorkflowExecutionStates((currentStates) => ({
+          ...currentStates,
+          [executionKey]: {
+            status: "error",
+            message: safeMessage || "Workflow execution failed."
+          }
+        }));
+      }
+    },
+    [routedAgentId]
+  );
 
   return (
     <div className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
@@ -361,7 +432,12 @@ export default function WorkspaceChatPanel() {
         </p>
       ) : null}
 
-      <WorkflowSuggestionList suggestions={responseMeta?.workflowSuggestions || []} />
+      <WorkflowSuggestionList
+        agentId={routedAgentId}
+        executionStates={workflowExecutionStates}
+        onConfirmExecute={handleConfirmWorkflowExecute}
+        suggestions={responseMeta?.workflowSuggestions || []}
+      />
 
       {warning ? (
         <div className="mt-3 rounded-[14px] border border-[rgba(163,142,88,0.18)] bg-[rgba(163,142,88,0.08)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.74)]">

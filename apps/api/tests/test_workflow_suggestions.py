@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from app.core.database import SessionLocal
+from app.repositories import workflow_execution_repository
 from app.schemas.agent_chat import AgentChatRequest, WorkflowSuggestion
 from app.services.agent_chat_service import chat_with_agent
 from app.services.orchestrator_service import orchestrate_workspace_chat
@@ -293,7 +295,6 @@ def test_workflow_suggestions_helper_skips_disabled_template():
 
 
 def test_agent_chat_includes_workflow_suggestions_without_execute_call():
-    db = build_db()
     user = build_user()
     agent = build_agent(user.id)
     skill = build_workflow_skill(title="PDF Generator", content="Generate PDF files from task text.")
@@ -337,17 +338,22 @@ def test_agent_chat_includes_workflow_suggestions_without_execute_call():
     ), patch(
         "app.services.workflow_service.execute_workflow_template"
     ) as mock_execute:
-        response = chat_with_agent(
-            db,
-            owner_id=user.id,
-            agent_id=agent.id,
-            payload=AgentChatRequest(messages=[{"role": "user", "content": "Please generate a PDF"}]),
-            current_user=user,
-        )
+        with SessionLocal() as db:
+            response = chat_with_agent(
+                db,
+                owner_id=user.id,
+                agent_id=agent.id,
+                payload=AgentChatRequest(messages=[{"role": "user", "content": "Please generate a PDF"}]),
+                current_user=user,
+            )
 
     assert response.reply == "Assistant reply"
     assert response.workflow_suggestions and response.workflow_suggestions[0].template_id == "generate_pdf"
     mock_execute.assert_not_called()
+
+    with SessionLocal() as db:
+        executions = workflow_execution_repository.list_executions(db, user_id=user.id)
+        assert executions == []
 
 
 def test_orchestrator_passes_workflow_suggestions_from_agent_chat():

@@ -24,6 +24,7 @@ from app.repositories import (
     workflow_skill_binding_repository,
 )
 from app.schemas.workflow import (
+    WorkflowChatExecutionRequest,
     WorkflowConsentResponse,
     WorkflowExecutionSummary,
     WorkflowExecutionRequest,
@@ -612,4 +613,35 @@ def execute_workflow_template(
         output_summary=output_summary,
         error_message=sanitize_error_message(error_message) if error_message else None,
         http_status_code=webhook_result.status_code,
+    )
+
+
+def execute_workflow_template_from_chat_confirmation(
+    db: Session,
+    *,
+    user,
+    template_id: str,
+    request: WorkflowChatExecutionRequest,
+) -> WorkflowExecutionResponse:
+    if not request.confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Explicit confirmation is required before executing a workflow.",
+        )
+    if request.confirmation_source != "chat_suggestion":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid workflow confirmation source.",
+        )
+
+    execution_request = WorkflowExecutionRequest(
+        agent_id=request.agent_id,
+        skill_id=request.skill_id,
+        input_payload=request.input_payload,
+    )
+    return execute_workflow_template(
+        db,
+        user=user,
+        template_id=template_id,
+        request=execution_request,
     )

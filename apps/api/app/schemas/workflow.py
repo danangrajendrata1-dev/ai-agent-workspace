@@ -89,6 +89,16 @@ class WorkflowExecutionRequest(BaseModel):
     input_payload: dict = Field(default_factory=dict)
 
 
+class WorkflowChatExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(min_length=1)
+    skill_id: str = Field(min_length=1)
+    input_payload: dict = Field(default_factory=dict)
+    confirmed: bool = Field(default=True)
+    confirmation_source: Literal["chat_suggestion"] = "chat_suggestion"
+
+
 class WorkflowExecutionResponse(BaseModel):
     success: bool
     status: Literal["success", "failed", "timeout", "consent_required"]

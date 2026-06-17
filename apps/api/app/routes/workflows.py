@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import require_owner
 from app.schemas.workflow import (
+    WorkflowChatExecutionRequest,
     WorkflowConsentListResponse,
     WorkflowConsentResponse,
     WorkflowExecutionListResponse,
@@ -116,6 +117,24 @@ def execute_workflow_template(
     current_user=Depends(require_owner),
 ):
     result = workflow_service.execute_workflow_template(
+        db,
+        user=current_user,
+        template_id=template_id,
+        request=payload,
+    )
+    if result.status == "consent_required":
+        return JSONResponse(status_code=status.HTTP_428_PRECONDITION_REQUIRED, content=result.model_dump(mode="json"))
+    return result
+
+
+@router.post("/workflows/chat-confirm-execute/{template_id}", response_model=WorkflowExecutionResponse)
+def execute_workflow_template_from_chat_confirmation(
+    template_id: str,
+    payload: WorkflowChatExecutionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    result = workflow_service.execute_workflow_template_from_chat_confirmation(
         db,
         user=current_user,
         template_id=template_id,
