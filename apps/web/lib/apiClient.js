@@ -227,6 +227,15 @@ export function listWorkflowExecutions() {
   return get("/workflows/executions");
 }
 
+export function listWorkflowExecutionHistory(limit = 10, offset = 0) {
+  return get("/workflows/executions/history", {
+    query: {
+      limit,
+      offset
+    }
+  });
+}
+
 export function executeWorkflowTemplate(templateId, payload) {
   ensureIdentifier(templateId, "template");
   return post(`/workflows/execute/${templateId}`, payload);

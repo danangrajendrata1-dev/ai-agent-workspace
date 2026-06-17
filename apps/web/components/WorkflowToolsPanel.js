@@ -7,9 +7,9 @@ import {
   createWorkflowConsent,
   deleteWorkflowBinding,
   executeWorkflowTemplate,
+  listWorkflowExecutionHistory,
   listWorkflowBindings,
   listWorkflowConsents,
-  listWorkflowExecutions,
   listWorkflowTemplates
 } from "../lib/apiClient";
 import { formatDateTime, truncateText } from "../lib/format";
@@ -96,8 +96,10 @@ function buildExecutionViewModel(execution) {
     status: execution?.status || "unknown",
     errorMessage: execution?.error_message || "",
     httpStatusCode: execution?.http_status_code ?? null,
-    outputSummary: execution?.output_summary || "",
-    executedAt: execution?.executed_at || ""
+    skillId: execution?.skill_id ? String(execution.skill_id) : "",
+    agentId: execution?.agent_id ? String(execution.agent_id) : "",
+    createdAt: execution?.created_at || execution?.executed_at || "",
+    completedAt: execution?.completed_at || execution?.executed_at || ""
   };
 }
 
@@ -171,7 +173,7 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
         listWorkflowTemplates(),
         listWorkflowConsents(),
         listWorkflowBindings(),
-        listWorkflowExecutions()
+        listWorkflowExecutionHistory()
       ]);
 
       const nextTemplates = normalizeCollection(templatesResponse).map(buildTemplateViewModel);
@@ -188,7 +190,7 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
       setConsents([]);
       setBindings([]);
       setExecutions([]);
-      setError(getSafeErrorMessage(loadError, "Failed to load workflow templates."));
+      setError(getSafeErrorMessage(loadError, "Failed to load workflow data."));
     } finally {
       setIsLoading(false);
     }
@@ -757,24 +759,19 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
 
             {executionResult ? (
               <div className="mt-3 rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
-                      Execution result
-                    </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.52)]">
+                Execution result
+              </p>
                     <p className="mt-1 text-sm font-semibold text-[#3E362E]">{executionResult.status}</p>
                   </div>
-                  {executionResult.execution_id ? (
-                    <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
+                {executionResult.execution_id ? (
+                  <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
                       {executionResult.execution_id}
                     </span>
                   ) : null}
                 </div>
-                {executionResult.output_summary ? (
-                  <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
-                    {truncateText(executionResult.output_summary, 180)}
-                  </p>
-                ) : null}
                 {executionResult.error_message ? (
                   <p className="mt-2 text-sm leading-6 text-[#A36A58]">
                     {executionResult.error_message}
@@ -815,21 +812,37 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-[#3E362E]">{execution.templateName}</p>
                     <p className="mt-1 text-xs leading-5 text-[rgba(62,54,46,0.58)]">
-                      {execution.templateVersion} | {formatDateTime(execution.executedAt)}
+                      {execution.templateVersion} | Created {formatDateTime(execution.createdAt)}
+                      {execution.completedAt ? ` | Completed ${formatDateTime(execution.completedAt)}` : ""}
                     </p>
                   </div>
-                  <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
-                    {execution.status}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
+                      {execution.status === "success"
+                        ? "Success"
+                        : execution.status === "failed"
+                          ? "Failed"
+                          : execution.status === "timeout"
+                            ? "Blocked"
+                            : execution.status === "consent_required"
+                              ? "Validation failed"
+                              : "Unknown"}
+                    </span>
+                  </div>
                 </div>
-                {execution.outputSummary ? (
-                  <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
-                    {truncateText(execution.outputSummary, 160)}
+                {execution.skillId ? (
+                  <p className="mt-2 text-xs leading-5 text-[rgba(62,54,46,0.58)]">
+                    Skill ID: {execution.skillId}
                   </p>
                 ) : null}
                 {execution.errorMessage ? (
                   <p className="mt-2 text-sm leading-6 text-[#A36A58]">
                     {truncateText(execution.errorMessage, 160)}
+                  </p>
+                ) : null}
+                {execution.httpStatusCode ? (
+                  <p className="mt-2 text-xs leading-5 text-[rgba(62,54,46,0.56)]">
+                    HTTP status: {execution.httpStatusCode}
                   </p>
                 ) : null}
               </div>

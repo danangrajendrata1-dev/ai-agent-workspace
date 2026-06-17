@@ -83,6 +83,24 @@ class WorkflowExecutionListResponse(BaseModel):
     items: list[WorkflowExecutionSummary]
 
 
+class WorkflowExecutionHistoryItem(BaseModel):
+    id: uuid.UUID
+    template_id: str
+    template_name: str
+    template_version: str
+    agent_id: uuid.UUID | None
+    skill_id: uuid.UUID | None
+    status: str
+    error_message: str | None
+    http_status_code: int | None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class WorkflowExecutionHistoryListResponse(BaseModel):
+    items: list[WorkflowExecutionHistoryItem]
+
+
 class WorkflowExecutionRequest(BaseModel):
     agent_id: str = Field(min_length=1)
     skill_id: str = Field(min_length=1)

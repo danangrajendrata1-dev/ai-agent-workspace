@@ -26,6 +26,8 @@ from app.repositories import (
 from app.schemas.workflow import (
     WorkflowChatExecutionRequest,
     WorkflowConsentResponse,
+    WorkflowExecutionHistoryItem,
+    WorkflowExecutionHistoryListResponse,
     WorkflowExecutionSummary,
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
@@ -164,6 +166,25 @@ def _serialize_execution(execution) -> WorkflowExecutionSummary:
         http_status_code=execution.http_status_code,
         output_summary=execution.output_summary,
         executed_at=execution.executed_at,
+    )
+
+
+def _serialize_execution_history_item(execution) -> WorkflowExecutionHistoryItem:
+    template = get_workflow_template(str(execution.template_id)) or {"name": execution.template_id}
+    # Only one timestamp is stored today, so reuse it for both created and completed views.
+    timestamp = execution.executed_at
+    return WorkflowExecutionHistoryItem(
+        id=execution.id,
+        template_id=execution.template_id,
+        template_name=str(template.get("name") or execution.template_id),
+        template_version=execution.template_version,
+        agent_id=execution.agent_id,
+        skill_id=execution.skill_id,
+        status=execution.status,
+        error_message=sanitize_error_message(execution.error_message) if execution.error_message else None,
+        http_status_code=execution.http_status_code,
+        created_at=timestamp,
+        completed_at=timestamp,
     )
 
 
@@ -401,6 +422,28 @@ def list_workflow_executions(
         offset=offset,
     )
     return [_serialize_execution(execution) for execution in executions]
+
+
+def list_workflow_execution_history(
+    db: Session,
+    *,
+    user,
+    limit: int = 25,
+    offset: int = 0,
+) -> WorkflowExecutionHistoryListResponse:
+    _require_owner_access(user)
+    safe_limit = min(max(int(limit), 1), 50)
+    safe_offset = max(int(offset), 0)
+    _rate_limit_bucket(user.id, "execution_history", WORKFLOW_LIST_RATE_LIMIT_MAX_REQUESTS)
+    executions = workflow_execution_repository.list_executions(
+        db,
+        user_id=user.id,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
+    return WorkflowExecutionHistoryListResponse(
+        items=[_serialize_execution_history_item(execution) for execution in executions]
+    )
 
 
 def _load_agent_for_execution(db: Session, *, user, agent_id: uuid.UUID):

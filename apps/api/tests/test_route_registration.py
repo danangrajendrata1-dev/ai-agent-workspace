@@ -23,6 +23,7 @@ EXPECTED_PATHS = {
     "/workflows/bindings",
     "/workflows/bindings/{binding_id}",
     "/workflows/executions",
+    "/workflows/executions/history",
     "/workflows/execute/{template_id}",
     "/handoff-drafts",
     "/handoff-drafts/{draft_id}",

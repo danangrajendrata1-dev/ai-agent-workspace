@@ -10,6 +10,7 @@ from app.schemas.workflow import (
     WorkflowChatExecutionRequest,
     WorkflowConsentListResponse,
     WorkflowConsentResponse,
+    WorkflowExecutionHistoryListResponse,
     WorkflowExecutionListResponse,
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
@@ -106,6 +107,21 @@ def list_workflow_executions(
             limit=limit,
             offset=offset,
         )
+    )
+
+
+@router.get("/workflows/executions/history", response_model=WorkflowExecutionHistoryListResponse)
+def list_workflow_execution_history(
+    limit: int = 25,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    return workflow_service.list_workflow_execution_history(
+        db,
+        user=current_user,
+        limit=limit,
+        offset=offset,
     )
 
 

@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -382,6 +383,146 @@ def test_chat_confirm_execute_rejects_frontend_execution_available_field_without
 
     assert response.status_code == 422
     mock_call.assert_not_called()
+
+
+def test_workflow_execution_history_returns_only_current_user_items_and_sanitizes_fields(client):
+    with SessionLocal() as db:
+        user_one = build_user(db, email_prefix="workflow-history-one")
+        user_two = build_user(db, email_prefix="workflow-history-two")
+        base_time = datetime.now(UTC)
+        workflow_execution_repository.create_execution(
+            db,
+            {
+                "user_id": user_one.id,
+                "agent_id": None,
+                "skill_id": None,
+                "template_id": "generate_pdf",
+                "template_version": "1.0",
+                "consent_id": None,
+                "webhook_url": "https://workflow.example.org/webhook/generate-pdf",
+                "input_payload_sanitized": {"title": "Safe title", "content": "Safe content"},
+                "output_summary": "Unsafe response body should never be exposed.",
+                "status": "success",
+                "error_message": "token secret-value leaked",
+                "http_status_code": 200,
+                "executed_at": base_time - timedelta(minutes=2),
+            },
+        )
+        workflow_execution_repository.create_execution(
+            db,
+            {
+                "user_id": user_two.id,
+                "agent_id": None,
+                "skill_id": None,
+                "template_id": "other_template",
+                "template_version": "2.0",
+                "consent_id": None,
+                "webhook_url": "https://workflow.example.org/webhook/other",
+                "input_payload_sanitized": {"title": "Other title"},
+                "output_summary": "Other user response body.",
+                "status": "failed",
+                "error_message": "Other error",
+                "http_status_code": 500,
+                "executed_at": base_time - timedelta(minutes=1),
+            },
+        )
+        workflow_execution_repository.create_execution(
+            db,
+            {
+                "user_id": user_one.id,
+                "agent_id": None,
+                "skill_id": None,
+                "template_id": "generate_report",
+                "template_version": "1.0",
+                "consent_id": None,
+                "webhook_url": "https://workflow.example.org/webhook/generate-report",
+                "input_payload_sanitized": {"title": "Another safe title"},
+                "output_summary": "Another unsafe response body.",
+                "status": "failed",
+                "error_message": "Webhook returned HTTP 500.",
+                "http_status_code": 500,
+                "executed_at": base_time,
+            },
+        )
+        db.commit()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user_one):
+        response = client.get("/workflows/executions/history?limit=10", headers=auth_headers(user_one.id))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 2
+
+    first_item = payload["items"][0]
+    second_item = payload["items"][1]
+
+    assert first_item["template_id"] == "generate_report"
+    assert first_item["template_name"] == "generate_report"
+    assert first_item["status"] == "failed"
+    assert first_item["agent_id"] is None
+    assert first_item["skill_id"] is None
+    assert first_item["created_at"]
+    assert first_item["completed_at"]
+    assert first_item["error_message"] == "Webhook returned HTTP 500."
+    assert "output_summary" not in first_item
+    assert "input_payload_sanitized" not in first_item
+    assert "webhook_url" not in first_item
+    assert "consent_id" not in first_item
+
+    assert second_item["template_id"] == "generate_pdf"
+    assert second_item["status"] == "success"
+    assert second_item["agent_id"] is None
+    assert second_item["skill_id"] is None
+    assert second_item["error_message"] == "Sensitive error redacted."
+    assert "output_summary" not in second_item
+    assert "input_payload_sanitized" not in second_item
+    assert "webhook_url" not in second_item
+
+
+def test_workflow_execution_history_empty_returns_safe_empty_list(client):
+    with SessionLocal() as db:
+        user = build_user(db, email_prefix="workflow-history-empty")
+        db.commit()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user):
+        response = client.get("/workflows/executions/history", headers=auth_headers(user.id))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {"items": []}
+
+
+def test_workflow_execution_history_limit_is_enforced(client):
+    with SessionLocal() as db:
+        user = build_user(db, email_prefix="workflow-history-limit")
+        base_time = datetime.now(UTC)
+        for index in range(3):
+            workflow_execution_repository.create_execution(
+                db,
+                {
+                    "user_id": user.id,
+                    "agent_id": None,
+                    "skill_id": None,
+                    "template_id": f"template_{index}",
+                    "template_version": "1.0",
+                    "consent_id": None,
+                    "webhook_url": "https://workflow.example.org/webhook/template",
+                    "input_payload_sanitized": {"title": f"Item {index}"},
+                    "output_summary": f"Response {index}",
+                    "status": "success",
+                    "error_message": None,
+                    "http_status_code": 200,
+                    "executed_at": base_time - timedelta(minutes=index),
+                },
+            )
+        db.commit()
+
+    with patch("app.services.auth_service.get_current_active_user", return_value=user):
+        response = client.get("/workflows/executions/history?limit=2", headers=auth_headers(user.id))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 2
 
 
 def test_execute_rejects_disabled_template_without_call(client):
