@@ -56,7 +56,7 @@ def test_call_template_webhook_uses_safe_http_settings_and_sanitizes_output():
 
     assert result.success is True
     assert result.status_code == 200
-    assert result.response_summary == '{"ok":true,"message":"done"}'
+    assert result.response_summary == "Webhook completed successfully."
     assert result.response_truncated is False
     assert client_cls.call_args.kwargs["follow_redirects"] is False
     assert client_cls.call_args.kwargs["trust_env"] is False
@@ -111,5 +111,4 @@ def test_call_template_webhook_truncates_large_response_summary():
     assert result.status_code == 500
     assert result.response_truncated is True
     assert result.error_message == "Webhook returned HTTP 500."
-    assert result.response_summary is not None
-    assert len(result.response_summary) <= 500
+    assert result.response_summary == "Webhook returned HTTP 500."

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 
 import httpx
 
@@ -9,9 +8,6 @@ from app.core.webhook_security import sanitize_error_message
 
 
 MAX_WEBHOOK_RESPONSE_BYTES = 1024 * 1024
-MAX_WEBHOOK_RESPONSE_SUMMARY_CHARS = 500
-
-
 @dataclass(frozen=True, slots=True)
 class WebhookCallResult:
     success: bool
@@ -22,26 +18,11 @@ class WebhookCallResult:
     response_truncated: bool = False
 
 
-def _summarize_response_bytes(response_bytes: bytes, content_type: str | None) -> str | None:
-    if not response_bytes:
-        return None
-
-    decoded = response_bytes.decode("utf-8", errors="replace").strip()
-    if not decoded:
-        return None
-
-    content_type_value = (content_type or "").lower()
-    if "application/json" in content_type_value:
-        try:
-            payload = json.loads(decoded)
-            decoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-
-    if len(decoded) > MAX_WEBHOOK_RESPONSE_SUMMARY_CHARS:
-        suffix = "..."
-        decoded = decoded[: MAX_WEBHOOK_RESPONSE_SUMMARY_CHARS - len(suffix)].rstrip() + suffix
-    return decoded
+def _summarize_response_status(status_code: int) -> str:
+    # Only expose safe status metadata here; never surface raw webhook bodies.
+    if 200 <= status_code < 300:
+        return "Webhook completed successfully."
+    return f"Webhook returned HTTP {status_code}."
 
 
 def call_template_webhook(url: str, payload: dict, timeout_seconds: int = 10) -> WebhookCallResult:
@@ -64,7 +45,7 @@ def call_template_webhook(url: str, payload: dict, timeout_seconds: int = 10) ->
                         truncated = True
                         break
 
-                summary = _summarize_response_bytes(bytes(response_bytes), response.headers.get("content-type"))
+                summary = _summarize_response_status(response.status_code)
                 return WebhookCallResult(
                     success=200 <= response.status_code < 300,
                     status_code=response.status_code,

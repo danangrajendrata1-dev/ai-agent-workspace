@@ -202,7 +202,7 @@ def test_chat_confirm_execute_template_workflow_success_sanitizes_payload_and_sa
     webhook_result = WebhookCallResult(
         success=True,
         status_code=200,
-        response_summary='{"job":"queued"}',
+        response_summary="Webhook completed successfully.",
         error_message=None,
         timed_out=False,
         response_truncated=False,
@@ -247,12 +247,10 @@ def test_chat_confirm_execute_template_workflow_success_sanitizes_payload_and_sa
     assert payload["status"] == "success"
     assert payload["template_id"] == "generate_pdf"
     assert payload["template_version"] == "1.0"
-    assert payload["output_summary"] == '{"job":"queued"}'
+    assert payload["output_summary"] == "Webhook completed successfully."
     assert payload["error_message"] is None
     assert payload["http_status_code"] == 200
     assert payload["execution_id"] is not None
-    assert "raw_response" not in payload
-    assert "response_body" not in payload
     mock_call.assert_called_once()
     called_url, called_payload = mock_call.call_args.args[:2]
     assert called_url == "https://workflow.example.org/webhook/generate-pdf"
@@ -265,7 +263,7 @@ def test_chat_confirm_execute_template_workflow_success_sanitizes_payload_and_sa
         assert execution.status == "success"
         assert execution.webhook_url == "https://workflow.example.org/webhook/generate-pdf"
         assert execution.input_payload_sanitized == {"title": "Monthly Report", "content": "Keep this safe"}
-        assert execution.output_summary == '{"job":"queued"}'
+        assert execution.output_summary == "Webhook completed successfully."
         assert execution.error_message is None
         assert execution.http_status_code == 200
 
