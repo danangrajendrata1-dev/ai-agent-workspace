@@ -20,6 +20,7 @@ EXPECTED_PATHS = {
     "/workflows/templates",
     "/workflows/consent/{template_id}",
     "/workflows/consents",
+    "/workflows/consents/{consent_id}/revoke",
     "/workflows/bindings",
     "/workflows/bindings/{binding_id}",
     "/workflows/executions",

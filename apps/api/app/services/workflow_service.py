@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -130,6 +131,8 @@ def _serialize_consent(consent) -> WorkflowConsentResponse:
         template_name=str(template.get("name") or consent.template_id),
         template_version=consent.template_version,
         consented_at=consent.consented_at,
+        revoked_at=getattr(consent, "revoked_at", None),
+        status="revoked" if getattr(consent, "revoked_at", None) is not None else "active",
     )
 
 
@@ -241,6 +244,7 @@ def list_workflow_templates_for_user(db: Session, *, user) -> list[WorkflowTempl
     consents = {
         (consent.template_id, consent.template_version): consent
         for consent in workflow_consent_repository.list_consents(db, user_id=user.id)
+        if getattr(consent, "revoked_at", None) is None
     }
     return [
         _serialize_template(
@@ -259,13 +263,32 @@ def create_workflow_consent(db: Session, *, user, template_id: str) -> WorkflowC
     _ensure_template_enabled(template)
     _ensure_template_url_safe(template)
 
-    existing = workflow_consent_repository.get_consent(
+    existing = workflow_consent_repository.get_consent_any_status(
         db,
         user_id=user.id,
         template_id=template_id,
         template_version=str(template["template_version"]),
     )
     if existing is not None:
+        if getattr(existing, "revoked_at", None) is not None:
+            existing.revoked_at = None
+            existing.consented_at = datetime.now(UTC)
+            _safe_record_activity(
+                log_service.record_activity,
+                db,
+                actor_type="user",
+                actor_id=user.id,
+                request_id=None,
+                event_type="workflow.consent.reactivated",
+                message="Workflow template consent restored.",
+                metadata_json={
+                    "user_id": str(user.id),
+                    "template_id": template_id,
+                    "template_version": str(template["template_version"]),
+                },
+            )
+            db.commit()
+            db.refresh(existing)
         return _serialize_consent(existing)
 
     consent = workflow_consent_repository.create_consent(
@@ -293,10 +316,61 @@ def create_workflow_consent(db: Session, *, user, template_id: str) -> WorkflowC
     return _serialize_consent(consent)
 
 
-def list_workflow_consents(db: Session, *, user) -> list[WorkflowConsentResponse]:
+def list_workflow_consents(
+    db: Session,
+    *,
+    user,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[WorkflowConsentResponse]:
     _require_owner_access(user)
-    consents = workflow_consent_repository.list_consents(db, user_id=user.id)
+    safe_limit = min(max(int(limit), 1), 50)
+    safe_offset = max(int(offset), 0)
+    consents = workflow_consent_repository.list_consents(
+        db,
+        user_id=user.id,
+        limit=safe_limit,
+        offset=safe_offset,
+    )
     return [_serialize_consent(consent) for consent in consents]
+
+
+def revoke_workflow_consent(db: Session, *, user, consent_id: uuid.UUID) -> WorkflowConsentResponse:
+    _require_owner_access(user)
+    _rate_limit_bucket(user.id, "consent", WORKFLOW_CONSENT_RATE_LIMIT_MAX_REQUESTS)
+
+    consent = workflow_consent_repository.get_consent_by_id(
+        db,
+        user_id=user.id,
+        consent_id=consent_id,
+    )
+    if consent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow consent not found.",
+        )
+
+    if getattr(consent, "revoked_at", None) is None:
+        consent.revoked_at = datetime.now(UTC)
+        _safe_record_activity(
+            log_service.record_activity,
+            db,
+            actor_type="user",
+            actor_id=user.id,
+            request_id=None,
+            event_type="workflow.consent.revoked",
+            message="Workflow template consent revoked.",
+            metadata_json={
+                "user_id": str(user.id),
+                "consent_id": str(consent_id),
+                "template_id": consent.template_id,
+                "template_version": consent.template_version,
+            },
+        )
+        db.commit()
+        db.refresh(consent)
+
+    return _serialize_consent(consent)
 
 
 def create_workflow_skill_binding(

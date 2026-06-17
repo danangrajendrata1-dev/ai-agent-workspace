@@ -10,6 +10,7 @@ import {
   listWorkflowExecutionHistory,
   listWorkflowBindings,
   listWorkflowConsents,
+  revokeWorkflowConsent,
   listWorkflowTemplates
 } from "../lib/apiClient";
 import { formatDateTime, truncateText } from "../lib/format";
@@ -67,8 +68,11 @@ function buildConsentViewModel(consent) {
     id: String(consent?.id || ""),
     templateId: consent?.template_id || "",
     templateName: consent?.template_name || consent?.template_id || "Unknown template",
+    templateKey: consent?.template_id || "",
     templateVersion: consent?.template_version || "",
-    consentedAt: consent?.consented_at || ""
+    consentedAt: consent?.consented_at || "",
+    revokedAt: consent?.revoked_at || "",
+    status: consent?.status || (consent?.revoked_at ? "revoked" : "active")
   };
 }
 
@@ -137,6 +141,7 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
   const [isExecuting, setIsExecuting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingConsent, setIsSavingConsent] = useState("");
+  const [revokingConsentId, setRevokingConsentId] = useState("");
   const [isSavingBinding, setIsSavingBinding] = useState(false);
   const [deletingBindingId, setDeletingBindingId] = useState("");
   const [error, setError] = useState("");
@@ -236,7 +241,9 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
   const activeConsentLookup = useMemo(() => {
     const lookup = new Set();
     consents.forEach((consent) => {
-      lookup.add(`${consent.templateId}:${consent.templateVersion}`);
+      if (consent.status === "active") {
+        lookup.add(`${consent.templateId}:${consent.templateVersion}`);
+      }
     });
     return lookup;
   }, [consents]);
@@ -307,6 +314,38 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
     [deletingBindingId, loadWorkflowData]
   );
 
+  const handleRevokeConsent = useCallback(
+    async (consent) => {
+      if (!consent?.id || revokingConsentId) {
+        return;
+      }
+
+      if (typeof window !== "undefined") {
+        const confirmed = window.confirm(
+          `Revoke consent for ${consent.templateName}? This will block future workflow execution until you allow it again.`
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      setRevokingConsentId(consent.id);
+      setError("");
+      setNotice("");
+
+      try {
+        await revokeWorkflowConsent(consent.id);
+        setNotice("Consent revoked.");
+        await loadWorkflowData();
+      } catch (revokeError) {
+        setError(getSafeErrorMessage(revokeError, "Failed to revoke workflow consent."));
+      } finally {
+        setRevokingConsentId("");
+      }
+    },
+    [loadWorkflowData, revokingConsentId]
+  );
+
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.id === selectedTemplateId) || null,
     [selectedTemplateId, templates]
@@ -333,7 +372,8 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
       consents.find(
         (consent) =>
           consent.templateId === selectedTemplate.id &&
-          consent.templateVersion === selectedTemplate.templateVersion
+          consent.templateVersion === selectedTemplate.templateVersion &&
+          consent.status === "active"
       ) || null
     );
   }, [consents, selectedTemplate]);
@@ -395,7 +435,7 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
     } catch (executeError) {
       const safeMessage =
         executeError && executeError.status === 428
-          ? "Consent is required before this workflow can run."
+          ? "Consent is required or was revoked before this workflow can run."
           : getSafeErrorMessage(executeError, "Failed to execute workflow template.");
       setError(safeMessage);
     } finally {
@@ -469,6 +509,17 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
             ) : templates.length ? (
               templates.map((template) => {
                 const consented = activeConsentLookup.has(`${template.id}:${template.templateVersion}`);
+                const matchingConsent =
+                  consents.find(
+                    (consent) =>
+                      consent.templateId === template.id &&
+                      consent.templateVersion === template.templateVersion
+                  ) || null;
+                const consentLabel = consented
+                  ? "Consented"
+                  : matchingConsent?.status === "revoked"
+                    ? "Revoked"
+                    : "Not consented";
                 const canConsent = template.enabled && !consented;
                 return (
                   <div
@@ -499,7 +550,7 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
                           {template.enabled ? "Enabled" : "Disabled"}
                         </span>
                         <span className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]">
-                          {consented ? "Consented" : "Not consented"}
+                          {consentLabel}
                         </span>
                       </div>
                     </div>
@@ -615,10 +666,39 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
                     key={consent.id}
                     className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3"
                   >
-                    <p className="text-sm font-semibold text-[#3E362E]">{consent.templateName}</p>
-                    <p className="mt-1 text-xs leading-5 text-[rgba(62,54,46,0.58)]">
-                      v{consent.templateVersion} | {formatDateTime(consent.consentedAt)}
-                    </p>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#3E362E]">{consent.templateName}</p>
+                        <p className="mt-1 text-xs leading-5 text-[rgba(62,54,46,0.58)]">
+                          Key: {consent.templateKey} | v{consent.templateVersion}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-[rgba(62,54,46,0.58)]">
+                          Created {formatDateTime(consent.consentedAt)}
+                          {consent.revokedAt ? ` | Revoked ${formatDateTime(consent.revokedAt)}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded-full border px-3 py-1 text-[11px] ${
+                            consent.status === "revoked"
+                              ? "border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] text-[#A36A58]"
+                              : "border-[rgba(96,112,86,0.18)] bg-[rgba(96,112,86,0.08)] text-[#607056]"
+                          }`}
+                        >
+                          {consent.status === "revoked" ? "Revoked" : "Active"}
+                        </span>
+                        {consent.status === "active" ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRevokeConsent(consent)}
+                            disabled={revokingConsentId === consent.id}
+                            className="rounded-full border border-[rgba(163,106,88,0.18)] bg-white px-3 py-1.5 text-xs font-medium text-[#A36A58] transition hover:bg-[rgba(163,106,88,0.08)] disabled:cursor-not-allowed disabled:opacity-70"
+                          >
+                            {revokingConsentId === consent.id ? "Revoking..." : "Revoke"}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -702,7 +782,7 @@ export default function WorkflowToolsPanel({ activeAgent, activeAgentSkills = []
               </div>
             ) : !selectedConsent ? (
               <div className="mt-3 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.62)]">
-                Consent is required before this workflow can run.
+                Consent is required or was revoked before this workflow can run.
               </div>
             ) : !selectedBinding ? (
               <div className="mt-3 rounded-[14px] border border-dashed border-[rgba(62,54,46,0.16)] bg-[rgba(229,224,211,0.34)] px-4 py-3 text-sm leading-6 text-[rgba(62,54,46,0.62)]">

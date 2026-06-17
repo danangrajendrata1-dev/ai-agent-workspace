@@ -214,6 +214,7 @@ def get_workflow_suggestions_for_agent(
     consents = {
         (consent.template_id, consent.template_version)
         for consent in workflow_consent_repository.list_consents(db, user_id=user.id)
+        if getattr(consent, "revoked_at", None) is None
     }
 
     binding_index: dict[tuple[str, str], object] = {}

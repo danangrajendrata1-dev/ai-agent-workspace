@@ -223,6 +223,49 @@ def test_workflow_suggestions_helper_marks_missing_consent_as_unavailable():
     assert suggestion.execution_available is False
 
 
+def test_workflow_suggestions_helper_marks_revoked_consent_as_unavailable():
+    db = build_db()
+    user = build_user()
+    agent = build_agent(user.id)
+    skill = build_workflow_skill(title="PDF Generator", content="Generate PDF files from task text.")
+    binding = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        skill_id=skill.skill_id,
+        template_id="generate_pdf",
+        template_version="1.0",
+        created_at=datetime.now(UTC),
+    )
+    revoked_consent = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        template_id="generate_pdf",
+        template_version="1.0",
+        consented_at=datetime.now(UTC),
+        revoked_at=datetime.now(UTC),
+    )
+
+    with patch("app.services.workflow_suggestion_service.skill_service.list_active_agent_skills", return_value=[skill]), patch(
+        "app.services.workflow_suggestion_service.workflow_skill_binding_repository.list_bindings",
+        return_value=[binding],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_consent_repository.list_consents",
+        return_value=[revoked_consent],
+    ), patch_template_registry():
+        suggestions = get_workflow_suggestions_for_agent(
+            db,
+            user=user,
+            agent_id=agent.id,
+            task_text="Please generate a PDF for the report",
+        )
+
+    assert len(suggestions) == 1
+    suggestion = suggestions[0]
+    assert suggestion.consent_required is True
+    assert suggestion.binding_exists is True
+    assert suggestion.execution_available is False
+
+
 def test_workflow_suggestions_helper_can_surface_match_without_binding_but_not_available():
     db = build_db()
     user = build_user()

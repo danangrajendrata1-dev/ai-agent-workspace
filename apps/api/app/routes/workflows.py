@@ -46,10 +46,26 @@ def create_workflow_consent(
 
 @router.get("/workflows/consents", response_model=WorkflowConsentListResponse)
 def list_workflow_consents(
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return WorkflowConsentListResponse(items=workflow_service.list_workflow_consents(db, user=current_user))
+    return WorkflowConsentListResponse(
+        items=workflow_service.list_workflow_consents(db, user=current_user, limit=limit, offset=offset)
+    )
+
+
+@router.post(
+    "/workflows/consents/{consent_id}/revoke",
+    response_model=WorkflowConsentResponse,
+)
+def revoke_workflow_consent(
+    consent_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    return workflow_service.revoke_workflow_consent(db, user=current_user, consent_id=consent_id)
 
 
 @router.post("/workflows/bindings", response_model=WorkflowSkillBindingResponse, status_code=status.HTTP_201_CREATED)

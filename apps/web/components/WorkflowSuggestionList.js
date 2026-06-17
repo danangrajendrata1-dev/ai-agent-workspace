@@ -97,7 +97,7 @@ export default function WorkflowSuggestionList({
             ) : (
               <p className="mt-2 text-xs leading-5 text-[rgba(62,54,46,0.58)]">
                 {consentRequired
-                  ? "Consent is required before execution. Use Advanced Workflow Tools."
+                  ? "Consent is required or was revoked before execution. Use Advanced Workflow Tools."
                   : bindingExists
                     ? "Template metadata is ready for manual execution review."
                     : "Bind this workflow skill in Advanced Workflow Tools."}

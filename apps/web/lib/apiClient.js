@@ -205,6 +205,14 @@ export function listWorkflowConsents() {
   return get("/workflows/consents");
 }
 
+export function revokeWorkflowConsent(consentId) {
+  if (!consentId) {
+    throw new Error("Missing consent identifier.");
+  }
+
+  return post(`/workflows/consents/${consentId}/revoke`);
+}
+
 export function listWorkflowBindings() {
   return get("/workflows/bindings");
 }

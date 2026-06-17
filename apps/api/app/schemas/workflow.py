@@ -32,6 +32,8 @@ class WorkflowConsentResponse(BaseModel):
     template_name: str
     template_version: str
     consented_at: datetime
+    revoked_at: datetime | None = None
+    status: Literal["active", "revoked"]
 
 
 class WorkflowConsentListResponse(BaseModel):
