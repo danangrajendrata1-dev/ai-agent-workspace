@@ -4,6 +4,14 @@ from pydantic import BaseModel
 
 
 RuntimeCapabilityStatus = Literal["disabled", "suggestion_only", "explicit_confirm", "forbidden"]
+RuntimeReadinessStatus = Literal[
+    "disabled",
+    "planned",
+    "queued_future",
+    "blocked",
+    "completed_future",
+    "failed_future",
+]
 
 
 class RuntimeCapabilityResponse(BaseModel):
@@ -17,3 +25,13 @@ class RuntimeCapabilityResponse(BaseModel):
 
 class RuntimeCapabilityListResponse(BaseModel):
     items: list[RuntimeCapabilityResponse]
+
+
+class RuntimeReadinessResponse(BaseModel):
+    status: RuntimeReadinessStatus
+    message: str
+    runtime_execution_enabled: bool
+    tool_execution_enabled: bool
+    model_raw_generation_enabled: bool
+    requires_future_safety_review: bool
+    docs_path: str

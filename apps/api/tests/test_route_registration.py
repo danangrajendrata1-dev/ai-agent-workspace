@@ -9,6 +9,7 @@ EXPECTED_PATHS = {
     "/model-providers",
     "/providers/test-connection",
     "/runtime/capabilities",
+    "/runtime/readiness",
     "/agents",
     "/agents/task-draft",
     "/agents/{agent_id}/chat",
@@ -60,3 +61,11 @@ def test_expected_paths_exist_in_openapi(client):
 
     missing = EXPECTED_PATHS - paths
     assert not missing, f"Missing expected OpenAPI paths: {sorted(missing)}"
+
+
+def test_runtime_execute_route_is_not_registered(client):
+    response = client.get("/openapi.json")
+    payload = response.json()
+    paths = set(payload["paths"].keys())
+
+    assert "/runtime/execute" not in paths
