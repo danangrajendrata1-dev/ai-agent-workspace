@@ -18,8 +18,19 @@ def get_by_id(db: Session, import_id: uuid.UUID) -> GitHubImport | None:
     return db.execute(statement).scalar_one_or_none()
 
 
-def list_imports(db: Session) -> list[GitHubImport]:
-    statement = select(GitHubImport).order_by(GitHubImport.created_at.desc())
+def get_by_id_for_owner(db: Session, import_id: uuid.UUID, owner_id: uuid.UUID) -> GitHubImport | None:
+    statement = select(GitHubImport).where(
+        GitHubImport.id == import_id,
+        GitHubImport.owner_id == owner_id,
+    )
+    return db.execute(statement).scalar_one_or_none()
+
+
+def list_imports(db: Session, owner_id: uuid.UUID | None = None) -> list[GitHubImport]:
+    statement = select(GitHubImport)
+    if owner_id is not None:
+        statement = statement.where(GitHubImport.owner_id == owner_id)
+    statement = statement.order_by(GitHubImport.created_at.desc())
     return list(db.execute(statement).scalars().all())
 
 

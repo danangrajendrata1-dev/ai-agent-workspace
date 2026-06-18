@@ -121,8 +121,8 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
         ), patch(
             "app.services.skill_service.github_import_repository.list_imports",
             return_value=[github_import],
-        ):
-            result = list_skill_library(self.db)
+        ) as mock_list_imports:
+            result = list_skill_library(self.db, owner_id=self.user_id)
 
         self.assertEqual(len(result), 1)
         item = result[0]
@@ -134,6 +134,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
         self.assertEqual(item.source_url, "https://github.com/example/repo")
         self.assertEqual(item.source_reference, "abc1234")
         self.assertIn("docs/guide.md", item.resource_references)
+        mock_list_imports.assert_called_once_with(self.db, owner_id=self.user_id)
 
     def test_user_can_attach_imported_skill_to_own_agent(self):
         agent = build_agent(self.user_id)
@@ -155,7 +156,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
             "app.services.skill_service.skill_repository.get_by_id",
             return_value=imported_skill,
         ), patch(
-            "app.services.skill_service.github_import_repository.get_by_id",
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
             return_value=github_import,
         ), patch(
             "app.services.skill_service.agent_skill_repository.get_assignment",
@@ -198,7 +199,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
             "app.services.skill_service.skill_repository.get_by_id",
             return_value=imported_skill,
         ), patch(
-            "app.services.skill_service.github_import_repository.get_by_id",
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
             return_value=github_import,
         ), patch(
             "app.services.skill_service.agent_skill_repository.get_assignment",
@@ -338,7 +339,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
             "app.services.skill_service.skill_repository.get_by_id",
             return_value=imported_skill,
         ), patch(
-            "app.services.skill_service.github_import_repository.get_by_id",
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
             return_value=github_import,
         ), patch(
             "app.services.skill_service.agent_skill_repository.get_assignment",
@@ -377,7 +378,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
             "app.services.skill_service.skill_repository.get_by_id",
             return_value=imported_skill,
         ), patch(
-            "app.services.skill_service.github_import_repository.get_by_id",
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
             return_value=github_import,
         ), patch(
             "app.services.skill_service.agent_skill_repository.get_assignment",
@@ -417,7 +418,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
             "app.services.skill_service.skill_repository.get_by_id",
             return_value=imported_skill,
         ), patch(
-            "app.services.skill_service.github_import_repository.get_by_id",
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
             return_value=github_import,
         ):
             with self.assertRaises(HTTPException) as exc_info:
@@ -447,7 +448,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
             "app.services.skill_service.skill_repository.get_by_id",
             return_value=imported_skill,
         ), patch(
-            "app.services.skill_service.github_import_repository.get_by_id",
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
             return_value=None,
         ):
             with self.assertRaises(HTTPException) as exc_info:
@@ -510,7 +511,7 @@ class SkillLibraryAndAgentSkillsTest(unittest.TestCase):
             "app.services.skill_service.skill_repository.get_by_id",
             return_value=imported_skill,
         ), patch(
-            "app.services.skill_service.github_import_repository.get_by_id",
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
             return_value=github_import,
         ), patch(
             "app.services.skill_service.agent_skill_repository.get_assignment",

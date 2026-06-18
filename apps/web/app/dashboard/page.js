@@ -13,6 +13,7 @@ import RuntimeSafetyOverview from "../../components/RuntimeSafetyOverview";
 import WorkflowToolsPanel from "../../components/WorkflowToolsPanel";
 import {
   approveGithubSkillImport,
+  disableGithubImport,
   attachImportedSkillToAgent,
   createAgent,
   createHandoffDraft,
@@ -36,6 +37,7 @@ import {
   generateTaskDraft,
   previewAgentRouting,
   importSelectedGithubSkill,
+  rejectGithubImport,
   previewGithubSkillCollection,
   previewGithubSkillImport
 } from "../../lib/apiClient";
@@ -122,6 +124,22 @@ function buildSkillLibraryViewModel(skill, index) {
     isAttachable: skill?.is_attachable !== false,
     attachBlockReason: skill?.attach_block_reason || ""
   };
+}
+
+function formatGithubImportLifecycleStatus(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  switch (normalized) {
+    case "preview":
+      return "Pending review";
+    case "imported":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "disabled":
+      return "Disabled";
+    default:
+      return normalized ? normalized.replace(/_/g, " ") : "Unknown";
+  }
 }
 
 function buildActiveAgentSkillViewModel(assignment, index) {
@@ -1236,6 +1254,8 @@ export default function DashboardPage() {
       null
     );
   }, [importedGithubSkills, selectedImportedGithubSkillId]);
+  const githubSkillPreviewStatus = String(githubSkillPreviewResult?.status || "preview").toLowerCase();
+  const canReviewGithubSkill = githubSkillPreviewStatus === "preview";
   const workspaceStatusItems = useMemo(
     () => [
       { label: "Pinned agents", value: String(pinnedAgents.length) },
@@ -1874,6 +1894,11 @@ export default function DashboardPage() {
       return;
     }
 
+    if (String(githubSkillPreviewResult.status || "preview").toLowerCase() !== "preview") {
+      setGithubSkillApproveNotice("Only pending review imports can be approved.");
+      return;
+    }
+
     const name = githubSkillApproveForm.name.trim();
     if (!name) {
       setGithubSkillApproveNotice("Skill name is required.");
@@ -1908,6 +1933,66 @@ export default function DashboardPage() {
       } else {
         setGithubSkillApproveNotice(truncateText(message.split("\n")[0].trim(), 180));
       }
+    } finally {
+      setIsApprovingGithubSkill(false);
+    }
+  }
+
+  async function handleGithubSkillRejectSubmit() {
+    if (!githubSkillPreviewResult?.id) {
+      setGithubSkillApproveNotice("Preview first before rejecting a skill import.");
+      return;
+    }
+
+    if (String(githubSkillPreviewResult.status || "preview").toLowerCase() !== "preview") {
+      setGithubSkillApproveNotice("Only pending review imports can be rejected.");
+      return;
+    }
+
+    setIsApprovingGithubSkill(true);
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveNotice("Rejecting preview safely...");
+
+    try {
+      const response = await rejectGithubImport(githubSkillPreviewResult.id, {
+        review_notes: githubSkillApproveForm.reviewNotes.trim() || "Rejected from workspace review."
+      });
+
+      setGithubSkillPreviewResult(response);
+      setGithubSkillApproveNotice("Preview rejected safely. It cannot be imported now.");
+      refreshImportedGithubSkills();
+    } catch (error) {
+      const message = getSafeErrorMessage(error, "Unable to reject preview safely.");
+      setGithubSkillApproveNotice(truncateText(message.split("\n")[0].trim(), 180));
+    } finally {
+      setIsApprovingGithubSkill(false);
+    }
+  }
+
+  async function handleGithubSkillDisableSubmit() {
+    if (!githubSkillPreviewResult?.id) {
+      setGithubSkillApproveNotice("Preview first before disabling a skill import.");
+      return;
+    }
+
+    if (String(githubSkillPreviewResult.status || "preview").toLowerCase() !== "preview") {
+      setGithubSkillApproveNotice("Only pending review imports can be disabled.");
+      return;
+    }
+
+    setIsApprovingGithubSkill(true);
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveNotice("Disabling preview safely...");
+
+    try {
+      const response = await disableGithubImport(githubSkillPreviewResult.id);
+
+      setGithubSkillPreviewResult(response);
+      setGithubSkillApproveNotice("Preview disabled safely. It cannot be imported now.");
+      refreshImportedGithubSkills();
+    } catch (error) {
+      const message = getSafeErrorMessage(error, "Unable to disable preview safely.");
+      setGithubSkillApproveNotice(truncateText(message.split("\n")[0].trim(), 180));
     } finally {
       setIsApprovingGithubSkill(false);
     }
@@ -2587,8 +2672,19 @@ export default function DashboardPage() {
                 </p>
               </div>
               <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
-                {githubSkillPreviewResult.status || "preview"}
+                {formatGithubImportLifecycleStatus(githubSkillPreviewResult.status || "preview")}
               </span>
+            </div>
+
+            <div className="rounded-[16px] border border-[rgba(62,54,46,0.12)] bg-[#F5F1E6] px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                Lifecycle
+              </p>
+              <p className="mt-1 text-sm leading-6 text-[#3E362E]">
+                {canReviewGithubSkill
+                  ? "Pending review. Approve to import, or reject/disable to close the preview safely."
+                  : "This preview is no longer pending review."}
+              </p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -2678,12 +2774,33 @@ export default function DashboardPage() {
               Kalau di GitHub kamu membuka: repo → skills → canvas-design → SKILL.md. Maka file path: skills/canvas-design/SKILL.md.
             </p>
 
+            {canReviewGithubSkill ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleGithubSkillRejectSubmit}
+                  disabled={isApprovingGithubSkill}
+                  className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-2 text-sm font-medium text-[#3E362E] transition hover:bg-[#efe7d6] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  Reject Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGithubSkillDisableSubmit}
+                  disabled={isApprovingGithubSkill}
+                  className="rounded-full border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-2 text-sm font-medium text-[#A36A58] transition hover:bg-[rgba(163,106,88,0.12)] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  Disable Preview
+                </button>
+              </div>
+            ) : null}
+
             <form onSubmit={handleGithubSkillApproveSubmit} className="rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-[#3E362E]">Review before import</p>
                   <p className="mt-1 text-xs text-[rgba(62,54,46,0.58)]">
-                    Imported skill is saved inactive/quarantine-style only.
+                    Imported skill is saved inactive/quarantine-style only after approval.
                   </p>
                 </div>
                 <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
@@ -2780,11 +2897,11 @@ export default function DashboardPage() {
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                 <p className="text-xs leading-6 text-[rgba(62,54,46,0.62)]">
-                  Import to quarantine-style storage only. No agent assignment. No runtime.
+                  Import to quarantine-style storage only. No agent assignment. No runtime. Reject or disable the preview first if you do not want to import it.
                 </p>
                 <button
                   type="submit"
-                  disabled={isApprovingGithubSkill}
+                  disabled={isApprovingGithubSkill || !canReviewGithubSkill}
                   className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isApprovingGithubSkill ? "Importing safely..." : "Import to Quarantine"}
@@ -2801,16 +2918,16 @@ export default function DashboardPage() {
             {githubSkillApproveResult ? (
               <div className="rounded-[18px] border border-[rgba(96,112,86,0.18)] bg-[rgba(96,112,86,0.08)] p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-[#607056]">Import success</p>
-                    <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.72)]">
-                      Imported as inactive/quarantine-style. Not assigned to any agent and not executed.
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#607056]">
-                    {githubSkillApproveResult.status || "imported"}
-                  </span>
+                <div>
+                  <p className="text-sm font-semibold text-[#607056]">Import success</p>
+                  <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.72)]">
+                    Imported as inactive/quarantine-style. Not assigned to any agent and not executed.
+                  </p>
                 </div>
+                <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#607056]">
+                    {formatGithubImportLifecycleStatus(githubSkillApproveResult.status || "imported")}
+                </span>
+              </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {[
@@ -2818,7 +2935,7 @@ export default function DashboardPage() {
                     { label: "Repo URL", value: githubSkillApproveResult.repo_url },
                     { label: "Branch", value: githubSkillApproveResult.branch || "-" },
                     { label: "File path", value: githubSkillApproveResult.file_path || "-" },
-                    { label: "Status", value: githubSkillApproveResult.status || "-" },
+                    { label: "Approval status", value: formatGithubImportLifecycleStatus(githubSkillApproveResult.status || "imported") },
                     { label: "Content preview", value: "Available above as untrusted text." }
                   ].map((item) => (
                     <div
@@ -2933,7 +3050,10 @@ export default function DashboardPage() {
 
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
                           {[
-                            { label: "Import status", value: item.importStatus || "-" },
+                            {
+                              label: "Approval status",
+                              value: formatGithubImportLifecycleStatus(item.importStatus || "manual")
+                            },
                             { label: "Security status", value: item.securityStatus || "-" },
                             { label: "Risk level", value: item.riskLevel || "-" },
                             { label: "Source URL", value: item.sourceUrl || "-" },
@@ -3021,7 +3141,10 @@ export default function DashboardPage() {
                       { label: "Source reference", value: selectedImportedGithubSkill.sourceReference || "-" },
                       { label: "Branch", value: selectedImportedGithubSkill.sourceBranch || "-" },
                       { label: "File path", value: selectedImportedGithubSkill.filePath || "-" },
-                      { label: "Import status", value: selectedImportedGithubSkill.importStatus || "-" },
+                      {
+                        label: "Approval status",
+                        value: formatGithubImportLifecycleStatus(selectedImportedGithubSkill.importStatus || "manual")
+                      },
                       { label: "Security status", value: selectedImportedGithubSkill.securityStatus || "-" }
                     ].map((item) => (
                       <div

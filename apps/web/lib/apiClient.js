@@ -387,6 +387,22 @@ export function approveGithubSkillImport(importId, payload, options) {
   return post(`/github-imports/${importId}/approve-skill`, payload, options);
 }
 
+export function rejectGithubImport(importId, payload, options) {
+  if (!importId) {
+    throw new Error("Missing github import identifier.");
+  }
+
+  return post(`/github-imports/${importId}/reject`, payload, options);
+}
+
+export function disableGithubImport(importId, options) {
+  if (!importId) {
+    throw new Error("Missing github import identifier.");
+  }
+
+  return post(`/github-imports/${importId}/disable`, undefined, options);
+}
+
 export function attachImportedSkillToAgent(agentId, skillId, options) {
   ensureIdentifier(agentId, "agent");
   ensureIdentifier(skillId, "skill");

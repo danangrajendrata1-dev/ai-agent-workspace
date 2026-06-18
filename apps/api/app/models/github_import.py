@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Index, String, Text, func
+from sqlalchemy import ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import DateTime
@@ -11,6 +11,7 @@ from app.models.base import Base
 class GitHubImport(Base):
     __tablename__ = "github_imports"
     __table_args__ = (
+        Index("ix_github_imports_owner_id", "owner_id"),
         Index("ix_github_imports_repo_url", "repo_url"),
         Index("ix_github_imports_status", "status"),
         Index("ix_github_imports_commit_sha", "commit_sha"),
@@ -20,6 +21,11 @@ class GitHubImport(Base):
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
+    )
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
     )
     repo_url: Mapped[str] = mapped_column(Text, nullable=False)
     branch: Mapped[str | None] = mapped_column(String(120), nullable=True)

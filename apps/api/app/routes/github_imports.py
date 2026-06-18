@@ -27,7 +27,7 @@ def preview_github_skill(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return github_import_service.preview_github_skill(db, payload)
+    return github_import_service.preview_github_skill(db, payload, owner_id=current_user.id)
 
 
 @router.post("/skills/collection-preview", response_model=GitHubSkillCollectionPreviewResponse)
@@ -44,7 +44,11 @@ def import_selected_github_skill(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return github_import_service.import_selected_github_skill(db, payload)
+    return github_import_service.import_selected_github_skill(
+        db,
+        payload,
+        owner_id=current_user.id,
+    )
 
 
 @router.get("", response_model=GitHubImportListResponse)
@@ -52,7 +56,9 @@ def list_github_imports(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return GitHubImportListResponse(items=github_import_service.list_github_imports(db))
+    return GitHubImportListResponse(
+        items=github_import_service.list_github_imports(db, owner_id=current_user.id)
+    )
 
 
 @router.get("/{import_id}", response_model=GitHubImportResponse)
@@ -61,7 +67,7 @@ def get_github_import(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return github_import_service.get_github_import(db, import_id)
+    return github_import_service.get_github_import(db, import_id, owner_id=current_user.id)
 
 
 @router.post("/{import_id}/approve-skill", response_model=GitHubImportResponse)
@@ -71,7 +77,12 @@ def approve_github_skill_import(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return github_import_service.approve_github_skill_import(db, import_id, payload)
+    return github_import_service.approve_github_skill_import(
+        db,
+        import_id,
+        payload,
+        owner_id=current_user.id,
+    )
 
 
 @router.post("/{import_id}/reject", response_model=GitHubImportResponse)
@@ -81,7 +92,12 @@ def reject_github_import(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return github_import_service.reject_github_import(db, import_id, payload)
+    return github_import_service.reject_github_import(
+        db,
+        import_id,
+        payload,
+        owner_id=current_user.id,
+    )
 
 
 @router.post("/{import_id}/disable", response_model=GitHubImportResponse)
@@ -90,4 +106,8 @@ def disable_github_import(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return github_import_service.disable_github_import(db, import_id)
+    return github_import_service.disable_github_import(
+        db,
+        import_id,
+        owner_id=current_user.id,
+    )

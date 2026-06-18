@@ -23,7 +23,9 @@ router = APIRouter(tags=["skills"])
 
 @router.get("/skills/library", response_model=SkillLibraryListResponse)
 def list_skill_library(db: Session = Depends(get_db), current_user=Depends(require_owner)):
-    return SkillLibraryListResponse(items=skill_service.list_skill_library(db))
+    return SkillLibraryListResponse(
+        items=skill_service.list_skill_library(db, owner_id=current_user.id)
+    )
 
 
 @router.post("/skills", response_model=SkillResponse, status_code=status.HTTP_201_CREATED)

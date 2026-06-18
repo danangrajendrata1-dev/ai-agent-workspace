@@ -355,6 +355,7 @@ def _discover_collection_candidates(
 def _preview_and_store_github_skill(
     db: Session,
     *,
+    owner_id: uuid.UUID | None,
     repo_url: str,
     branch: str | None,
     file_path: str,
@@ -381,6 +382,7 @@ def _preview_and_store_github_skill(
     github_import = github_import_repository.create_preview(
         db,
         {
+            "owner_id": owner_id,
             "repo_url": repo_url,
             "branch": branch,
             "commit_sha": fetch_result.commit_sha,
@@ -433,9 +435,15 @@ def _is_dangerous_manifest_failure(errors: list[str]) -> bool:
     return False
 
 
-def preview_github_skill(db: Session, payload: GitHubSkillPreviewRequest) -> GitHubImportResponse:
+def preview_github_skill(
+    db: Session,
+    payload: GitHubSkillPreviewRequest,
+    *,
+    owner_id: uuid.UUID | None = None,
+) -> GitHubImportResponse:
     return _preview_and_store_github_skill(
         db,
+        owner_id=owner_id,
         repo_url=payload.repo_url,
         branch=payload.branch,
         file_path=payload.file_path,
@@ -473,23 +481,37 @@ def preview_github_skill_collection(
 def import_selected_github_skill(
     db: Session,
     payload: GitHubSkillImportSelectedRequest,
+    *,
+    owner_id: uuid.UUID | None = None,
 ) -> GitHubImportResponse:
     manifest_path = _resolve_collection_manifest_path(payload.skill_path)
     return _preview_and_store_github_skill(
         db,
+        owner_id=owner_id,
         repo_url=payload.repo_url,
         branch=payload.branch,
         file_path=manifest_path,
     )
 
 
-def list_github_imports(db: Session) -> list[GitHubImportResponse]:
-    github_imports = github_import_repository.list_imports(db)
+def _load_owned_github_import(db: Session, import_id: uuid.UUID, owner_id: uuid.UUID | None):
+    if owner_id is None:
+        return github_import_repository.get_by_id(db, import_id)
+    return github_import_repository.get_by_id_for_owner(db, import_id, owner_id)
+
+
+def list_github_imports(db: Session, *, owner_id: uuid.UUID | None = None) -> list[GitHubImportResponse]:
+    github_imports = github_import_repository.list_imports(db, owner_id)
     return [serialize_github_import(item) for item in github_imports]
 
 
-def get_github_import(db: Session, import_id: uuid.UUID) -> GitHubImportResponse:
-    github_import = github_import_repository.get_by_id(db, import_id)
+def get_github_import(
+    db: Session,
+    import_id: uuid.UUID,
+    *,
+    owner_id: uuid.UUID | None = None,
+) -> GitHubImportResponse:
+    github_import = _load_owned_github_import(db, import_id, owner_id)
     if github_import is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -502,8 +524,10 @@ def approve_github_skill_import(
     db: Session,
     import_id: uuid.UUID,
     payload: GitHubSkillImportApproveRequest,
+    *,
+    owner_id: uuid.UUID | None = None,
 ) -> GitHubImportResponse:
-    github_import = github_import_repository.get_by_id(db, import_id)
+    github_import = _load_owned_github_import(db, import_id, owner_id)
     if github_import is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -763,8 +787,10 @@ def reject_github_import(
     db: Session,
     import_id: uuid.UUID,
     payload: GitHubImportRejectRequest,
+    *,
+    owner_id: uuid.UUID | None = None,
 ) -> GitHubImportResponse:
-    github_import = github_import_repository.get_by_id(db, import_id)
+    github_import = _load_owned_github_import(db, import_id, owner_id)
     if github_import is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -814,8 +840,13 @@ def reject_github_import(
     return serialize_github_import(github_import)
 
 
-def disable_github_import(db: Session, import_id: uuid.UUID) -> GitHubImportResponse:
-    github_import = github_import_repository.get_by_id(db, import_id)
+def disable_github_import(
+    db: Session,
+    import_id: uuid.UUID,
+    *,
+    owner_id: uuid.UUID | None = None,
+) -> GitHubImportResponse:
+    github_import = _load_owned_github_import(db, import_id, owner_id)
     if github_import is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

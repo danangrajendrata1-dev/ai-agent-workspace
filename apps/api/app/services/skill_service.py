@@ -47,8 +47,12 @@ def validate_skill_payload(source_type: str, source_id: uuid.UUID | None) -> Non
         )
 
 
-def _load_github_import_index(db: Session) -> dict[str, dict]:
-    github_imports = github_import_repository.list_imports(db)
+def _load_github_import_index(
+    db: Session,
+    *,
+    owner_id: uuid.UUID | None = None,
+) -> dict[str, dict]:
+    github_imports = github_import_repository.list_imports(db, owner_id=owner_id)
     return {
         str(item.id): serialize_github_import(item).model_dump()
         for item in github_imports
@@ -217,8 +221,12 @@ def list_skills(db: Session) -> list[SkillResponse]:
     return [serialize_skill(skill) for skill in skills]
 
 
-def list_skill_library(db: Session) -> list[SkillLibraryItemResponse]:
-    github_import_index = _load_github_import_index(db)
+def list_skill_library(
+    db: Session,
+    *,
+    owner_id: uuid.UUID | None = None,
+) -> list[SkillLibraryItemResponse]:
+    github_import_index = _load_github_import_index(db, owner_id=owner_id)
     skills = [
         skill
         for skill in skill_repository.list(db)
@@ -304,6 +312,20 @@ def assign_skill_to_agent(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Skill not found.",
         )
+    github_import_data = None
+    if getattr(skill, "source_type", None) == "github" and getattr(skill, "source_id", None):
+        github_import = github_import_repository.get_by_id_for_owner(db, skill.source_id, owner_id)
+        if github_import is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Imported GitHub skill is unavailable or not approved.",
+            )
+        github_import_data = serialize_github_import(github_import).model_dump()
+        if github_import_data.get("import_status") != "imported":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Imported GitHub skill is unavailable or not approved.",
+            )
 
     assignment = agent_skill_repository.get_assignment(db, agent.id, skill.id)
     if assignment is not None:
@@ -311,11 +333,6 @@ def assign_skill_to_agent(
         db.add(assignment)
         db.commit()
         db.refresh(assignment)
-        github_import_data = None
-        if getattr(skill, "source_type", None) == "github" and getattr(skill, "source_id", None):
-            github_import = github_import_repository.get_by_id(db, skill.source_id)
-            if github_import is not None:
-                github_import_data = serialize_github_import(github_import).model_dump()
         return serialize_assignment(assignment, github_import_data)
 
     assignment = agent_skill_repository.assign_skill_to_agent(
@@ -329,11 +346,6 @@ def assign_skill_to_agent(
     db.commit()
     db.refresh(assignment)
     assignment = agent_skill_repository.get_assignment(db, agent.id, skill.id)
-    github_import_data = None
-    if getattr(skill, "source_type", None) == "github" and getattr(skill, "source_id", None):
-        github_import = github_import_repository.get_by_id(db, skill.source_id)
-        if github_import is not None:
-            github_import_data = serialize_github_import(github_import).model_dump()
     return serialize_assignment(assignment, github_import_data)
 
 
@@ -369,7 +381,7 @@ def attach_imported_skill_to_agent(
             detail="Skill is no longer available.",
         )
 
-    github_import = github_import_repository.get_by_id(db, skill.source_id) if skill.source_id else None
+    github_import = github_import_repository.get_by_id_for_owner(db, skill.source_id, owner_id) if skill.source_id else None
     github_import_data = serialize_github_import(github_import).model_dump() if github_import is not None else None
     library_item = _build_skill_library_item(skill, github_import_data)
     if not library_item.is_attachable:
@@ -457,7 +469,7 @@ def list_active_agent_skills(
         current_user=current_user,
     )
     assignments = agent_skill_repository.list_agent_skills(db, agent.id)
-    github_import_index = _load_github_import_index(db)
+    github_import_index = _load_github_import_index(db, owner_id=owner_id)
     active_assignments = []
     for assignment in assignments:
         if not assignment.is_enabled:
