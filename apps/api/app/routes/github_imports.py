@@ -9,7 +9,10 @@ from app.schemas.github_import import (
     GitHubImportListResponse,
     GitHubImportRejectRequest,
     GitHubImportResponse,
+    GitHubSkillCollectionPreviewRequest,
+    GitHubSkillCollectionPreviewResponse,
     GitHubSkillImportApproveRequest,
+    GitHubSkillImportSelectedRequest,
     GitHubSkillPreviewRequest,
 )
 from app.services import github_import_service
@@ -25,6 +28,23 @@ def preview_github_skill(
     current_user=Depends(require_owner),
 ):
     return github_import_service.preview_github_skill(db, payload)
+
+
+@router.post("/skills/collection-preview", response_model=GitHubSkillCollectionPreviewResponse)
+def preview_github_skill_collection(
+    payload: GitHubSkillCollectionPreviewRequest,
+    current_user=Depends(require_owner),
+):
+    return github_import_service.preview_github_skill_collection(payload)
+
+
+@router.post("/skills/import-selected", response_model=GitHubImportResponse, status_code=status.HTTP_201_CREATED)
+def import_selected_github_skill(
+    payload: GitHubSkillImportSelectedRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_owner),
+):
+    return github_import_service.import_selected_github_skill(db, payload)
 
 
 @router.get("", response_model=GitHubImportListResponse)

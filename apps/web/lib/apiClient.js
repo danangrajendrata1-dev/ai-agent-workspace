@@ -256,6 +256,10 @@ export function getRuntimeEventContract(options) {
   return get("/runtime/event-contract", options);
 }
 
+export function previewGithubSkillCollection(payload, options) {
+  return post("/github-imports/skills/collection-preview", payload, options);
+}
+
 export function executeWorkflowTemplate(templateId, payload) {
   ensureIdentifier(templateId, "template");
   return post(`/workflows/execute/${templateId}`, payload);
@@ -368,6 +372,10 @@ export function getPendingApprovals(options) {
 
 export function previewGithubSkillImport(payload, options) {
   return post("/github-imports/skills/preview", payload, options);
+}
+
+export function importSelectedGithubSkill(payload, options) {
+  return post("/github-imports/skills/import-selected", payload, options);
 }
 
 

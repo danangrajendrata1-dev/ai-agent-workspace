@@ -34,6 +34,8 @@ EXPECTED_PATHS = {
     "/handoff-drafts/{draft_id}",
     "/handoff-drafts/{draft_id}/archive",
     "/github-imports/skills/preview",
+    "/github-imports/skills/collection-preview",
+    "/github-imports/skills/import-selected",
     "/tools",
     "/memories",
     "/tasks",

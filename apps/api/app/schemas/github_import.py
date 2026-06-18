@@ -9,6 +9,7 @@ GitHubImportType = Literal["skill", "tool"]
 GitHubImportStatus = Literal["preview", "imported", "rejected", "disabled"]
 SkillRiskLevel = Literal["low", "medium", "high"]
 SkillStatus = Literal["active", "inactive", "disabled"]
+GitHubCollectionValidationStatus = Literal["safe", "warning", "blocked"]
 
 
 class GitHubSkillPreviewRequest(BaseModel):
@@ -17,6 +18,33 @@ class GitHubSkillPreviewRequest(BaseModel):
     file_path: str = Field(min_length=1)
 
     @field_validator("repo_url", "branch", "file_path", mode="before")
+    @classmethod
+    def strip_strings(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class GitHubSkillCollectionPreviewRequest(BaseModel):
+    repo_url: str = Field(min_length=1)
+    branch: str | None = Field(default=None, max_length=120)
+
+    @field_validator("repo_url", "branch", mode="before")
+    @classmethod
+    def strip_strings(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class GitHubSkillImportSelectedRequest(BaseModel):
+    repo_url: str = Field(min_length=1)
+    branch: str | None = Field(default=None, max_length=120)
+    skill_path: str | None = Field(default=None, max_length=500)
+
+    @field_validator("repo_url", "branch", "skill_path", mode="before")
     @classmethod
     def strip_strings(cls, value):
         if isinstance(value, str):
@@ -48,6 +76,33 @@ class GitHubImportResponse(BaseModel):
     requires_review: bool = False
     created_at: datetime
     updated_at: datetime
+
+
+class GitHubRepositoryResponse(BaseModel):
+    repo_url: str
+    owner: str
+    repo: str
+    default_branch: str | None
+    description: str | None
+    html_url: str | None
+
+
+class GitHubSkillCollectionCandidateResponse(BaseModel):
+    path: str
+    manifest_path: str
+    title: str | None
+    description: str | None
+    skill_import_type: str | None
+    validation_status: GitHubCollectionValidationStatus
+    warning: str | None = None
+
+
+class GitHubSkillCollectionPreviewResponse(BaseModel):
+    repository: GitHubRepositoryResponse
+    is_collection: bool
+    candidate_count: int
+    candidates: list[GitHubSkillCollectionCandidateResponse]
+    warning: str | None = None
 
 
 class GitHubImportListResponse(BaseModel):

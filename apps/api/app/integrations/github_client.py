@@ -8,6 +8,18 @@ import httpx
 MAX_CONTENT_BYTES = 200 * 1024
 ALLOWED_TEXT_EXTENSIONS = {".md", ".markdown", ".txt"}
 _RAW_GITHUB_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+_GITHUB_API_BASE_URL = "https://api.github.com"
+_GITHUB_USER_AGENT = "personal-ai-agent-workspace"
+
+
+@dataclass(slots=True)
+class GitHubRepositoryMetadata:
+    repo_url: str
+    owner: str
+    repo: str
+    default_branch: str | None
+    description: str | None
+    html_url: str | None
 
 
 @dataclass(slots=True)
@@ -50,6 +62,64 @@ def build_raw_github_url(repo_url: str, branch: str | None, file_path: str) -> s
     branch_name = branch or "main"
     normalized_file_path = file_path.lstrip("/")
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch_name}/{normalized_file_path}"
+
+
+def fetch_repository_metadata(repo_url: str) -> GitHubRepositoryMetadata:
+    owner, repo = _parse_github_repo_url(repo_url)
+    api_url = f"{_GITHUB_API_BASE_URL}/repos/{owner}/{repo}"
+
+    with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+        response = client.get(
+            api_url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": _GITHUB_USER_AGENT,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    return GitHubRepositoryMetadata(
+        repo_url=repo_url,
+        owner=owner,
+        repo=repo,
+        default_branch=payload.get("default_branch"),
+        description=payload.get("description"),
+        html_url=payload.get("html_url"),
+    )
+
+
+def fetch_repository_tree(repo_url: str, branch: str | None) -> list[str]:
+    owner, repo = _parse_github_repo_url(repo_url)
+    branch_name = branch or "main"
+    api_url = f"{_GITHUB_API_BASE_URL}/repos/{owner}/{repo}/git/trees/{branch_name}?recursive=1"
+
+    with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+        response = client.get(
+            api_url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": _GITHUB_USER_AGENT,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    tree = payload.get("tree")
+    if not isinstance(tree, list):
+        raise ValueError("GitHub repository tree response is invalid.")
+
+    paths: list[str] = []
+    for item in tree:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "blob":
+            continue
+        path = item.get("path")
+        if isinstance(path, str) and path.strip():
+            paths.append(path.strip())
+
+    return paths
 
 
 def fetch_text_preview(repo_url: str, branch: str | None, file_path: str) -> GitHubPreviewFetchResult:
@@ -101,6 +171,20 @@ def fetch_text_preview(repo_url: str, branch: str | None, file_path: str) -> Git
         source_identity=source_identity,
         source_identity_type=source_identity_type,
     )
+
+
+def _parse_github_repo_url(repo_url: str) -> tuple[str, str]:
+    parsed = urlparse(repo_url)
+    if parsed.netloc != "github.com":
+        raise ValueError("Only public GitHub URLs are supported.")
+
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) < 2:
+        raise ValueError("GitHub repository URL is invalid.")
+
+    owner = path_parts[0]
+    repo = path_parts[1]
+    return owner, repo
 
 
 def _extract_commit_sha_from_raw_url(raw_url: str) -> str | None:

@@ -35,6 +35,8 @@ import {
   post,
   generateTaskDraft,
   previewAgentRouting,
+  importSelectedGithubSkill,
+  previewGithubSkillCollection,
   previewGithubSkillImport
 } from "../../lib/apiClient";
 import { formatDateTime, truncateText } from "../../lib/format";
@@ -280,6 +282,50 @@ function buildProviderViewModel(provider, index) {
     providerType: provider?.provider_type || "api",
     status: provider?.status || "inactive",
     defaultModel: provider?.default_model || ""
+  };
+}
+
+function buildGithubSkillCollectionCandidateViewModel(candidate, index) {
+  return {
+    id: String(candidate?.manifest_path || candidate?.path || buildAgentId("collection-skill", index)),
+    path: candidate?.path || ".",
+    manifestPath: candidate?.manifest_path || "",
+    title: candidate?.title || candidate?.path || "Unknown skill",
+    description: candidate?.description || "",
+    skillImportType: candidate?.skill_import_type || "",
+    validationStatus: candidate?.validation_status || "safe",
+    warning: candidate?.warning || ""
+  };
+}
+
+function getGithubSkillCollectionValidationLabel(status) {
+  if (status === "blocked") {
+    return "Blocked";
+  }
+
+  if (status === "warning") {
+    return "Warning";
+  }
+
+  return "Safe";
+}
+
+function buildGithubSkillCollectionPreviewViewModel(payload) {
+  return {
+    repository: {
+      repoUrl: payload?.repository?.repo_url || "",
+      owner: payload?.repository?.owner || "",
+      repo: payload?.repository?.repo || "",
+      defaultBranch: payload?.repository?.default_branch || "",
+      description: payload?.repository?.description || "",
+      htmlUrl: payload?.repository?.html_url || ""
+    },
+    isCollection: Boolean(payload?.is_collection),
+    candidateCount: Number(payload?.candidate_count || 0),
+    candidates: Array.isArray(payload?.candidates)
+      ? payload.candidates.map((candidate, index) => buildGithubSkillCollectionCandidateViewModel(candidate, index))
+      : [],
+    warning: payload?.warning || ""
   };
 }
 
@@ -586,7 +632,8 @@ const INITIAL_AGENT_FORM = {
 const INITIAL_GITHUB_SKILL_PREVIEW_FORM = {
   repoUrl: "",
   branch: "main",
-  filePath: "SKILL.md"
+  filePath: "SKILL.md",
+  skillPath: ""
 };
 
 const INITIAL_GITHUB_SKILL_APPROVE_FORM = {
@@ -708,6 +755,10 @@ export default function DashboardPage() {
   const [githubSkillPreviewResult, setGithubSkillPreviewResult] = useState(null);
   const [githubSkillPreviewNotice, setGithubSkillPreviewNotice] = useState("");
   const [isPreviewingGithubSkill, setIsPreviewingGithubSkill] = useState(false);
+  const [githubSkillCollectionPreviewResult, setGithubSkillCollectionPreviewResult] = useState(null);
+  const [githubSkillCollectionPreviewNotice, setGithubSkillCollectionPreviewNotice] = useState("");
+  const [isPreviewingGithubSkillCollection, setIsPreviewingGithubSkillCollection] = useState(false);
+  const [isImportingSelectedGithubSkill, setIsImportingSelectedGithubSkill] = useState(false);
   const [githubSkillApproveForm, setGithubSkillApproveForm] = useState(
     INITIAL_GITHUB_SKILL_APPROVE_FORM
   );
@@ -1627,10 +1678,33 @@ export default function DashboardPage() {
   function handleGithubSkillPreviewFieldChange(field, value) {
     setGithubSkillPreviewForm((current) => ({
       ...current,
-      [field]: value
+      [field]: value,
+      ...(field === "skillPath" ? {} : { skillPath: "" })
     }));
     setGithubSkillPreviewNotice("");
     setGithubSkillPreviewResult(null);
+    setGithubSkillCollectionPreviewNotice("");
+    setGithubSkillCollectionPreviewResult(null);
+    setGithubSkillApproveNotice("");
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveForm(INITIAL_GITHUB_SKILL_APPROVE_FORM);
+  }
+
+  function handleGithubSkillCollectionCandidateSelect(candidatePath) {
+    setGithubSkillPreviewForm((current) => ({
+      ...current,
+      skillPath: candidatePath
+    }));
+    setGithubSkillPreviewResult(null);
+    setGithubSkillPreviewNotice("");
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveNotice("");
+    setGithubSkillApproveForm(INITIAL_GITHUB_SKILL_APPROVE_FORM);
+    setGithubSkillCollectionPreviewNotice(
+      candidatePath === "."
+        ? "Root skill folder selected."
+        : `Selected skill folder: ${candidatePath}.`
+    );
   }
 
   async function handleGithubSkillPreviewSubmit(event) {
@@ -1652,6 +1726,7 @@ export default function DashboardPage() {
 
     setIsPreviewingGithubSkill(true);
     setGithubSkillPreviewResult(null);
+    setGithubSkillCollectionPreviewResult(null);
     setGithubSkillApproveResult(null);
     setGithubSkillApproveNotice("");
     setGithubSkillApproveForm(INITIAL_GITHUB_SKILL_APPROVE_FORM);
@@ -1676,6 +1751,111 @@ export default function DashboardPage() {
       setGithubSkillPreviewNotice(truncateText(message.split("\n")[0].trim(), 180));
     } finally {
       setIsPreviewingGithubSkill(false);
+    }
+  }
+
+  async function handleGithubSkillCollectionSubmit(event) {
+    event.preventDefault();
+
+    const repoUrl = githubSkillPreviewForm.repoUrl.trim();
+    const branch = githubSkillPreviewForm.branch.trim();
+
+    if (!repoUrl) {
+      setGithubSkillCollectionPreviewNotice("Repository URL is required.");
+      return;
+    }
+
+    setIsPreviewingGithubSkillCollection(true);
+    setGithubSkillCollectionPreviewResult(null);
+    setGithubSkillPreviewResult(null);
+    setGithubSkillPreviewNotice("");
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveNotice("");
+    setGithubSkillApproveForm(INITIAL_GITHUB_SKILL_APPROVE_FORM);
+    setGithubSkillCollectionPreviewNotice("Fetching collection preview...");
+
+    try {
+      const response = await previewGithubSkillCollection({
+        repo_url: repoUrl,
+        branch: branch || undefined
+      });
+
+      if (!response || typeof response !== "object") {
+        throw new Error("Collection preview response was empty.");
+      }
+
+      const collectionPreview = buildGithubSkillCollectionPreviewViewModel(response);
+      setGithubSkillCollectionPreviewResult(collectionPreview);
+
+      if (collectionPreview.candidateCount > 1) {
+        setGithubSkillCollectionPreviewNotice(
+          "This repository contains multiple skills. Choose one skill to import."
+        );
+      } else if (collectionPreview.candidateCount === 1) {
+        setGithubSkillCollectionPreviewNotice(
+          "One skill folder found. Choose it to import safely."
+        );
+      } else {
+        setGithubSkillCollectionPreviewNotice(
+          "No safe skill folders were found in this repository."
+        );
+      }
+    } catch (error) {
+      setGithubSkillCollectionPreviewResult(null);
+      const message = getSafeErrorMessage(error, "Collection preview failed.");
+      setGithubSkillCollectionPreviewNotice(truncateText(message.split("\n")[0].trim(), 180));
+    } finally {
+      setIsPreviewingGithubSkillCollection(false);
+    }
+  }
+
+  async function handleGithubSkillSelectedImportSubmit(event) {
+    event.preventDefault();
+
+    const repoUrl = githubSkillPreviewForm.repoUrl.trim();
+    const branch = githubSkillPreviewForm.branch.trim();
+    const skillPath = githubSkillPreviewForm.skillPath.trim();
+
+    if (!repoUrl) {
+      setGithubSkillCollectionPreviewNotice("Repository URL is required.");
+      return;
+    }
+
+    if (!skillPath) {
+      setGithubSkillCollectionPreviewNotice("Select a skill folder before importing.");
+      return;
+    }
+
+    setIsImportingSelectedGithubSkill(true);
+    setGithubSkillPreviewResult(null);
+    setGithubSkillPreviewNotice("");
+    setGithubSkillApproveResult(null);
+    setGithubSkillApproveNotice("");
+    setGithubSkillApproveForm(INITIAL_GITHUB_SKILL_APPROVE_FORM);
+    setGithubSkillCollectionPreviewNotice("Loading selected skill preview...");
+
+    try {
+      const response = await importSelectedGithubSkill({
+        repo_url: repoUrl,
+        branch: branch || undefined,
+        skill_path: skillPath
+      });
+
+      if (!response || typeof response !== "object") {
+        throw new Error("Selected skill import response was empty.");
+      }
+
+      setGithubSkillPreviewResult(response);
+      setGithubSkillPreviewNotice("Selected skill preview loaded. Review before importing.");
+      setGithubSkillCollectionPreviewNotice(
+        `Selected skill folder ${skillPath} imported into preview safely.`
+      );
+    } catch (error) {
+      setGithubSkillPreviewResult(null);
+      const message = getSafeErrorMessage(error, "Selected skill import failed.");
+      setGithubSkillCollectionPreviewNotice(truncateText(message.split("\n")[0].trim(), 180));
+    } finally {
+      setIsImportingSelectedGithubSkill(false);
     }
   }
 
@@ -2172,6 +2352,19 @@ export default function DashboardPage() {
                   Isi path file SKILL.md dari root repo. Contoh: skills/pdf/SKILL.md, skills/docx/SKILL.md, skills/canvas-design/SKILL.md. Jangan isi URL GitHub penuh atau raw URL.
                 </p>
               </label>
+
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-[#3E362E]">Skill folder path</span>
+                <input
+                  value={githubSkillPreviewForm.skillPath}
+                  onChange={(event) => handleGithubSkillPreviewFieldChange("skillPath", event.target.value)}
+                  placeholder="skills/pdf"
+                  className="rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-sm text-[#3E362E] outline-none transition placeholder:text-[rgba(62,54,46,0.42)] focus:border-[#A36A58]"
+                />
+                <p className="text-xs leading-6 text-[rgba(62,54,46,0.58)]">
+                  Dipakai saat repo berisi banyak skill. Isi folder relatif, bukan file manifest, bukan URL, dan bukan path absolut.
+                </p>
+              </label>
             </div>
           </div>
 
@@ -2179,21 +2372,193 @@ export default function DashboardPage() {
             <p className="text-xs leading-6 text-[rgba(62,54,46,0.62)]">
               Backend preview only. GitHub text is fetched through the API and stays untrusted.
             </p>
-            <button
-              type="submit"
-              disabled={isPreviewingGithubSkill}
-              className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isPreviewingGithubSkill ? "Fetching preview..." : "Preview GitHub Skill"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                disabled={isPreviewingGithubSkill}
+                className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isPreviewingGithubSkill ? "Fetching preview..." : "Preview GitHub Skill"}
+              </button>
+              <button
+                type="button"
+                onClick={handleGithubSkillCollectionSubmit}
+                disabled={isPreviewingGithubSkillCollection}
+                className="rounded-full border border-[rgba(163,106,88,0.22)] bg-[#F5F1E6] px-4 py-2.5 text-sm font-medium text-[#A36A58] transition hover:border-[#A36A58] hover:bg-[#EEE7DB] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isPreviewingGithubSkillCollection ? "Finding skills..." : "Preview Collection"}
+              </button>
+            </div>
           </div>
 
-          {githubSkillPreviewNotice ? (
+        {githubSkillPreviewNotice ? (
             <div className="mt-4 rounded-[14px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-4 py-3 text-sm text-[rgba(62,54,46,0.72)]">
               {truncateText(githubSkillPreviewNotice, 180)}
             </div>
           ) : null}
         </form>
+
+        {githubSkillCollectionPreviewResult ? (
+          <div className="space-y-4 rounded-[18px] border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-[rgba(62,54,46,0.56)]">
+                  Collection preview
+                </p>
+                <p className="mt-1 text-lg font-semibold text-[#3E362E]">
+                  {githubSkillCollectionPreviewResult.isCollection
+                    ? "Multiple skills detected"
+                    : "Skill folder detected"}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[rgba(62,54,46,0.68)]">
+                  {githubSkillCollectionPreviewResult.candidateCount} safe candidate
+                  {githubSkillCollectionPreviewResult.candidateCount === 1 ? "" : "s"} found.
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-2">
+                <span className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[#A36A58]">
+                  Read-only
+                </span>
+                {githubSkillPreviewForm.skillPath ? (
+                  <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                    Selected: {githubSkillPreviewForm.skillPath}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
+            {githubSkillCollectionPreviewResult.repository ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  {
+                    label: "Repository",
+                    value:
+                      githubSkillCollectionPreviewResult.repository.htmlUrl ||
+                      githubSkillCollectionPreviewResult.repository.repoUrl
+                  },
+                  {
+                    label: "Default branch",
+                    value: githubSkillCollectionPreviewResult.repository.defaultBranch || "-"
+                  },
+                  {
+                    label: "Owner / repo",
+                    value: `${githubSkillCollectionPreviewResult.repository.owner}/${githubSkillCollectionPreviewResult.repository.repo}`
+                  },
+                  {
+                    label: "Description",
+                    value: githubSkillCollectionPreviewResult.repository.description || "-"
+                  }
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3"
+                  >
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                      {item.label}
+                    </p>
+                    <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {githubSkillCollectionPreviewResult.warning ? (
+              <div className="rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm leading-6 text-[#3E362E]">
+                {githubSkillCollectionPreviewResult.warning}
+              </div>
+            ) : null}
+
+            <div className="grid gap-3">
+              {githubSkillCollectionPreviewResult.candidates.map((candidate) => {
+                const isSelected = githubSkillPreviewForm.skillPath === candidate.path;
+
+                return (
+                  <div
+                    key={candidate.id}
+                    className="rounded-[16px] border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#3E362E]">{candidate.title}</p>
+                        <p className="mt-1 break-words text-xs uppercase tracking-[0.14em] text-[rgba(62,54,46,0.56)]">
+                          {candidate.path}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span
+                          className={[
+                            "rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.14em]",
+                            candidate.validationStatus === "blocked"
+                              ? "border border-[rgba(163,106,88,0.22)] bg-[rgba(163,106,88,0.1)] text-[#A36A58]"
+                              : candidate.validationStatus === "warning"
+                                ? "border border-[rgba(171,129,28,0.22)] bg-[rgba(171,129,28,0.1)] text-[#A17C19]"
+                                : "border border-[rgba(96,112,86,0.22)] bg-[rgba(96,112,86,0.1)] text-[#607056]"
+                          ].join(" ")}
+                        >
+                          {getGithubSkillCollectionValidationLabel(candidate.validationStatus)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleGithubSkillCollectionCandidateSelect(candidate.path)}
+                          className="rounded-full border border-[rgba(163,106,88,0.2)] bg-[#FAF7EF] px-3 py-1.5 text-xs font-medium text-[#A36A58] transition hover:border-[#A36A58] hover:bg-[#F3EADF]"
+                        >
+                          {isSelected ? "Selected" : "Select"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#FAF7EF] px-4 py-3">
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                          Manifest path
+                        </p>
+                        <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">
+                          {candidate.manifestPath || "-"}
+                        </p>
+                      </div>
+                      <div className="rounded-[14px] border border-[rgba(62,54,46,0.12)] bg-[#FAF7EF] px-4 py-3">
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.54)]">
+                          Skill type
+                        </p>
+                        <p className="mt-1 break-words text-sm leading-6 text-[#3E362E]">
+                          {candidate.skillImportType || "Unknown"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {candidate.description ? (
+                      <p className="mt-3 text-sm leading-6 text-[rgba(62,54,46,0.72)]">
+                        {candidate.description}
+                      </p>
+                    ) : null}
+
+                    {candidate.warning ? (
+                      <div className="mt-3 rounded-[14px] border border-[rgba(163,106,88,0.18)] bg-[rgba(163,106,88,0.08)] px-4 py-3 text-sm leading-6 text-[#3E362E]">
+                        {candidate.warning}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs leading-6 text-[rgba(62,54,46,0.62)]">
+                Choose one folder, then import only that selected skill. No clone, no script execution, no auto-attach.
+              </p>
+              <button
+                type="button"
+                onClick={handleGithubSkillSelectedImportSubmit}
+                disabled={isImportingSelectedGithubSkill || !githubSkillPreviewForm.skillPath.trim()}
+                className="rounded-full bg-[#A36A58] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#94604f] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isImportingSelectedGithubSkill
+                  ? "Importing selected skill..."
+                  : "Import Selected Skill"}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-2">
           {SKILL_IMPORT_REQUIREMENTS.map((item) => (
