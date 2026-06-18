@@ -56,6 +56,59 @@ def test_tool_execution_stub_is_blocked_and_never_marks_success():
     assert "waiting_approval" not in result.model_dump_json().lower()
 
 
+def test_imported_github_tool_execution_stub_is_blocked_and_never_waits_for_approval():
+    db = MagicMock()
+    owner_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+    tool_id = uuid.uuid4()
+    agent = SimpleNamespace(id=agent_id)
+    task = SimpleNamespace(id=task_id, request_id="request-456")
+    tool = SimpleNamespace(
+        id=tool_id,
+        risk_level="low",
+        source_type="github",
+        tool_type="github",
+    )
+    payload = ToolExecutionRequest(
+        task_id=task_id,
+        agent_id=agent_id,
+        tool_id=tool_id,
+        input_payload={"value": "keep"},
+    )
+
+    with patch(
+        "app.services.tool_execution_service.validate_tool_permission",
+        return_value={
+            "agent": agent,
+            "task": task,
+            "tool": tool,
+            "assignment": None,
+            "blocked_reason": "GitHub imported tool execution is disabled in MVP.",
+        },
+    ), patch(
+        "app.services.tool_execution_service.log_service.record_tool_call",
+        return_value=SimpleNamespace(id=uuid.uuid4()),
+    ) as mock_record_tool_call, patch(
+        "app.services.tool_execution_service.log_service.record_activity",
+        return_value=None,
+    ) as mock_record_activity:
+        result = request_tool_execution_stub(db, owner_id=owner_id, payload=payload)
+
+    assert result.status == "blocked"
+    assert result.execution_performed is False
+    assert result.approval_required is False
+    assert result.approval_request_id is None
+    assert result.blocked_reason == "GitHub imported tool execution is disabled in MVP."
+    assert db.commit.called
+    assert db.refresh.called
+    assert mock_record_tool_call.call_args.kwargs["status"] == "blocked"
+    assert mock_record_tool_call.call_args.kwargs["error_message"] == "GitHub imported tool execution is disabled in MVP."
+    assert mock_record_activity.call_args.kwargs["event_type"] == "tool.execution.stubbed"
+    assert "success" not in result.model_dump_json().lower()
+    assert "waiting_approval" not in result.model_dump_json().lower()
+
+
 def test_model_router_stub_is_blocked_and_records_no_success():
     db = MagicMock()
     owner_id = uuid.uuid4()

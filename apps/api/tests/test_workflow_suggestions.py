@@ -6,8 +6,6 @@ from unittest.mock import patch
 
 import pytest
 
-from app.core.database import SessionLocal
-from app.repositories import workflow_execution_repository
 from app.schemas.agent_chat import AgentChatRequest, WorkflowSuggestion
 from app.services.agent_chat_service import chat_with_agent
 from app.services.orchestrator_service import orchestrate_workspace_chat
@@ -316,7 +314,7 @@ def test_workflow_suggestions_helper_ignores_non_workflow_skill_types():
     prompt_skill = build_prompt_skill(title="Prompt Skill")
     knowledge_skill = build_workflow_skill(title="Knowledge Skill", content="Knowledge content.")
     knowledge_skill.skill.skill_type = "knowledge_skill"
-    tool_skill = build_workflow_skill(title="Tool Skill", content="Tool content.")
+    tool_skill = build_imported_workflow_skill(title="Tool Skill", content="Tool content.")
     tool_skill.skill.skill_type = "tool_skill"
 
     with patch("app.services.skill_service.agent_repository.get_by_id", return_value=agent), patch(
@@ -614,23 +612,18 @@ def test_agent_chat_includes_workflow_suggestions_without_execute_call():
     ), patch(
         "app.services.workflow_service.execute_workflow_template"
     ) as mock_execute:
-        with SessionLocal() as db:
-            response = chat_with_agent(
-                db,
-                owner_id=user.id,
-                agent_id=agent.id,
-                payload=AgentChatRequest(messages=[{"role": "user", "content": "Please generate a PDF"}]),
-                current_user=user,
-            )
+        db = build_db()
+        response = chat_with_agent(
+            db,
+            owner_id=user.id,
+            agent_id=agent.id,
+            payload=AgentChatRequest(messages=[{"role": "user", "content": "Please generate a PDF"}]),
+            current_user=user,
+        )
 
     assert response.reply == "Assistant reply"
     assert response.workflow_suggestions and response.workflow_suggestions[0].template_id == "generate_pdf"
     mock_execute.assert_not_called()
-
-    with SessionLocal() as db:
-        executions = workflow_execution_repository.list_executions(db, user_id=user.id)
-        assert executions == []
-
 
 def test_orchestrator_passes_workflow_suggestions_from_agent_chat():
     user = build_user()

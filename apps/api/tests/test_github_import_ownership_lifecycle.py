@@ -13,7 +13,7 @@ from app.services.github_import_service import (
     preview_github_skill,
     reject_github_import,
 )
-from app.services.skill_service import attach_imported_skill_to_agent, list_active_agent_skills
+from app.services.skill_service import attach_imported_skill_to_agent, list_active_agent_skills, list_skill_library
 
 
 def build_agent(owner_id: uuid.UUID):
@@ -409,6 +409,78 @@ class GitHubImportOwnershipLifecycleTest(unittest.TestCase):
         self.assertTrue(result.is_enabled)
         self.assertEqual(result.skill.import_status, "imported")
         self.assertEqual(result.skill.file_path, "skills/pdf/SKILL.md")
+
+    def test_collection_imported_tool_skill_is_visible_but_stays_blocked(self):
+        github_import = build_import_record(
+            import_id=self.import_id,
+            owner_id=self.owner_id,
+            status="imported",
+            file_path="skills/pdf/SKILL.md",
+        )
+        github_import.content_preview = "Run [tools/run.sh](tools/run.sh) to generate the final output."
+        tool_skill = build_skill(source_id=self.import_id)
+        assignment = build_assignment(self.agent.id, tool_skill)
+
+        with patch(
+            "app.services.skill_service.skill_repository.list",
+            return_value=[tool_skill],
+        ), patch(
+            "app.services.skill_service.github_import_repository.list_imports",
+            return_value=[github_import],
+        ):
+            library_items = list_skill_library(self.db, owner_id=self.owner_id)
+
+        self.assertEqual(len(library_items), 1)
+        self.assertEqual(library_items[0].skill_type, "tool_skill")
+        self.assertTrue(library_items[0].is_attachable)
+
+        with patch(
+            "app.services.skill_service.agent_repository.get_by_id",
+            return_value=self.agent,
+        ), patch(
+            "app.services.skill_service.skill_repository.get_by_id",
+            return_value=tool_skill,
+        ), patch(
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
+            return_value=github_import,
+        ), patch(
+            "app.services.skill_service.agent_skill_repository.get_assignment",
+            side_effect=[None, assignment],
+        ), patch(
+            "app.services.skill_service.agent_skill_repository.assign_skill_to_agent",
+            return_value=assignment,
+        ):
+            attach_result = attach_imported_skill_to_agent(
+                self.db,
+                owner_id=self.owner_id,
+                agent_id=self.agent.id,
+                skill_id=tool_skill.id,
+                current_user=SimpleNamespace(role="user"),
+            )
+
+        self.assertTrue(attach_result.is_enabled)
+        self.assertEqual(attach_result.skill.skill_type, "tool_skill")
+
+        with patch(
+            "app.services.skill_service.agent_repository.get_by_id",
+            return_value=self.agent,
+        ), patch(
+            "app.services.skill_service.agent_skill_repository.list_agent_skills",
+            return_value=[assignment],
+        ), patch(
+            "app.services.skill_service.github_import_repository.list_imports",
+            return_value=[github_import],
+        ):
+            active_items = list_active_agent_skills(
+                self.db,
+                owner_id=self.owner_id,
+                agent_id=self.agent.id,
+                current_user=SimpleNamespace(role="user"),
+            )
+
+        self.assertEqual(len(active_items), 1)
+        self.assertEqual(active_items[0].skill.skill_type, "tool_skill")
+        self.assertTrue(active_items[0].skill.is_attachable)
 
     def test_other_owner_import_cannot_be_attached(self):
         with patch(

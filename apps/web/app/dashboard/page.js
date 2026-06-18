@@ -96,10 +96,16 @@ function buildSkillViewModel(skill, index) {
 }
 
 function buildSkillLibraryViewModel(skill, index) {
+  const skillType = skill?.skill_type || "prompt_skill";
   return {
     id: String(skill?.id || buildAgentId("library-skill", index)),
     title: skill?.title || skill?.name || `Imported skill ${index + 1}`,
-    type: skill?.skill_type || "prompt_skill",
+    type: skillType,
+    typeLabel:
+      skillType === "tool_skill"
+        ? "Tool skill - blocked in current Alpha"
+        : skillType,
+    isToolSkill: skillType === "tool_skill",
     status: skill?.status || "inactive",
     importStatus: skill?.import_status || "manual",
     securityStatus: skill?.security_status || "safe",
@@ -124,6 +130,14 @@ function buildSkillLibraryViewModel(skill, index) {
     isAttachable: skill?.is_attachable !== false,
     attachBlockReason: skill?.attach_block_reason || ""
   };
+}
+
+function getSkillTypeDisplayLabel(skillType) {
+  const normalizedType = skillType || "prompt_skill";
+  if (normalizedType === "tool_skill") {
+    return "Tool skill - blocked in current Alpha";
+  }
+  return normalizedType;
 }
 
 function formatGithubImportLifecycleStatus(status) {
@@ -158,6 +172,7 @@ function buildRoutingPreviewSkillMatchViewModel(match, index) {
     skillId: String(match?.skill_id || ""),
     title: match?.title || `Matched skill ${index + 1}`,
     skillType: match?.skill_type || "prompt_skill",
+    skillTypeLabel: getSkillTypeDisplayLabel(match?.skill_type || "prompt_skill"),
     status: match?.status || "inactive",
     securityStatus: match?.security_status || "safe",
     matchedTerms: Array.isArray(match?.matched_terms) ? match.matched_terms : [],
@@ -212,6 +227,7 @@ function buildTaskDraftRelevantSkillViewModel(skill, index) {
     skillId: String(skill?.skill_id || ""),
     title: skill?.title || `Relevant skill ${index + 1}`,
     skillType: skill?.skill_type || "prompt_skill",
+    skillTypeLabel: getSkillTypeDisplayLabel(skill?.skill_type || "prompt_skill"),
     relevanceNote: skill?.relevance_note || ""
   };
 }
@@ -260,6 +276,7 @@ function buildHandoffDraftSkillMatchViewModel(match, index) {
     skillId: String(match?.skill_id || ""),
     title: match?.title || `Matched skill ${index + 1}`,
     skillType: match?.skill_type || "prompt_skill",
+    skillTypeLabel: getSkillTypeDisplayLabel(match?.skill_type || "prompt_skill"),
     matchReason: match?.match_reason || ""
   };
 }
@@ -3022,7 +3039,9 @@ export default function DashboardPage() {
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-[#3E362E]">{item.title}</p>
                             <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.58)]">
-                              Read-only imported skill record.
+                              {item.isToolSkill
+                                ? "Read-only imported tool skill. Attached use is allowed, but execution stays blocked in this Alpha."
+                                : "Read-only imported skill record."}
                             </p>
                             <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.5)]">
                               {item.resourceReferences.length > 0
@@ -3033,7 +3052,7 @@ export default function DashboardPage() {
 
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
-                              {item.type}
+                              {item.typeLabel}
                             </span>
                             <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
                               {item.status || "inactive"}
@@ -3125,9 +3144,9 @@ export default function DashboardPage() {
                         Safe detail view for quarantine-style imported skill records.
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
-                        {selectedImportedGithubSkill.type || "prompt_skill"}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(62,54,46,0.68)]">
+                        {selectedImportedGithubSkill.typeLabel || selectedImportedGithubSkill.type || "prompt_skill"}
                       </span>
                       <span className="rounded-full border border-[rgba(96,112,86,0.2)] bg-[rgba(96,112,86,0.12)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[#607056]">
                         {selectedImportedGithubSkill.status || "inactive"}
@@ -3688,8 +3707,13 @@ export default function DashboardPage() {
                                           {item.skill.title}
                                         </p>
                                         <p className="mt-1 text-xs leading-6 text-[rgba(62,54,46,0.62)]">
-                                          {item.skill.type} | {item.skill.status} | {item.skill.securityStatus}
+                                          {item.skill.typeLabel || item.skill.type} | {item.skill.status} | {item.skill.securityStatus}
                                         </p>
+                                        {item.skill.isToolSkill ? (
+                                          <p className="mt-1 text-xs leading-6 text-[rgba(163,106,88,0.72)]">
+                                            Tool skill is attached, but execution remains blocked in this Alpha.
+                                          </p>
+                                        ) : null}
                                       </div>
                                       <button
                                         type="button"
@@ -3879,7 +3903,7 @@ export default function DashboardPage() {
                                       key={match.id}
                                       className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]"
                                     >
-                                      {match.title} | {match.skillType}
+                                      {match.title} | {match.skillTypeLabel || match.skillType}
                                     </span>
                                   ))}
                                 </div>
@@ -4080,7 +4104,7 @@ export default function DashboardPage() {
                                     key={skill.id}
                                     className="rounded-full border border-[rgba(62,54,46,0.12)] bg-white px-3 py-1 text-[11px] text-[rgba(62,54,46,0.72)]"
                                   >
-                                    {skill.title} | {skill.skillType}
+                                    {skill.title} | {skill.skillTypeLabel || skill.skillType}
                                   </span>
                                 ))}
                               </div>
@@ -4284,7 +4308,7 @@ export default function DashboardPage() {
                                         >
                                           <span className="font-medium">{match.title}</span>
                                           <span className="mx-1 text-[rgba(62,54,46,0.42)]">|</span>
-                                          <span>{match.skillType}</span>
+                                          <span>{match.skillTypeLabel || match.skillType}</span>
                                           {match.matchReason ? (
                                             <span className="ml-2 text-[rgba(62,54,46,0.54)]">
                                               {truncateText(match.matchReason, 48)}
