@@ -90,6 +90,7 @@ Future runtime responses should expose only safe execution metadata:
 - Alpha 19.2 defines a safe runtime event contract stub for future use.
 - Alpha 19.2 does not create a runtime event table, runtime event history, or runtime execution path.
 - The contract may only use safe fields such as `event_id`, `agent_id`, `session_id`, `status`, `event_type`, `capability_key`, `safe_message`, `created_at`, `finished_at`, `requires_confirmation`, `confirmation_state`, `safe_error_code`, and `safe_error_message`.
+- The contract may also list forbidden field names such as `raw_prompt`, `raw_chat_message`, `raw_knowledge_content`, `raw_provider_response`, `raw_tool_output`, `raw_webhook_response`, `provider_api_key`, `credential`, `token`, `secret`, `webhook_url`, `request_headers`, `response_headers`, `arbitrary_url`, and `stack_trace`.
 - The contract must not include raw prompt, raw chat, raw knowledge content, raw provider response, raw tool response, raw webhook response, secrets, credentials, tokens, webhook URLs, arbitrary URLs, request headers, response headers, or stack traces.
 - The contract is read-only metadata only and must not be treated as execution authorization.
 

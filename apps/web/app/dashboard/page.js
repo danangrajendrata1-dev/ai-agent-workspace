@@ -9,6 +9,7 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import AgentChatPanel from "../../components/AgentChatPanel";
 import WorkspaceChatPanel from "../../components/WorkspaceChatPanel";
+import RuntimeEventContractPanel from "../../components/RuntimeEventContractPanel";
 import RuntimeCapabilityPanel from "../../components/RuntimeCapabilityPanel";
 import RuntimeReadinessPanel from "../../components/RuntimeReadinessPanel";
 import WorkflowToolsPanel from "../../components/WorkflowToolsPanel";
@@ -27,6 +28,7 @@ import {
   getHandoffDrafts,
   getPendingApprovals,
   getModelProviders,
+  getRuntimeEventContract,
   getRuntimeReadiness,
   getRuntimeCapabilities,
   getTasks,
@@ -659,6 +661,9 @@ export default function DashboardPage() {
   const [runtimeReadiness, setRuntimeReadiness] = useState(null);
   const [isLoadingRuntimeReadiness, setIsLoadingRuntimeReadiness] = useState(true);
   const [runtimeReadinessNotice, setRuntimeReadinessNotice] = useState("");
+  const [runtimeEventContract, setRuntimeEventContract] = useState(null);
+  const [isLoadingRuntimeEventContract, setIsLoadingRuntimeEventContract] = useState(true);
+  const [runtimeEventContractNotice, setRuntimeEventContractNotice] = useState("");
   const [runtimeCapabilities, setRuntimeCapabilities] = useState([]);
   const [isLoadingRuntimeCapabilities, setIsLoadingRuntimeCapabilities] = useState(true);
   const [runtimeCapabilitiesNotice, setRuntimeCapabilitiesNotice] = useState("");
@@ -835,6 +840,7 @@ export default function DashboardPage() {
         getSkillLibrary(),
         getModelProviders(),
         getHandoffDrafts({ query: { limit: 20, offset: 0 } }),
+        getRuntimeEventContract(),
         getRuntimeReadiness(),
         getRuntimeCapabilities()
       ]);
@@ -850,6 +856,7 @@ export default function DashboardPage() {
         skillLibraryResult,
         providersResult,
         handoffDraftsResult,
+        runtimeEventContractResult,
         runtimeReadinessResult,
         runtimeCapabilitiesResult
       ] = results;
@@ -917,6 +924,15 @@ export default function DashboardPage() {
         setSelectedHandoffDraftId("");
       }
       setIsLoadingHandoffDrafts(false);
+
+      if (runtimeEventContractResult.status === "fulfilled") {
+        setRuntimeEventContract(runtimeEventContractResult.value);
+        setRuntimeEventContractNotice("");
+      } else {
+        setRuntimeEventContract(null);
+        setRuntimeEventContractNotice("Runtime event contract unavailable.");
+      }
+      setIsLoadingRuntimeEventContract(false);
 
       if (runtimeReadinessResult.status === "fulfilled") {
         setRuntimeReadiness(runtimeReadinessResult.value);
@@ -3931,6 +3947,17 @@ export default function DashboardPage() {
                       title="Runtime readiness status"
                       description="This is a safe preview of future runtime activation requirements. It does not unlock any execution path."
                       emptyMessage="Runtime readiness is not available yet."
+                    />
+                  </div>
+
+                  <div className="mt-4">
+                    <RuntimeEventContractPanel
+                      contract={runtimeEventContract}
+                      loading={isLoadingRuntimeEventContract}
+                      error={runtimeEventContractNotice}
+                      title="Runtime event contract"
+                      description="Future runtime event metadata is listed here for review only. It does not create events or unlock execution."
+                      emptyMessage="Runtime event contract is not available yet."
                     />
                   </div>
 

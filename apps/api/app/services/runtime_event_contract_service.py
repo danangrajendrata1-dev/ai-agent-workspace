@@ -97,6 +97,24 @@ _EVENT_FIELDS = (
     ),
 )
 
+_FORBIDDEN_FIELDS = (
+    "raw_prompt",
+    "raw_chat_message",
+    "raw_knowledge_content",
+    "raw_provider_response",
+    "raw_tool_output",
+    "raw_webhook_response",
+    "provider_api_key",
+    "credential",
+    "token",
+    "secret",
+    "webhook_url",
+    "request_headers",
+    "response_headers",
+    "arbitrary_url",
+    "stack_trace",
+)
+
 
 def get_runtime_event_contract() -> RuntimeEventContractResponse:
     return RuntimeEventContractResponse(
@@ -106,6 +124,7 @@ def get_runtime_event_contract() -> RuntimeEventContractResponse:
         event_type_values=list(_EVENT_TYPE_VALUES),
         confirmation_state_values=list(_CONFIRMATION_STATE_VALUES),
         event_fields=list(_EVENT_FIELDS),
+        forbidden_fields=list(_FORBIDDEN_FIELDS),
         guard_requirements=[
             "Owner check",
             "Active agent check",

@@ -72,6 +72,7 @@ class RuntimeEventContractResponse(BaseModel):
     event_type_values: list[RuntimeEventType]
     confirmation_state_values: list[RuntimeEventConfirmationState]
     event_fields: list[RuntimeEventFieldResponse]
+    forbidden_fields: list[str]
     guard_requirements: list[str]
     logging_rules: list[str]
     runtime_event_table_enabled: bool

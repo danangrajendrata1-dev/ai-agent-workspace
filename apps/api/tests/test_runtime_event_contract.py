@@ -19,6 +19,7 @@ def test_runtime_event_contract_endpoint_returns_safe_metadata_only(client):
         "event_type_values",
         "confirmation_state_values",
         "event_fields",
+        "forbidden_fields",
         "guard_requirements",
         "logging_rules",
         "runtime_event_table_enabled",
@@ -52,6 +53,24 @@ def test_runtime_event_contract_endpoint_returns_safe_metadata_only(client):
         "denied",
     ]
 
+    assert payload["forbidden_fields"] == [
+        "raw_prompt",
+        "raw_chat_message",
+        "raw_knowledge_content",
+        "raw_provider_response",
+        "raw_tool_output",
+        "raw_webhook_response",
+        "provider_api_key",
+        "credential",
+        "token",
+        "secret",
+        "webhook_url",
+        "request_headers",
+        "response_headers",
+        "arbitrary_url",
+        "stack_trace",
+    ]
+
     event_field_names = [field["name"] for field in payload["event_fields"]]
     assert event_field_names == [
         "event_id",
@@ -70,21 +89,12 @@ def test_runtime_event_contract_endpoint_returns_safe_metadata_only(client):
     ]
 
     forbidden_tokens = [
-        "raw_prompt",
-        "raw_chat_message",
-        "raw_knowledge_content",
-        "raw_provider_response",
-        "raw_tool_output",
-        "raw_webhook_response",
-        "provider_api_key",
-        "credential",
-        "token",
-        "secret",
-        "webhook_url",
-        "request_headers",
-        "response_headers",
-        "arbitrary_url",
-        "stack_trace",
+        "http://",
+        "https://",
+        "internal url",
+        "password=",
+        "api key=",
+        "database url=",
     ]
     payload_text = str(payload).lower()
     for token in forbidden_tokens:

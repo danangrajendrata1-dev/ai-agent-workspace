@@ -252,6 +252,10 @@ export function getRuntimeReadiness(options) {
   return get("/runtime/readiness", options);
 }
 
+export function getRuntimeEventContract(options) {
+  return get("/runtime/event-contract", options);
+}
+
 export function executeWorkflowTemplate(templateId, payload) {
   ensureIdentifier(templateId, "template");
   return post(`/workflows/execute/${templateId}`, payload);

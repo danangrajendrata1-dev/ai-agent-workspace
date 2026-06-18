@@ -15,6 +15,7 @@ Private single-user workspace for creating and managing AI agents.
 - Read-only Safety Center summaries
 - Runtime boundary freeze documentation
 - Agent runtime readiness design
+- Runtime event contract visibility
 - Import Skill preview-only
 - GitHub Skill Import preview may fetch text from GitHub, but it stays review-only and non-executable
 - n8n workflow preview-only
