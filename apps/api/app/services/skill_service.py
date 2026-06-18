@@ -490,6 +490,8 @@ def list_active_agent_skills(
     github_import_index = _load_github_import_index(db, owner_id=owner_id)
     active_assignments = []
     for assignment in assignments:
+        if getattr(assignment, "agent_id", None) != agent.id:
+            continue
         if not assignment.is_enabled:
             continue
         skill = assignment.skill

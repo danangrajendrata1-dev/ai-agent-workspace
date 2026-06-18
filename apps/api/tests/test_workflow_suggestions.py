@@ -61,6 +61,35 @@ def build_workflow_skill(*, title: str, content: str = "Workflow skill content."
     )
 
 
+def build_imported_workflow_skill(*, title: str, content: str = "Workflow skill content.", status: str = "active"):
+    assignment = build_workflow_skill(title=title, content=content)
+    assignment.skill.source_type = "github"
+    assignment.skill.source_id = uuid.uuid4()
+    assignment.skill.status = status
+    assignment.skill.risk_level = "low"
+    assignment.skill.created_at = datetime.now(UTC)
+    assignment.skill.updated_at = assignment.skill.created_at
+    return assignment
+
+
+def build_github_import_record(*, import_id: uuid.UUID, owner_id: uuid.UUID, status: str = "imported", content_preview: str):
+    now = datetime.now(UTC)
+    return SimpleNamespace(
+        id=import_id,
+        owner_id=owner_id,
+        repo_url="https://github.com/example/repo",
+        branch="main",
+        commit_sha="abc123",
+        import_type="skill",
+        file_path="skills/workflow/SKILL.md",
+        content_preview=content_preview,
+        status=status,
+        review_notes=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def build_prompt_skill(*, title: str = "Prompt Skill"):
     skill_id = uuid.uuid4()
     skill = SimpleNamespace(
@@ -186,6 +215,210 @@ def test_workflow_suggestions_helper_returns_executable_match_when_binding_and_c
     assert suggestion.consent_required is False
     assert suggestion.binding_exists is True
     assert suggestion.execution_available is True
+
+
+def test_workflow_suggestions_helper_returns_match_for_imported_workflow_skill():
+    db = build_db()
+    user = build_user()
+    agent = build_agent(user.id)
+    assignment = build_imported_workflow_skill(title="PDF Generator", content="Generate PDF files from task text.")
+    assignment.agent_id = agent.id
+    binding = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        skill_id=assignment.skill_id,
+        template_id="generate_pdf",
+        template_version="1.0",
+        created_at=datetime.now(UTC),
+    )
+    consent = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        template_id="generate_pdf",
+        template_version="1.0",
+        consented_at=datetime.now(UTC),
+    )
+    github_import = build_github_import_record(
+        import_id=assignment.skill.source_id,
+        owner_id=user.id,
+        status="imported",
+        content_preview="Workflow instruction to generate PDF files from task text.",
+    )
+
+    with patch("app.services.skill_service.agent_repository.get_by_id", return_value=agent), patch(
+        "app.services.skill_service.agent_skill_repository.list_agent_skills",
+        return_value=[assignment],
+    ), patch(
+        "app.services.skill_service.github_import_repository.list_imports",
+        return_value=[github_import],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_skill_binding_repository.list_bindings",
+        return_value=[binding],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_consent_repository.list_consents",
+        return_value=[consent],
+    ), patch_template_registry():
+        suggestions = get_workflow_suggestions_for_agent(
+            db,
+            user=user,
+            agent_id=agent.id,
+            task_text="Please generate a PDF for the report",
+        )
+
+    assert len(suggestions) == 1
+    suggestion = suggestions[0]
+    assert suggestion.template_id == "generate_pdf"
+    assert suggestion.skill_id == str(assignment.skill_id)
+    assert suggestion.execution_available is True
+
+
+def test_workflow_suggestions_helper_ignores_non_approved_imported_workflow_skill():
+    db = build_db()
+    user = build_user()
+    agent = build_agent(user.id)
+    assignment = build_imported_workflow_skill(title="PDF Generator", content="Generate PDF files from task text.")
+    assignment.agent_id = agent.id
+
+    for import_status in ("preview", "rejected", "disabled"):
+        github_import = build_github_import_record(
+            import_id=assignment.skill.source_id,
+            owner_id=user.id,
+            status=import_status,
+            content_preview="Workflow instruction to generate PDF files from task text.",
+        )
+        with patch("app.services.skill_service.agent_repository.get_by_id", return_value=agent), patch(
+            "app.services.skill_service.agent_skill_repository.list_agent_skills",
+            return_value=[assignment],
+        ), patch(
+            "app.services.skill_service.github_import_repository.list_imports",
+            return_value=[github_import],
+        ), patch(
+            "app.services.workflow_suggestion_service.workflow_skill_binding_repository.list_bindings",
+            return_value=[],
+        ), patch(
+            "app.services.workflow_suggestion_service.workflow_consent_repository.list_consents",
+            return_value=[],
+        ), patch_template_registry():
+            suggestions = get_workflow_suggestions_for_agent(
+                db,
+                user=user,
+                agent_id=agent.id,
+                task_text="Please generate a PDF for the report",
+            )
+
+        assert suggestions == []
+
+
+def test_workflow_suggestions_helper_ignores_non_workflow_skill_types():
+    db = build_db()
+    user = build_user()
+    agent = build_agent(user.id)
+    prompt_skill = build_prompt_skill(title="Prompt Skill")
+    knowledge_skill = build_workflow_skill(title="Knowledge Skill", content="Knowledge content.")
+    knowledge_skill.skill.skill_type = "knowledge_skill"
+    tool_skill = build_workflow_skill(title="Tool Skill", content="Tool content.")
+    tool_skill.skill.skill_type = "tool_skill"
+
+    with patch("app.services.skill_service.agent_repository.get_by_id", return_value=agent), patch(
+        "app.services.skill_service.agent_skill_repository.list_agent_skills",
+        return_value=[prompt_skill, knowledge_skill, tool_skill],
+    ), patch(
+        "app.services.skill_service.github_import_repository.list_imports",
+        return_value=[],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_skill_binding_repository.list_bindings",
+        return_value=[],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_consent_repository.list_consents",
+        return_value=[],
+    ), patch_template_registry():
+        suggestions = get_workflow_suggestions_for_agent(
+            db,
+            user=user,
+            agent_id=agent.id,
+            task_text="Please generate a PDF for the report",
+        )
+
+    assert suggestions == []
+
+
+def test_workflow_suggestions_helper_ignores_imported_workflow_skill_from_other_owner():
+    db = build_db()
+    user = build_user()
+    other_owner = build_user()
+    agent = build_agent(user.id)
+    assignment = build_imported_workflow_skill(title="PDF Generator", content="Generate PDF files from task text.")
+    assignment.agent_id = agent.id
+    github_import = build_github_import_record(
+        import_id=assignment.skill.source_id,
+        owner_id=other_owner.id,
+        status="imported",
+        content_preview="Workflow instruction to generate PDF files from task text.",
+    )
+
+    def fake_list_imports(_db, owner_id=None):
+        if owner_id == user.id:
+            return []
+        return [github_import]
+
+    with patch("app.services.skill_service.agent_repository.get_by_id", return_value=agent), patch(
+        "app.services.skill_service.agent_skill_repository.list_agent_skills",
+        return_value=[assignment],
+    ), patch(
+        "app.services.skill_service.github_import_repository.list_imports",
+        side_effect=fake_list_imports,
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_skill_binding_repository.list_bindings",
+        return_value=[],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_consent_repository.list_consents",
+        return_value=[],
+    ), patch_template_registry():
+        suggestions = get_workflow_suggestions_for_agent(
+            db,
+            user=user,
+            agent_id=agent.id,
+            task_text="Please generate a PDF for the report",
+        )
+
+    assert suggestions == []
+
+
+def test_workflow_suggestions_helper_ignores_imported_workflow_skill_attached_to_other_agent():
+    db = build_db()
+    user = build_user()
+    agent = build_agent(user.id)
+    other_agent = build_agent(user.id)
+    assignment = build_imported_workflow_skill(title="PDF Generator", content="Generate PDF files from task text.")
+    assignment.agent_id = other_agent.id
+    github_import = build_github_import_record(
+        import_id=assignment.skill.source_id,
+        owner_id=user.id,
+        status="imported",
+        content_preview="Workflow instruction to generate PDF files from task text.",
+    )
+
+    with patch("app.services.skill_service.agent_repository.get_by_id", return_value=agent), patch(
+        "app.services.skill_service.agent_skill_repository.list_agent_skills",
+        return_value=[assignment],
+    ), patch(
+        "app.services.skill_service.github_import_repository.list_imports",
+        return_value=[github_import],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_skill_binding_repository.list_bindings",
+        return_value=[],
+    ), patch(
+        "app.services.workflow_suggestion_service.workflow_consent_repository.list_consents",
+        return_value=[],
+    ), patch_template_registry():
+        suggestions = get_workflow_suggestions_for_agent(
+            db,
+            user=user,
+            agent_id=agent.id,
+            task_text="Please generate a PDF for the report",
+        )
+
+    assert suggestions == []
 
 
 def test_workflow_suggestions_helper_marks_missing_consent_as_unavailable():
