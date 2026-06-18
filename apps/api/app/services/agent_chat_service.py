@@ -119,15 +119,50 @@ def _load_provider_configuration(db: Session, *, owner_id: uuid.UUID) -> tuple[s
     return provider, setting.preferred_model
 
 
-def _load_github_import_data(db: Session, skill) -> dict | None:
+def _load_github_import_data(
+    db: Session,
+    skill,
+    *,
+    owner_id: uuid.UUID | None = None,
+) -> dict | None:
     if getattr(skill, "source_type", None) != "github" or getattr(skill, "source_id", None) is None:
         return None
 
-    github_import = github_import_repository.get_by_id(db, skill.source_id)
+    if owner_id is None:
+        github_import = github_import_repository.get_by_id(db, skill.source_id)
+    else:
+        github_import = github_import_repository.get_by_id_for_owner(db, skill.source_id, owner_id)
     if github_import is None:
         return None
 
     return serialize_github_import(github_import).model_dump()
+
+
+def _is_chat_eligible_skill(
+    skill,
+    *,
+    skill_type: str,
+    github_import_data: dict | None,
+) -> bool:
+    if skill is None or getattr(skill, "deleted_at", None) is not None:
+        return False
+
+    if getattr(skill, "status", None) == "disabled":
+        return False
+
+    if skill_type not in {"prompt_skill", "knowledge_skill"}:
+        return False
+
+    source_type = getattr(skill, "source_type", None)
+    skill_status = getattr(skill, "status", None)
+
+    if source_type == "github":
+        import_status = None
+        if github_import_data is not None:
+            import_status = github_import_data.get("import_status") or github_import_data.get("status")
+        return import_status == "imported"
+
+    return skill_status == "active"
 
 
 def _infer_skill_type(skill, github_import_data: dict | None) -> str:
@@ -203,7 +238,12 @@ def _extract_latest_user_message_content(messages) -> str:
     return ""
 
 
-def _load_active_skill_context_entries(db: Session, *, agent_id: uuid.UUID) -> tuple[list[dict], list[str]]:
+def _load_active_skill_context_entries(
+    db: Session,
+    *,
+    owner_id: uuid.UUID,
+    agent_id: uuid.UUID,
+) -> tuple[list[dict], list[str]]:
     assignments = agent_skill_repository.list_agent_skills(db, agent_id)
     entries: list[dict] = []
     warnings: list[str] = []
@@ -212,12 +252,10 @@ def _load_active_skill_context_entries(db: Session, *, agent_id: uuid.UUID) -> t
         skill = assignment.skill
         if not assignment.is_enabled or skill is None:
             continue
-        if skill.deleted_at is not None or skill.status != "active":
-            continue
 
-        github_import_data = _load_github_import_data(db, skill)
+        github_import_data = _load_github_import_data(db, skill, owner_id=owner_id)
         skill_type = _infer_skill_type(skill, github_import_data)
-        if skill_type not in {"prompt_skill", "knowledge_skill"}:
+        if not _is_chat_eligible_skill(skill, skill_type=skill_type, github_import_data=github_import_data):
             continue
 
         title = _extract_skill_title(skill)
@@ -568,7 +606,11 @@ def chat_with_agent(
 
     normalized_messages = [message.model_dump() for message in payload.messages]
     latest_user_message_text = _extract_latest_user_message_content(payload.messages)
-    active_skill_entries, warnings = _load_active_skill_context_entries(db, agent_id=agent.id)
+    active_skill_entries, warnings = _load_active_skill_context_entries(
+        db,
+        owner_id=owner_id,
+        agent_id=agent.id,
+    )
     system_prompt, prompt_skills_used = _compile_prompt_system_prompt(active_skill_entries)
     knowledge_context, knowledge_skills_used, knowledge_truncated = _build_knowledge_context(
         active_skill_entries
