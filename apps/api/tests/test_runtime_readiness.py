@@ -27,6 +27,7 @@ def test_runtime_readiness_endpoint_returns_safe_metadata_only(client):
     assert payload["model_raw_generation_enabled"] is False
     assert payload["requires_future_safety_review"] is True
     assert payload["docs_path"] == "docs/agent-runtime-readiness.md"
+    assert "execution_available" not in payload
     assert "secret" not in payload["message"].lower()
     assert "http://" not in payload["docs_path"].lower()
     assert "https://" not in payload["docs_path"].lower()

@@ -32,6 +32,20 @@ def test_runtime_capabilities_endpoint_returns_safe_metadata_only(client):
         assert item["user_visible"] is True
         assert item["status"] in {"disabled", "suggestion_only", "explicit_confirm", "forbidden"}
 
+    payload_text = str(payload).lower()
+    for token in [
+        "secret",
+        "credential",
+        "api key",
+        "provider key",
+        "webhook url",
+        "raw prompt",
+        "raw provider response",
+        "raw tool output",
+        "raw webhook response",
+    ]:
+        assert token not in payload_text
+
 
 def test_runtime_capability_matrix_marks_expected_states():
     matrix = {item.key: item for item in list_runtime_capabilities()}

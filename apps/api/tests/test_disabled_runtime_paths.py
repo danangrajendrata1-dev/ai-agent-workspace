@@ -53,6 +53,7 @@ def test_tool_execution_stub_is_blocked_and_never_marks_success():
     assert mock_record_tool_call.call_args.kwargs["error_message"] == "Tool execution is disabled in this release."
     assert mock_record_activity.call_args.kwargs["event_type"] == "tool.execution.stubbed"
     assert "success" not in result.model_dump_json().lower()
+    assert "waiting_approval" not in result.model_dump_json().lower()
 
 
 def test_model_router_stub_is_blocked_and_records_no_success():
@@ -91,4 +92,4 @@ def test_model_router_stub_is_blocked_and_records_no_success():
     assert mock_record_model_usage.call_args.kwargs["prompt_tokens"] == 0
     assert mock_record_model_usage.call_args.kwargs["completion_tokens"] == 0
     assert "success" not in result.model_dump_json().lower()
-
+    assert "waiting_approval" not in result.model_dump_json().lower()

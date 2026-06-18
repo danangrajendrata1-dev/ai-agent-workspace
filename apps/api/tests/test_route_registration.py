@@ -46,6 +46,12 @@ EXPECTED_PATHS = {
     "/agents/{agent_id}/skills/imported/{skill_id}",
 }
 
+EXPECTED_RUNTIME_PATHS = {
+    "/runtime/capabilities",
+    "/runtime/readiness",
+    "/runtime/event-contract",
+}
+
 
 def test_openapi_schema_loads(client):
     response = client.get("/openapi.json")
@@ -70,3 +76,14 @@ def test_runtime_execute_route_is_not_registered(client):
     paths = set(payload["paths"].keys())
 
     assert "/runtime/execute" not in paths
+
+
+def test_runtime_routes_remain_read_only_get_only(client):
+    response = client.get("/openapi.json")
+    payload = response.json()
+
+    runtime_paths = {path for path in payload["paths"].keys() if path.startswith("/runtime/")}
+    assert runtime_paths == EXPECTED_RUNTIME_PATHS
+
+    for path in EXPECTED_RUNTIME_PATHS:
+        assert set(payload["paths"][path].keys()) == {"get"}, path

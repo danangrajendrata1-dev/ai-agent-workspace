@@ -87,6 +87,8 @@ def test_runtime_event_contract_endpoint_returns_safe_metadata_only(client):
         "safe_error_code",
         "safe_error_message",
     ]
+    assert set(event_field_names).isdisjoint(payload["forbidden_fields"])
+    assert all(field["name"] not in payload["forbidden_fields"] for field in payload["event_fields"])
 
     forbidden_tokens = [
         "http://",
