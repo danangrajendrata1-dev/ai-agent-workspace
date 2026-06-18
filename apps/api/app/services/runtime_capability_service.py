@@ -78,10 +78,10 @@ _RUNTIME_CAPABILITIES: tuple[dict, ...] = (
     },
     {
         "key": "model_provider.raw_generation",
-        "status": "explicit_confirm",
+        "status": "forbidden",
         "label": "Model provider generation",
-        "description": "Model generation is only triggered by an explicit user request.",
-        "requires_confirmation": True,
+        "description": "Model generation is blocked in this release.",
+        "requires_confirmation": False,
         "user_visible": True,
     },
     {

@@ -9,6 +9,7 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import AgentChatPanel from "../../components/AgentChatPanel";
 import WorkspaceChatPanel from "../../components/WorkspaceChatPanel";
+import RuntimeCapabilityPanel from "../../components/RuntimeCapabilityPanel";
 import WorkflowToolsPanel from "../../components/WorkflowToolsPanel";
 import {
   approveGithubSkillImport,
@@ -25,6 +26,7 @@ import {
   getHandoffDrafts,
   getPendingApprovals,
   getModelProviders,
+  getRuntimeCapabilities,
   getTasks,
   getSkills,
   getSkillLibrary,
@@ -276,6 +278,18 @@ function buildProviderViewModel(provider, index) {
     providerType: provider?.provider_type || "api",
     status: provider?.status || "inactive",
     defaultModel: provider?.default_model || ""
+  };
+}
+
+function buildRuntimeCapabilityViewModel(capability) {
+  return {
+    id: String(capability?.key || ""),
+    key: capability?.key || "",
+    label: capability?.label || capability?.key || "Unknown capability",
+    status: capability?.status || "disabled",
+    description: capability?.description || "",
+    requiresConfirmation: Boolean(capability?.requires_confirmation),
+    userVisible: Boolean(capability?.user_visible)
   };
 }
 
@@ -640,6 +654,9 @@ export default function DashboardPage() {
   const [pendingApprovalSummaries, setPendingApprovalSummaries] = useState([]);
   const [isLoadingPendingApprovalSummaries, setIsLoadingPendingApprovalSummaries] = useState(true);
   const [pendingApprovalSummariesNotice, setPendingApprovalSummariesNotice] = useState("");
+  const [runtimeCapabilities, setRuntimeCapabilities] = useState([]);
+  const [isLoadingRuntimeCapabilities, setIsLoadingRuntimeCapabilities] = useState(true);
+  const [runtimeCapabilitiesNotice, setRuntimeCapabilitiesNotice] = useState("");
   const [activeAgentDetail, setActiveAgentDetail] = useState(null);
   const [isLoadingActiveAgentDetail, setIsLoadingActiveAgentDetail] = useState(true);
   const [activeAgentDetailNotice, setActiveAgentDetailNotice] = useState("");
@@ -812,7 +829,8 @@ export default function DashboardPage() {
         getSkills(),
         getSkillLibrary(),
         getModelProviders(),
-        getHandoffDrafts({ query: { limit: 20, offset: 0 } })
+        getHandoffDrafts({ query: { limit: 20, offset: 0 } }),
+        getRuntimeCapabilities()
       ]);
 
       if (!isMounted) {
@@ -825,7 +843,8 @@ export default function DashboardPage() {
         skillsResult,
         skillLibraryResult,
         providersResult,
-        handoffDraftsResult
+        handoffDraftsResult,
+        runtimeCapabilitiesResult
       ] = results;
       const currentUser =
         currentUserResult.status === "fulfilled" ? currentUserResult.value : null;
@@ -891,6 +910,18 @@ export default function DashboardPage() {
         setSelectedHandoffDraftId("");
       }
       setIsLoadingHandoffDrafts(false);
+
+      if (runtimeCapabilitiesResult.status === "fulfilled") {
+        const nextCapabilities = normalizeCollection(runtimeCapabilitiesResult.value)
+          .map(buildRuntimeCapabilityViewModel)
+          .filter((item) => item.userVisible);
+        setRuntimeCapabilities(nextCapabilities);
+        setRuntimeCapabilitiesNotice("");
+      } else {
+        setRuntimeCapabilities([]);
+        setRuntimeCapabilitiesNotice("Runtime capability matrix unavailable.");
+      }
+      setIsLoadingRuntimeCapabilities(false);
 
       if (currentUser?.role === "admin" || (currentUser?.subscription_plan || "free") !== "free") {
         await loadSavedWorkflows({
@@ -3874,6 +3905,17 @@ export default function DashboardPage() {
                     <div className="mt-3 inline-flex rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-xs font-medium text-[#A36A58]">
                       Preview only
                     </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <RuntimeCapabilityPanel
+                      capabilities={runtimeCapabilities}
+                      loading={isLoadingRuntimeCapabilities}
+                      error={runtimeCapabilitiesNotice}
+                      title="Runtime capability matrix"
+                      description="Read-only safety metadata from the backend. It does not unlock execution or bypass validation."
+                      emptyMessage="No user-visible runtime capabilities are available yet."
+                    />
                   </div>
                 </div>
 

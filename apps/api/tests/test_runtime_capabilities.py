@@ -51,6 +51,8 @@ def test_runtime_capability_matrix_marks_expected_states():
     assert matrix["user_supplied_webhook.execution"].status == "forbidden"
     assert matrix["oauth.connection"].status == "forbidden"
     assert matrix["payment.billing"].status == "forbidden"
+    assert matrix["model_provider.raw_generation"].status == "forbidden"
+    assert matrix["model_provider.raw_generation"].requires_confirmation is False
 
     assert matrix["workflow.execution_history"].status == "disabled"
     assert matrix["workflow.execution_history"].requires_confirmation is False
