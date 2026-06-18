@@ -10,6 +10,7 @@ EXPECTED_PATHS = {
     "/providers/test-connection",
     "/runtime/capabilities",
     "/runtime/readiness",
+    "/runtime/event-contract",
     "/agents",
     "/agents/task-draft",
     "/agents/{agent_id}/chat",
