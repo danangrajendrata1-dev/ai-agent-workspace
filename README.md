@@ -13,6 +13,7 @@ Private single-user workspace for creating and managing AI agents.
 - Pinned and active agents in localStorage
 - Draft-only command input
 - Read-only Safety Center summaries
+- Runtime boundary freeze documentation
 - Import Skill preview-only
 - GitHub Skill Import preview may fetch text from GitHub, but it stays review-only and non-executable
 - n8n workflow preview-only
