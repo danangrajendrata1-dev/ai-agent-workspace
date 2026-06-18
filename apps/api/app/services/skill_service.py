@@ -59,6 +59,24 @@ def _load_github_import_index(
     }
 
 
+def _get_github_import_data_for_skill(
+    skill,
+    github_import_index: dict[str, dict],
+) -> dict | None:
+    if getattr(skill, "source_type", None) != "github" or not getattr(skill, "source_id", None):
+        return None
+
+    return github_import_index.get(str(skill.source_id))
+
+
+def _is_approved_github_import(github_import_data: dict | None) -> bool:
+    if github_import_data is None:
+        return False
+
+    import_status = github_import_data.get("import_status") or github_import_data.get("status")
+    return import_status == "imported"
+
+
 def _resolve_agent_for_skill_action(
     db: Session,
     *,
@@ -477,8 +495,9 @@ def list_active_agent_skills(
         skill = assignment.skill
         if skill is None or skill.deleted_at is not None or skill.status == "disabled":
             continue
-        github_import_data = None
+        github_import_data = _get_github_import_data_for_skill(skill, github_import_index)
         if getattr(skill, "source_type", None) == "github" and getattr(skill, "source_id", None):
-            github_import_data = github_import_index.get(str(skill.source_id))
+            if not _is_approved_github_import(github_import_data):
+                continue
         active_assignments.append(serialize_assignment(assignment, github_import_data))
     return active_assignments

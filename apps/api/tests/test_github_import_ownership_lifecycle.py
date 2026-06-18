@@ -13,7 +13,7 @@ from app.services.github_import_service import (
     preview_github_skill,
     reject_github_import,
 )
-from app.services.skill_service import attach_imported_skill_to_agent
+from app.services.skill_service import attach_imported_skill_to_agent, list_active_agent_skills
 
 
 def build_agent(owner_id: uuid.UUID):
@@ -57,7 +57,13 @@ def build_skill(*, source_id: uuid.UUID, status: str = "inactive"):
     )
 
 
-def build_import_record(*, import_id: uuid.UUID, owner_id: uuid.UUID, status: str = "preview"):
+def build_import_record(
+    *,
+    import_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    status: str = "preview",
+    file_path: str = "skills/example/SKILL.md",
+):
     now = datetime.now(UTC)
     return SimpleNamespace(
         id=import_id,
@@ -66,7 +72,7 @@ def build_import_record(*, import_id: uuid.UUID, owner_id: uuid.UUID, status: st
         branch="main",
         commit_sha=None,
         import_type="skill",
-        file_path="skills/example/SKILL.md",
+        file_path=file_path,
         content_preview='{"name":"Email Summary","version":"1.0.0","description":"Generate summary."}',
         status=status,
         review_notes=None,
@@ -367,6 +373,43 @@ class GitHubImportOwnershipLifecycleTest(unittest.TestCase):
         self.assertTrue(result.is_enabled)
         self.assertEqual(result.skill.import_status, "imported")
 
+    def test_collection_imported_skill_can_be_attached(self):
+        github_import = build_import_record(
+            import_id=self.import_id,
+            owner_id=self.owner_id,
+            status="imported",
+            file_path="skills/pdf/SKILL.md",
+        )
+        assignment = build_assignment(self.agent.id, self.skill)
+
+        with patch(
+            "app.services.skill_service.agent_repository.get_by_id",
+            return_value=self.agent,
+        ), patch(
+            "app.services.skill_service.skill_repository.get_by_id",
+            return_value=self.skill,
+        ), patch(
+            "app.services.skill_service.github_import_repository.get_by_id_for_owner",
+            return_value=github_import,
+        ), patch(
+            "app.services.skill_service.agent_skill_repository.get_assignment",
+            side_effect=[None, assignment],
+        ), patch(
+            "app.services.skill_service.agent_skill_repository.assign_skill_to_agent",
+            return_value=assignment,
+        ):
+            result = attach_imported_skill_to_agent(
+                self.db,
+                owner_id=self.owner_id,
+                agent_id=self.agent.id,
+                skill_id=self.skill.id,
+                current_user=SimpleNamespace(role="user"),
+            )
+
+        self.assertTrue(result.is_enabled)
+        self.assertEqual(result.skill.import_status, "imported")
+        self.assertEqual(result.skill.file_path, "skills/pdf/SKILL.md")
+
     def test_other_owner_import_cannot_be_attached(self):
         with patch(
             "app.services.skill_service.agent_repository.get_by_id",
@@ -389,6 +432,33 @@ class GitHubImportOwnershipLifecycleTest(unittest.TestCase):
 
         self.assertEqual(exc_info.exception.status_code, 400)
         self.assertIn("metadata", str(exc_info.exception.detail).lower())
+
+    def test_non_approved_import_is_not_returned_in_active_skills(self):
+        github_import = build_import_record(
+            import_id=self.import_id,
+            owner_id=self.owner_id,
+            status="preview",
+        )
+        assignment = build_assignment(self.agent.id, self.skill)
+
+        with patch(
+            "app.services.skill_service.agent_repository.get_by_id",
+            return_value=self.agent,
+        ), patch(
+            "app.services.skill_service.agent_skill_repository.list_agent_skills",
+            return_value=[assignment],
+        ), patch(
+            "app.services.skill_service.github_import_repository.list_imports",
+            return_value=[github_import],
+        ):
+            result = list_active_agent_skills(
+                self.db,
+                owner_id=self.owner_id,
+                agent_id=self.agent.id,
+                current_user=SimpleNamespace(role="user"),
+            )
+
+        self.assertEqual(result, [])
 
 
 if __name__ == "__main__":
