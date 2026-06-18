@@ -10,6 +10,7 @@ import Sidebar from "../../components/Sidebar";
 import AgentChatPanel from "../../components/AgentChatPanel";
 import WorkspaceChatPanel from "../../components/WorkspaceChatPanel";
 import RuntimeCapabilityPanel from "../../components/RuntimeCapabilityPanel";
+import RuntimeReadinessPanel from "../../components/RuntimeReadinessPanel";
 import WorkflowToolsPanel from "../../components/WorkflowToolsPanel";
 import {
   approveGithubSkillImport,
@@ -26,6 +27,7 @@ import {
   getHandoffDrafts,
   getPendingApprovals,
   getModelProviders,
+  getRuntimeReadiness,
   getRuntimeCapabilities,
   getTasks,
   getSkills,
@@ -654,6 +656,9 @@ export default function DashboardPage() {
   const [pendingApprovalSummaries, setPendingApprovalSummaries] = useState([]);
   const [isLoadingPendingApprovalSummaries, setIsLoadingPendingApprovalSummaries] = useState(true);
   const [pendingApprovalSummariesNotice, setPendingApprovalSummariesNotice] = useState("");
+  const [runtimeReadiness, setRuntimeReadiness] = useState(null);
+  const [isLoadingRuntimeReadiness, setIsLoadingRuntimeReadiness] = useState(true);
+  const [runtimeReadinessNotice, setRuntimeReadinessNotice] = useState("");
   const [runtimeCapabilities, setRuntimeCapabilities] = useState([]);
   const [isLoadingRuntimeCapabilities, setIsLoadingRuntimeCapabilities] = useState(true);
   const [runtimeCapabilitiesNotice, setRuntimeCapabilitiesNotice] = useState("");
@@ -830,6 +835,7 @@ export default function DashboardPage() {
         getSkillLibrary(),
         getModelProviders(),
         getHandoffDrafts({ query: { limit: 20, offset: 0 } }),
+        getRuntimeReadiness(),
         getRuntimeCapabilities()
       ]);
 
@@ -844,6 +850,7 @@ export default function DashboardPage() {
         skillLibraryResult,
         providersResult,
         handoffDraftsResult,
+        runtimeReadinessResult,
         runtimeCapabilitiesResult
       ] = results;
       const currentUser =
@@ -910,6 +917,15 @@ export default function DashboardPage() {
         setSelectedHandoffDraftId("");
       }
       setIsLoadingHandoffDrafts(false);
+
+      if (runtimeReadinessResult.status === "fulfilled") {
+        setRuntimeReadiness(runtimeReadinessResult.value);
+        setRuntimeReadinessNotice("");
+      } else {
+        setRuntimeReadiness(null);
+        setRuntimeReadinessNotice("Runtime readiness unavailable.");
+      }
+      setIsLoadingRuntimeReadiness(false);
 
       if (runtimeCapabilitiesResult.status === "fulfilled") {
         const nextCapabilities = normalizeCollection(runtimeCapabilitiesResult.value)
@@ -3905,6 +3921,17 @@ export default function DashboardPage() {
                     <div className="mt-3 inline-flex rounded-full border border-[rgba(163,106,88,0.2)] bg-[rgba(163,106,88,0.1)] px-3 py-1 text-xs font-medium text-[#A36A58]">
                       Preview only
                     </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <RuntimeReadinessPanel
+                      readiness={runtimeReadiness}
+                      loading={isLoadingRuntimeReadiness}
+                      error={runtimeReadinessNotice}
+                      title="Runtime readiness status"
+                      description="This is a safe preview of future runtime activation requirements. It does not unlock any execution path."
+                      emptyMessage="Runtime readiness is not available yet."
+                    />
                   </div>
 
                   <div className="mt-4">

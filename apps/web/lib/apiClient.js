@@ -248,6 +248,10 @@ export function getRuntimeCapabilities(options) {
   return get("/runtime/capabilities", options);
 }
 
+export function getRuntimeReadiness(options) {
+  return get("/runtime/readiness", options);
+}
+
 export function executeWorkflowTemplate(templateId, payload) {
   ensureIdentifier(templateId, "template");
   return post(`/workflows/execute/${templateId}`, payload);
