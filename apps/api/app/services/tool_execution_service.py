@@ -14,6 +14,9 @@ from app.schemas.tool_execution import ToolExecutionRequest, ToolExecutionRespon
 from app.services import log_service
 
 
+GLOBAL_TOOL_EXECUTION_BLOCK_REASON = "Tool execution is disabled in this release."
+
+
 def validate_tool_permission(
     db: Session,
     *,
@@ -184,85 +187,9 @@ def request_tool_execution_stub(
     agent = permission_result["agent"]
     task = permission_result["task"]
     tool = permission_result["tool"]
-    assignment = permission_result["assignment"]
-    blocked_reason = permission_result["blocked_reason"]
+    blocked_reason = permission_result["blocked_reason"] or GLOBAL_TOOL_EXECUTION_BLOCK_REASON
 
     masked_input_payload = log_service.mask_sensitive_data(payload.input_payload)
-
-    if blocked_reason is not None:
-        tool_call = record_tool_call_stub(
-            db,
-            task_id=task.id,
-            tool_id=tool.id,
-            agent_id=agent.id,
-            input_payload=masked_input_payload,
-            output_payload={"stub": True, "message": blocked_reason},
-            status_value="failed",
-            error_message=blocked_reason,
-        )
-        log_service.record_activity(
-            db,
-            actor_type="agent",
-            actor_id=agent.id,
-            request_id=task.request_id,
-            event_type="tool.execution.blocked",
-            message="Tool execution request was blocked.",
-            metadata_json={"tool_id": str(tool.id), "reason": blocked_reason},
-        )
-        db.commit()
-        db.refresh(tool_call)
-        return ToolExecutionResponse(
-            status="blocked",
-            message="Tool request was blocked.",
-            approval_required=False,
-            approval_request_id=None,
-            tool_call_id=tool_call.id,
-            execution_performed=False,
-            risk_level=tool.risk_level,
-            blocked_reason=blocked_reason,
-        )
-
-    approval_required = should_require_approval(agent=agent, tool=tool, assignment=assignment)
-    if approval_required:
-        approval_request = create_waiting_approval_request(
-            db,
-            task=task,
-            agent=agent,
-            tool=tool,
-            masked_input_payload=masked_input_payload,
-        )
-        tool_call = record_tool_call_stub(
-            db,
-            task_id=task.id,
-            tool_id=tool.id,
-            agent_id=agent.id,
-            input_payload=masked_input_payload,
-            output_payload={"stub": True, "message": "Awaiting owner approval. No tool was executed."},
-            status_value="waiting_approval",
-            error_message=None,
-        )
-        log_service.record_activity(
-            db,
-            actor_type="agent",
-            actor_id=agent.id,
-            request_id=task.request_id,
-            event_type="tool.execution.waiting_approval",
-            message="Tool execution request requires approval.",
-            metadata_json={"tool_id": str(tool.id), "approval_id": str(approval_request.id)},
-        )
-        db.commit()
-        db.refresh(approval_request)
-        db.refresh(tool_call)
-        return ToolExecutionResponse(
-            status="waiting_approval",
-            message="Tool request requires approval. No tool was executed.",
-            approval_required=True,
-            approval_request_id=approval_request.id,
-            tool_call_id=tool_call.id,
-            execution_performed=False,
-            risk_level=tool.risk_level,
-            blocked_reason=None,
-        )
 
     tool_call = record_tool_call_stub(
         db,
@@ -270,9 +197,9 @@ def request_tool_execution_stub(
         tool_id=tool.id,
         agent_id=agent.id,
         input_payload=masked_input_payload,
-        output_payload={"stub": True, "message": "Safe stub only. No real tool was executed."},
-        status_value="success",
-        error_message=None,
+        output_payload={"stub": True, "message": blocked_reason},
+        status_value="blocked",
+        error_message=blocked_reason,
     )
     log_service.record_activity(
         db,
@@ -280,18 +207,22 @@ def request_tool_execution_stub(
         actor_id=agent.id,
         request_id=task.request_id,
         event_type="tool.execution.stubbed",
-        message="Tool execution stub request recorded without real execution.",
-        metadata_json={"tool_id": str(tool.id), "risk_level": tool.risk_level},
+        message="Tool execution request was blocked safely.",
+        metadata_json={
+            "tool_id": str(tool.id),
+            "risk_level": tool.risk_level,
+            "reason": blocked_reason,
+        },
     )
     db.commit()
     db.refresh(tool_call)
     return ToolExecutionResponse(
-        status="success",
-        message="Tool request recorded as a safe stub. No tool was executed.",
+        status="blocked",
+        message="Tool execution is disabled in this release.",
         approval_required=False,
         approval_request_id=None,
         tool_call_id=tool_call.id,
         execution_performed=False,
         risk_level=tool.risk_level,
-        blocked_reason=None,
+        blocked_reason=blocked_reason,
     )
