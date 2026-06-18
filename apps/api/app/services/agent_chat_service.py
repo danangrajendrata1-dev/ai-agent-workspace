@@ -249,6 +249,9 @@ def _load_active_skill_context_entries(
     warnings: list[str] = []
 
     for assignment in assignments:
+        if getattr(assignment, "agent_id", None) != agent_id:
+            continue
+
         skill = assignment.skill
         if not assignment.is_enabled or skill is None:
             continue
