@@ -9,9 +9,7 @@ import ProtectedRoute from "../../components/ProtectedRoute";
 import Sidebar from "../../components/Sidebar";
 import AgentChatPanel from "../../components/AgentChatPanel";
 import WorkspaceChatPanel from "../../components/WorkspaceChatPanel";
-import RuntimeEventContractPanel from "../../components/RuntimeEventContractPanel";
-import RuntimeCapabilityPanel from "../../components/RuntimeCapabilityPanel";
-import RuntimeReadinessPanel from "../../components/RuntimeReadinessPanel";
+import RuntimeSafetyOverview from "../../components/RuntimeSafetyOverview";
 import WorkflowToolsPanel from "../../components/WorkflowToolsPanel";
 import {
   approveGithubSkillImport,
@@ -3940,35 +3938,16 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="mt-4">
-                    <RuntimeReadinessPanel
-                      readiness={runtimeReadiness}
-                      loading={isLoadingRuntimeReadiness}
-                      error={runtimeReadinessNotice}
-                      title="Runtime readiness status"
-                      description="This is a safe preview of future runtime activation requirements. It does not unlock any execution path."
-                      emptyMessage="Runtime readiness is not available yet."
-                    />
-                  </div>
-
-                  <div className="mt-4">
-                    <RuntimeEventContractPanel
-                      contract={runtimeEventContract}
-                      loading={isLoadingRuntimeEventContract}
-                      error={runtimeEventContractNotice}
-                      title="Runtime event contract"
-                      description="Future runtime event metadata is listed here for review only. It does not create events or unlock execution."
-                      emptyMessage="Runtime event contract is not available yet."
-                    />
-                  </div>
-
-                  <div className="mt-4">
-                    <RuntimeCapabilityPanel
+                    <RuntimeSafetyOverview
                       capabilities={runtimeCapabilities}
-                      loading={isLoadingRuntimeCapabilities}
-                      error={runtimeCapabilitiesNotice}
-                      title="Runtime capability matrix"
-                      description="Read-only safety metadata from the backend. It does not unlock execution or bypass validation."
-                      emptyMessage="No user-visible runtime capabilities are available yet."
+                      capabilitiesLoading={isLoadingRuntimeCapabilities}
+                      capabilitiesError={runtimeCapabilitiesNotice}
+                      readiness={runtimeReadiness}
+                      readinessLoading={isLoadingRuntimeReadiness}
+                      readinessError={runtimeReadinessNotice}
+                      contract={runtimeEventContract}
+                      contractLoading={isLoadingRuntimeEventContract}
+                      contractError={runtimeEventContractNotice}
                     />
                   </div>
                 </div>
