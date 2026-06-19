@@ -1,26 +1,51 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import AgentCard from "./AgentCard";
 import { clearToken } from "../lib/auth";
 
 const NAV_ITEMS = [
-  { key: "overview", label: "Command Center / Profile", href: "/dashboard" },
-  { key: "agents", label: "Agents +", href: "/agents" },
-  { key: "skills", label: "Import Skills", href: "/settings" },
-  { key: "settings", label: "Settings", href: "/settings" }
+  { key: "create", label: "Create Agent", href: "/dashboard" },
+  { key: "importSkill", label: "Import Skill", href: "/dashboard" },
+  { key: "librarySkill", label: "Library Skill", href: "/dashboard" },
+  { key: "libraryWorkflow", label: "Library Workflow", href: "/dashboard" },
+  { key: "workflowN8n", label: "Workflow n8n", href: "/dashboard" },
+  { key: "activityLog", label: "Activity Log", href: "/dashboard" }
 ];
 
-export default function Sidebar({
-  activeItem = "overview",
-  onAction,
-  variant = "default",
-  pinnedAgents = [],
-  activeAgentId = null,
-  onPinnedAgentSelect,
-  onPinnedAgentUnpin
-}) {
+function NavBtn({ icon, label, onClick }) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className="w-full text-left"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 12px",
+        borderRadius: 12,
+        width: "100%",
+        textAlign: "left",
+        border: `1px solid ${hovered ? "rgba(90,65,35,0.15)" : "transparent"}`,
+        background: hovered ? "#FDFAF5" : "none",
+        color: hovered ? "#2C2217" : "#5C4E3E",
+        fontSize: 13,
+        cursor: "pointer"
+      }}
+    >
+      <span style={{ color: "#8A7A68", display: "flex" }}>{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+export default function Sidebar({ activeItem = "overview", onAction, variant = "default" }) {
   const router = useRouter();
 
   function handleLogout() {
@@ -39,100 +64,39 @@ export default function Sidebar({
 
   if (variant === "workspace") {
     return (
-      <aside className="w-full shrink-0 border-b border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] lg:h-screen lg:w-72 lg:border-b-0 lg:border-r xl:w-80">
-        <div className="flex h-full min-h-0 flex-col overflow-hidden p-4">
-          <div className="pb-4">
-            <p className="text-[28px] font-semibold tracking-[-0.03em] text-[#3E362E]">Workspace</p>
-            <p className="mt-1 text-sm text-[rgba(62,54,46,0.68)]">Private workspace</p>
+      <aside className="flex w-full shrink-0 flex-col border-b border-[rgba(62,54,46,0.12)] bg-[#EDE6D8] px-4 py-4 lg:sticky lg:top-0 lg:h-[100dvh] lg:w-[196px] lg:border-b-0 lg:border-r xl:w-[196px]">
+        <div className="flex items-center gap-3 px-1 pb-5 pt-1">
+          <div className="font-serif text-[22px] italic tracking-[-0.05em] text-[#3E362E]">
+            workspace
           </div>
-
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={() => onAction?.("create")}
-              className="w-full rounded-lg bg-[#A36A58] px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-[#94604f]"
-            >
-              + Create Agent
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onAction?.("skills")}
-              className="w-full rounded-lg border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-left text-sm font-medium text-[#3E362E] transition hover:bg-[#D5CFBF]"
-            >
-              Import Skill
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onAction?.("workflow")}
-              className="w-full rounded-lg border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-left text-sm font-medium text-[#3E362E] transition hover:bg-[#D5CFBF]"
-            >
-              Workflow n8n
-            </button>
+          <div className="flex h-7 w-7 items-center justify-center rounded-full border border-[rgba(163,106,88,0.24)] bg-[#f5e8de] text-[11px] font-semibold text-[#a36a58]">
+            U
           </div>
-
-          <div className="mt-6">
-            <p className="text-xs uppercase tracking-[0.18em] text-[rgba(62,54,46,0.64)]">
-              Active Associates
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-medium text-[#3E362E]">nama user</p>
+            <p className="mt-1 inline-flex rounded-full border border-[rgba(163,106,88,0.18)] bg-[#f7eee4] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[#c28b6c]">
+              free
             </p>
           </div>
+        </div>
 
-          <div className="scrollbar-thin mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
-            <div className="space-y-3">
-              {pinnedAgents.map((agent) => (
-                <div
-                  key={agent.id}
-                  className={`relative rounded-[18px] transition ${
-                    activeAgentId === agent.id
-                      ? "ring-2 ring-[#A36A58] ring-offset-2 ring-offset-[#E5E0D3]"
-                      : ""
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onPinnedAgentUnpin?.(agent.id);
-                    }}
-                    className="absolute right-3 top-3 z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[rgba(62,54,46,0.14)] bg-[#E5E0D3] text-[18px] leading-none text-[rgba(62,54,46,0.72)] transition hover:bg-[#D5CFBF] hover:text-[#3E362E]"
-                    aria-label="Unpin agent"
-                    title="Unpin agent"
-                  >
-                    ×
-                  </button>
-                  <AgentCard
-                    agent={agent}
-                    onSelect={() => onPinnedAgentSelect?.(agent.id)}
-                    onUnpin={() => onPinnedAgentUnpin?.(agent.id)}
-                  />
-                </div>
-              ))}
-              {!pinnedAgents.length ? (
-                <div className="rounded-2xl border border-dashed border-[rgba(62,54,46,0.18)] bg-[#F5F1E6] px-4 py-5 text-sm text-[rgba(62,54,46,0.62)]">
-                  Pin agent dari workspace untuk tampil di sini.
-                </div>
-              ) : null}
-            </div>
-          </div>
+        <nav className="space-y-1.5">
+          {NAV_ITEMS.map((item) => (
+            <NavBtn
+              key={item.key}
+              icon={<span className="text-[16px] leading-none">+</span>}
+              label={item.label}
+              onClick={() => handleItemClick(item)}
+            />
+          ))}
+        </nav>
 
-          <div className="mt-auto space-y-3 pt-5">
-            <button
-              type="button"
-              onClick={() => onAction?.("settings")}
-              className="w-full rounded-lg border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-4 py-3 text-left text-sm font-medium text-[#3E362E] transition hover:bg-[#D5CFBF]"
-            >
-              Settings
-            </button>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="w-full rounded-lg border border-[rgba(62,54,46,0.14)] bg-transparent px-4 py-3 text-left text-sm font-medium text-[rgba(62,54,46,0.72)] transition hover:bg-[#D5CFBF] hover:text-[#3E362E]"
-            >
-              Logout
-            </button>
-          </div>
+        <div className="mt-auto pt-4">
+          <NavBtn
+            icon={<span className="text-[16px] leading-none">{'\u2699'}</span>}
+            label="Settings"
+            onClick={() => handleItemClick({ key: "settings", href: "/dashboard" })}
+          />
         </div>
       </aside>
     );
@@ -157,9 +121,7 @@ export default function Sidebar({
               type="button"
               onClick={() => handleItemClick(item)}
               className={`rounded-2xl px-4 py-3 text-sm transition lg:w-full ${
-                active
-                  ? "bg-[color:var(--accent)] text-white shadow-panel"
-                  : "text-ink hover:bg-white"
+                active ? "bg-[color:var(--accent)] text-white shadow-panel" : "text-ink hover:bg-white"
               }`}
             >
               {item.label}

@@ -69,7 +69,7 @@ export default function FloatingCard({
 
   return (
     <section
-      className={`absolute ${widthClassName} flex max-h-[82vh] flex-col overflow-hidden rounded-[20px] border border-[rgba(62,54,46,0.16)] bg-[#E5E0D3] p-5 shadow-[0_20px_60px_rgba(62,54,46,0.14)]`}
+      className={`fixed ${widthClassName} flex max-h-[82vh] flex-col overflow-hidden rounded-[22px] border border-[rgba(62,54,46,0.14)] bg-[#f4ecdf] shadow-[0_18px_42px_rgba(62,54,46,0.12)]`}
       style={{
         left: position.x,
         top: position.y,
@@ -79,36 +79,43 @@ export default function FloatingCard({
     >
       <div
         onPointerDown={handleDragStart}
-        className="mb-6 flex shrink-0 cursor-grab items-start justify-between gap-4 active:cursor-grabbing"
+        className="flex shrink-0 cursor-grab items-center justify-between gap-4 border-b border-[rgba(62,54,46,0.12)] px-4 py-3 active:cursor-grabbing"
       >
-        <div className="w-full">
-          <div className="mb-4 flex justify-center">
-            <div className="grid grid-cols-6 gap-1.5">
-              {Array.from({ length: 12 }).map((_, index) => (
-                <span key={index} className="h-1.5 w-1.5 rounded-full bg-[rgba(62,54,46,0.35)]" />
-              ))}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span aria-hidden className="grid h-4 w-4 grid-cols-3 gap-[2px] opacity-55">
+              <span className="h-1 w-1 rounded-full bg-[rgba(62,54,46,0.42)]" />
+              <span className="h-1 w-1 rounded-full bg-[rgba(62,54,46,0.42)]" />
+              <span className="h-1 w-1 rounded-full bg-[rgba(62,54,46,0.42)]" />
+              <span className="h-1 w-1 rounded-full bg-[rgba(62,54,46,0.42)]" />
+              <span className="h-1 w-1 rounded-full bg-[rgba(62,54,46,0.42)]" />
+              <span className="h-1 w-1 rounded-full bg-[rgba(62,54,46,0.42)]" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="truncate text-[18px] font-semibold text-[#3E362E]">{title}</h2>
+              {subtitle ? (
+                <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[rgba(62,54,46,0.52)]">
+                  {subtitle}
+                </p>
+              ) : null}
             </div>
           </div>
-          <h2 className="text-[22px] font-semibold text-[#3E362E]">{title}</h2>
-          <p className="mt-1 text-sm leading-6 text-[rgba(62,54,46,0.68)]">{subtitle}</p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-full border border-[rgba(62,54,46,0.14)] bg-[#F5F1E6] px-3 py-1.5 text-xs text-[rgba(62,54,46,0.76)] transition hover:bg-[#D5CFBF]"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[rgba(62,54,46,0.14)] bg-[#f7f0e1] text-[16px] leading-none text-[rgba(62,54,46,0.68)] transition hover:bg-[#efe2cf]"
         >
           x
         </button>
       </div>
 
-      <div className={`scrollbar-thin min-h-0 flex-1 overflow-y-auto pr-1 ${bodyClassName}`}>
+      <div className={`scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-4 ${bodyClassName}`}>
         {children}
       </div>
 
       {footer ? (
-        <div className="mt-5 shrink-0 border-t border-[rgba(62,54,46,0.12)] pt-4">
-          {footer}
-        </div>
+        <div className="shrink-0 border-t border-[rgba(62,54,46,0.12)] px-4 py-4">{footer}</div>
       ) : null}
     </section>
   );
