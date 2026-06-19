@@ -13,6 +13,7 @@ from app.schemas.model_provider_setting import (
     ModelProviderSettingsResponse,
     ModelProviderSettingsUpdate,
 )
+from app.services import log_service
 
 
 def serialize_settings(setting) -> ModelProviderSettingsResponse:
@@ -25,6 +26,14 @@ def serialize_settings(setting) -> ModelProviderSettingsResponse:
         created_at=setting.created_at,
         updated_at=setting.updated_at,
     )
+
+
+def _settings_snapshot(setting) -> dict:
+    return {
+        "preferred_provider": setting.preferred_provider,
+        "preferred_model": setting.preferred_model,
+        "connection_status": setting.connection_status,
+    }
 
 
 def get_settings(db: Session, owner_id: uuid.UUID) -> ModelProviderSettingsResponse:
@@ -43,6 +52,7 @@ def update_settings(
     if setting is None:
         setting = model_provider_setting_repository.create_default(db, owner_id)
 
+    before_data = _settings_snapshot(setting)
     update_data = payload.model_dump(exclude_unset=True)
     preferred_provider = update_data.get("preferred_provider", setting.preferred_provider)
     preferred_model = normalize_optional_text(
@@ -68,5 +78,25 @@ def update_settings(
             "preferred_model": preferred_model,
             "connection_status": connection_status,
         },
+    )
+    after_data = _settings_snapshot(setting)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="model_provider_settings.updated",
+        message="Model provider settings updated.",
+        metadata_json=after_data,
+    )
+    log_service.record_audit(
+        db,
+        user_id=owner_id,
+        action="update",
+        entity_type="model_provider_settings",
+        entity_id=setting.id,
+        before_data=before_data,
+        after_data=after_data,
+        ip_address=None,
     )
     return serialize_settings(setting)

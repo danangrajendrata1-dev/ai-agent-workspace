@@ -24,6 +24,7 @@ from app.schemas.agent import (
     AgentResponse,
     AgentUpdate,
 )
+from app.services import log_service
 
 
 def slugify(value: str) -> str:
@@ -63,6 +64,22 @@ def serialize_agent(agent) -> AgentResponse:
 
 def serialize_instruction(instruction) -> AgentInstructionResponse:
     return AgentInstructionResponse.model_validate(instruction)
+
+
+def _agent_snapshot(agent) -> dict:
+    return {
+        "name": agent.name,
+        "slug": agent.slug,
+        "description": agent.description,
+        "role_description": agent.role_description,
+        "default_model_provider_id": str(agent.default_model_provider_id) if agent.default_model_provider_id else None,
+        "default_model_name": agent.default_model_name,
+        "status": agent.status,
+        "max_steps": agent.max_steps,
+        "max_runtime_seconds": agent.max_runtime_seconds,
+        "max_token_budget": agent.max_token_budget,
+        "requires_approval_by_default": agent.requires_approval_by_default,
+    }
 
 
 def enforce_agent_quota(db: Session, *, owner_id: uuid.UUID) -> None:
@@ -120,6 +137,20 @@ def create_agent(db: Session, *, owner_id: uuid.UUID, payload: AgentCreate) -> A
             "is_active": True,
         },
     )
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="agent.created",
+        message="Agent created.",
+        metadata_json={
+            "agent_id": str(agent.id),
+            "slug": agent.slug,
+            "status": agent.status,
+            "default_model_provider_id": str(agent.default_model_provider_id) if agent.default_model_provider_id else None,
+        },
+    )
     db.commit()
     db.refresh(agent)
     return serialize_agent(agent)
@@ -166,7 +197,32 @@ def update_agent(
             current_agent_id=agent.id,
         )
 
+    before_data = _agent_snapshot(agent)
     agent = agent_repository.update(db, agent, update_data)
+    after_data = _agent_snapshot(agent)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="agent.updated",
+        message="Agent updated.",
+        metadata_json={
+            "agent_id": str(agent.id),
+            "slug": agent.slug,
+            "status": agent.status,
+        },
+    )
+    log_service.record_audit(
+        db,
+        user_id=owner_id,
+        action="update",
+        entity_type="agent",
+        entity_id=agent.id,
+        before_data=before_data,
+        after_data=after_data,
+        ip_address=None,
+    )
     db.commit()
     db.refresh(agent)
     return serialize_agent(agent)
@@ -179,7 +235,32 @@ def deactivate_agent(db: Session, *, owner_id: uuid.UUID, agent_id: uuid.UUID) -
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent not found.",
         )
+    before_data = _agent_snapshot(agent)
     agent = agent_repository.soft_delete(db, agent, datetime.now(UTC))
+    after_data = _agent_snapshot(agent)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="agent.deactivated",
+        message="Agent deactivated.",
+        metadata_json={
+            "agent_id": str(agent.id),
+            "slug": agent.slug,
+            "status": agent.status,
+        },
+    )
+    log_service.record_audit(
+        db,
+        user_id=owner_id,
+        action="deactivate",
+        entity_type="agent",
+        entity_id=agent.id,
+        before_data=before_data,
+        after_data=after_data,
+        ip_address=None,
+    )
     db.commit()
     db.refresh(agent)
     return serialize_agent(agent)
@@ -208,6 +289,19 @@ def create_instruction_version(
             "instruction_text": payload.instruction_text,
             "version": version,
             "is_active": True,
+        },
+    )
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="agent.instruction.created",
+        message="Agent instruction version created.",
+        metadata_json={
+            "agent_id": str(agent.id),
+            "instruction_id": str(instruction.id),
+            "version": version,
         },
     )
     db.commit()

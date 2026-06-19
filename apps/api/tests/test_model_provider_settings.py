@@ -69,7 +69,11 @@ class ModelProviderSettingsTest(unittest.TestCase):
         ), patch(
             "app.services.model_provider_settings_service.model_provider_setting_repository.update",
             return_value=saved_setting,
-        ) as mock_update:
+        ) as mock_update, patch(
+            "app.services.model_provider_settings_service.log_service.record_activity"
+        ) as mock_activity, patch(
+            "app.services.model_provider_settings_service.log_service.record_audit"
+        ) as mock_audit:
             result = update_settings(self.db, owner_id=self.owner_id, payload=payload)
 
         self.assertEqual(result.preferred_provider, "openai")
@@ -79,6 +83,11 @@ class ModelProviderSettingsTest(unittest.TestCase):
         self.assertEqual(update_data["preferred_provider"], "openai")
         self.assertEqual(update_data["preferred_model"], "gpt-4o-mini")
         self.assertEqual(update_data["connection_status"], "metadata_configured")
+        self.assertEqual(mock_activity.call_args.kwargs["event_type"], "model_provider_settings.updated")
+        self.assertEqual(mock_activity.call_args.kwargs["actor_id"], self.owner_id)
+        self.assertEqual(mock_audit.call_args.kwargs["action"], "update")
+        self.assertEqual(mock_audit.call_args.kwargs["entity_type"], "model_provider_settings")
+        self.assertNotIn("api_key", str(mock_activity.call_args.kwargs))
 
     def test_invalid_provider_is_rejected(self):
         with self.assertRaises(ValidationError):

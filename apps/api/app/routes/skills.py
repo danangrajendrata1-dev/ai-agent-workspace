@@ -34,7 +34,7 @@ def create_skill(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return skill_service.create_skill(db, payload)
+    return skill_service.create_skill(db, owner_id=current_user.id, payload=payload)
 
 
 @router.get("/skills", response_model=SkillListResponse)
@@ -58,7 +58,7 @@ def update_skill(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return skill_service.update_skill(db, skill_id, payload)
+    return skill_service.update_skill(db, owner_id=current_user.id, skill_id=skill_id, payload=payload)
 
 
 @router.post("/skills/{skill_id}/deactivate", response_model=SkillResponse)
@@ -67,7 +67,7 @@ def deactivate_skill(
     db: Session = Depends(get_db),
     current_user=Depends(require_owner),
 ):
-    return skill_service.deactivate_skill(db, skill_id)
+    return skill_service.deactivate_skill(db, owner_id=current_user.id, skill_id=skill_id)
 
 
 @router.post(

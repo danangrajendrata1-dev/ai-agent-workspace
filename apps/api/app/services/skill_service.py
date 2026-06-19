@@ -17,6 +17,7 @@ from app.schemas.skill import (
 )
 from app.repositories import github_import_repository
 from app.services.github_import_service import serialize_github_import
+from app.services import log_service
 
 
 def slugify(value: str) -> str:
@@ -221,7 +222,20 @@ def serialize_assignment(assignment, github_import_data: dict | None = None) -> 
     )
 
 
-def create_skill(db: Session, payload: SkillCreate) -> SkillResponse:
+def _skill_snapshot(skill) -> dict:
+    return {
+        "name": skill.name,
+        "slug": skill.slug,
+        "description": skill.description,
+        "source_type": skill.source_type,
+        "source_id": str(skill.source_id) if getattr(skill, "source_id", None) else None,
+        "version_label": skill.version_label,
+        "risk_level": skill.risk_level,
+        "status": skill.status,
+    }
+
+
+def create_skill(db: Session, *, owner_id: uuid.UUID, payload: SkillCreate) -> SkillResponse:
     validate_skill_payload(payload.source_type, payload.source_id)
     slug = ensure_unique_slug(db, slug=slugify(payload.slug or payload.name))
 
@@ -229,6 +243,21 @@ def create_skill(db: Session, payload: SkillCreate) -> SkillResponse:
     skill_data["slug"] = slug
 
     skill = skill_repository.create(db, skill_data)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="skill.created",
+        message="Skill created.",
+        metadata_json={
+            "skill_id": str(skill.id),
+            "slug": skill.slug,
+            "source_type": skill.source_type,
+            "risk_level": skill.risk_level,
+            "status": skill.status,
+        },
+    )
     db.commit()
     db.refresh(skill)
     return serialize_skill(skill)
@@ -270,7 +299,7 @@ def get_skill(db: Session, skill_id: uuid.UUID) -> SkillResponse:
     return serialize_skill(skill)
 
 
-def update_skill(db: Session, skill_id: uuid.UUID, payload: SkillUpdate) -> SkillResponse:
+def update_skill(db: Session, *, owner_id: uuid.UUID, skill_id: uuid.UUID, payload: SkillUpdate) -> SkillResponse:
     skill = skill_repository.get_by_id(db, skill_id)
     if skill is None:
         raise HTTPException(
@@ -291,20 +320,74 @@ def update_skill(db: Session, skill_id: uuid.UUID, payload: SkillUpdate) -> Skil
             current_skill_id=skill.id,
         )
 
+    before_data = _skill_snapshot(skill)
     skill = skill_repository.update(db, skill, update_data)
+    after_data = _skill_snapshot(skill)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="skill.updated",
+        message="Skill updated.",
+        metadata_json={
+            "skill_id": str(skill.id),
+            "slug": skill.slug,
+            "source_type": skill.source_type,
+            "risk_level": skill.risk_level,
+            "status": skill.status,
+        },
+    )
+    log_service.record_audit(
+        db,
+        user_id=owner_id,
+        action="update",
+        entity_type="skill",
+        entity_id=skill.id,
+        before_data=before_data,
+        after_data=after_data,
+        ip_address=None,
+    )
     db.commit()
     db.refresh(skill)
     return serialize_skill(skill)
 
 
-def deactivate_skill(db: Session, skill_id: uuid.UUID) -> SkillResponse:
+def deactivate_skill(db: Session, *, owner_id: uuid.UUID, skill_id: uuid.UUID) -> SkillResponse:
     skill = skill_repository.get_by_id(db, skill_id)
     if skill is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Skill not found.",
         )
+    before_data = _skill_snapshot(skill)
     skill = skill_repository.soft_delete(db, skill, datetime.now(UTC))
+    after_data = _skill_snapshot(skill)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="skill.deactivated",
+        message="Skill deactivated.",
+        metadata_json={
+            "skill_id": str(skill.id),
+            "slug": skill.slug,
+            "source_type": skill.source_type,
+            "risk_level": skill.risk_level,
+            "status": skill.status,
+        },
+    )
+    log_service.record_audit(
+        db,
+        user_id=owner_id,
+        action="deactivate",
+        entity_type="skill",
+        entity_id=skill.id,
+        before_data=before_data,
+        after_data=after_data,
+        ip_address=None,
+    )
     db.commit()
     db.refresh(skill)
     return serialize_skill(skill)
@@ -349,6 +432,20 @@ def assign_skill_to_agent(
     if assignment is not None:
         assignment.is_enabled = payload.is_enabled
         db.add(assignment)
+        log_service.record_activity(
+            db,
+            actor_type="user",
+            actor_id=owner_id,
+            request_id=None,
+            event_type="skill.assignment.updated",
+            message="Skill assignment updated.",
+            metadata_json={
+                "agent_id": str(agent.id),
+                "skill_id": str(skill.id),
+                "is_enabled": payload.is_enabled,
+                "source_type": skill.source_type,
+            },
+        )
         db.commit()
         db.refresh(assignment)
         return serialize_assignment(assignment, github_import_data)
@@ -361,9 +458,22 @@ def assign_skill_to_agent(
             "is_enabled": payload.is_enabled,
         },
     )
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="skill.assigned",
+        message="Skill assigned to agent.",
+        metadata_json={
+            "agent_id": str(agent.id),
+            "skill_id": str(skill.id),
+                "is_enabled": payload.is_enabled,
+                "source_type": skill.source_type,
+            },
+        )
     db.commit()
     db.refresh(assignment)
-    assignment = agent_skill_repository.get_assignment(db, agent.id, skill.id)
     return serialize_assignment(assignment, github_import_data)
 
 
@@ -415,6 +525,19 @@ def attach_imported_skill_to_agent(
     if assignment is not None:
         assignment.is_enabled = True
         db.add(assignment)
+        log_service.record_activity(
+            db,
+            actor_type="user",
+            actor_id=owner_id,
+            request_id=None,
+            event_type="skill.imported_attached",
+            message="Imported skill attached to agent.",
+            metadata_json={
+                "agent_id": str(agent.id),
+                "skill_id": str(skill.id),
+                "source_type": skill.source_type,
+            },
+        )
         db.commit()
         db.refresh(assignment)
         return serialize_assignment(assignment, github_import_data)
@@ -427,9 +550,21 @@ def attach_imported_skill_to_agent(
             "is_enabled": True,
         },
     )
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="skill.imported_attached",
+        message="Imported skill attached to agent.",
+        metadata_json={
+            "agent_id": str(agent.id),
+                "skill_id": str(skill.id),
+                "source_type": skill.source_type,
+            },
+        )
     db.commit()
     db.refresh(assignment)
-    assignment = agent_skill_repository.get_assignment(db, agent.id, skill.id)
     return serialize_assignment(assignment, github_import_data)
 
 
@@ -455,6 +590,19 @@ def remove_skill_from_agent(
         )
 
     agent_skill_repository.unassign_skill_from_agent(db, assignment)
+    log_service.record_activity(
+        db,
+        actor_type="user",
+        actor_id=owner_id,
+        request_id=None,
+        event_type="skill.unassigned",
+        message="Skill removed from agent.",
+        metadata_json={
+            "agent_id": str(agent.id),
+            "skill_id": str(skill_id),
+            "source_type": getattr(getattr(assignment, "skill", None), "source_type", None),
+        },
+    )
     db.commit()
 
 
