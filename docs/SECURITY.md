@@ -255,3 +255,17 @@ Rules:
 ## 18. Final Security Rule
 
 Agent boleh berpikir, memilih skill, dan membuat rencana. Agent tidak boleh menjalankan aksi berisiko tanpa permission, approval, dan logging yang jelas.
+
+## 19. Production Security Notes
+
+- Frontend must call only the Cloud Run backend URL configured in `NEXT_PUBLIC_API_BASE_URL`.
+- Backend `CORS_ORIGINS` must be a JSON array of approved frontend origins only.
+- Do not store raw API keys, OAuth tokens, database URLs, or webhook secrets in browser storage.
+- Do not expose raw provider secrets in UI, logs, smoke output, or exported docs.
+- Read-only surfaces for logs, tasks, approvals, audit, and safety must fail closed.
+- Deferred runtime features stay disabled until explicitly implemented and approved:
+  - Real tool execution
+  - Real n8n execution
+  - Real OAuth execution
+  - External model runtime from frontend
+  - Hermes/OpenClaw runtime execution from frontend

@@ -9,7 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.workflow_webhook_client import WebhookCallResult, call_template_webhook
-from app.core.subscription_plans import is_admin_role
+from app.core.subscription_plans import can_access_n8n, is_admin_role
 from app.core.webhook_security import (
     canonicalize_webhook_url,
     sanitize_error_message,
@@ -80,6 +80,17 @@ def _require_owner_access(current_user) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials.")
     if is_admin_role(getattr(current_user, "role", None)):
         return
+
+
+def _require_n8n_access(current_user) -> None:
+    _require_owner_access(current_user)
+    if is_admin_role(getattr(current_user, "role", None)):
+        return
+    if not can_access_n8n(getattr(current_user, "subscription_plan", "free")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your Free plan does not include n8n access. Upgrade to Pro or Executive to save workflows.",
+        )
 
 
 def _load_workflow_template_or_404(template_id: str) -> dict:
@@ -239,7 +250,7 @@ def _get_skill_type_from_assignment(assignment) -> str | None:
 
 
 def list_workflow_templates_for_user(db: Session, *, user) -> list[WorkflowTemplateResponse]:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     templates = get_workflow_templates(include_disabled=True)
     consents = {
         (consent.template_id, consent.template_version): consent
@@ -256,7 +267,7 @@ def list_workflow_templates_for_user(db: Session, *, user) -> list[WorkflowTempl
 
 
 def create_workflow_consent(db: Session, *, user, template_id: str) -> WorkflowConsentResponse:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     _rate_limit_bucket(user.id, "consent", WORKFLOW_CONSENT_RATE_LIMIT_MAX_REQUESTS)
 
     template = _load_workflow_template_or_404(template_id)
@@ -323,7 +334,7 @@ def list_workflow_consents(
     limit: int = 50,
     offset: int = 0,
 ) -> list[WorkflowConsentResponse]:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     safe_limit = min(max(int(limit), 1), 50)
     safe_offset = max(int(offset), 0)
     consents = workflow_consent_repository.list_consents(
@@ -336,7 +347,7 @@ def list_workflow_consents(
 
 
 def revoke_workflow_consent(db: Session, *, user, consent_id: uuid.UUID) -> WorkflowConsentResponse:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     _rate_limit_bucket(user.id, "consent", WORKFLOW_CONSENT_RATE_LIMIT_MAX_REQUESTS)
 
     consent = workflow_consent_repository.get_consent_by_id(
@@ -380,7 +391,7 @@ def create_workflow_skill_binding(
     skill_id: uuid.UUID,
     template_id: str,
 ) -> WorkflowSkillBindingResponse:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     _rate_limit_bucket(user.id, "binding", WORKFLOW_BINDING_RATE_LIMIT_MAX_REQUESTS)
 
     template = _load_workflow_template_or_404(template_id)
@@ -441,13 +452,13 @@ def create_workflow_skill_binding(
 
 
 def list_workflow_skill_bindings(db: Session, *, user) -> list[WorkflowSkillBindingResponse]:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     bindings = workflow_skill_binding_repository.list_bindings(db, user_id=user.id)
     return [_serialize_binding(db, binding) for binding in bindings]
 
 
 def delete_workflow_skill_binding(db: Session, *, user, binding_id: uuid.UUID) -> None:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     _rate_limit_bucket(user.id, "binding", WORKFLOW_BINDING_RATE_LIMIT_MAX_REQUESTS)
 
     binding = workflow_skill_binding_repository.get_binding_by_id(
@@ -487,7 +498,7 @@ def list_workflow_executions(
     limit: int = 50,
     offset: int = 0,
 ) -> list[WorkflowExecutionSummary]:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     _rate_limit_bucket(user.id, "execution_list", WORKFLOW_LIST_RATE_LIMIT_MAX_REQUESTS)
     executions = workflow_execution_repository.list_executions(
         db,
@@ -505,7 +516,7 @@ def list_workflow_execution_history(
     limit: int = 25,
     offset: int = 0,
 ) -> WorkflowExecutionHistoryListResponse:
-    _require_owner_access(user)
+    _require_n8n_access(user)
     safe_limit = min(max(int(limit), 1), 50)
     safe_offset = max(int(offset), 0)
     _rate_limit_bucket(user.id, "execution_history", WORKFLOW_LIST_RATE_LIMIT_MAX_REQUESTS)
@@ -610,7 +621,7 @@ def execute_workflow_template(
 ) -> WorkflowExecutionResponse:
     # This path never trusts frontend suggestion metadata; consent and bindings are
     # revalidated server-side before the webhook is called.
-    _require_owner_access(user)
+    _require_n8n_access(user)
     _rate_limit_bucket(user.id, "execute", WORKFLOW_EXECUTE_RATE_LIMIT_MAX_REQUESTS)
 
     template = _load_workflow_template_or_404(template_id)

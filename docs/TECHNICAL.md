@@ -239,6 +239,12 @@ For the current MVP registry step, `n8n_workflows` is config-only. It stores saf
 | send_telegram_message | Send Telegram message through n8n workflow. | Required. |
 | generate_daily_report | Run report automation. | Optional, depending on configuration. |
 
+Current production status:
+
+- Workflow metadata and approval records may exist.
+- Real execution stays deferred until a later safe implementation.
+- UI must show backend-required or disabled state for any execution path that is not safely shipped.
+
 ## 14. GitHub Skill and Tool Import Design
 
 ### 14.1 GitHub Skill Import
@@ -362,6 +368,47 @@ Do not log plaintext secrets.
 | OpenClaw Gateway | Private VPS/local/private service |
 | Hermes runtime | Backend-integrated service or private runtime service |
 
+Production chain summary:
+
+```txt
+Vercel Next.js frontend
+  -> Cloud Run FastAPI backend
+  -> Neon PostgreSQL
+```
+
+Deployment env notes:
+
+- Frontend: `NEXT_PUBLIC_API_BASE_URL`
+- Backend: `DATABASE_URL`, `JWT_SECRET_KEY`, `CORS_ORIGINS`, `PROVIDER_API_KEY_ENCRYPTION_KEY`
+- `CORS_ORIGINS` must be a JSON array with no trailing slash values.
+- Do not use `BACKEND_CORS_ORIGINS` in production docs or examples.
+
+Cloud Run backend:
+
+- Build from `apps/api`.
+- Run Alembic on the Neon database before release traffic switch.
+- Keep migration execution explicit, not hidden in container startup.
+- Expose `GET /health` for smoke.
+- Keep secrets in Secret Manager or equivalent.
+
+Vercel frontend:
+
+- Build from `apps/web`.
+- Set `NEXT_PUBLIC_API_BASE_URL` to the Cloud Run backend URL.
+- Do not expose backend secrets in frontend env.
+
+Neon migration:
+
+- Back up target state first.
+- Apply Alembic against Neon.
+- Verify schema and route contract after migration.
+- Roll back using previous revision or database restore point if smoke fails.
+
+Smoke and rollback:
+
+- Smoke: auth, agent shell, skill preview, provider metadata, read-only logs/tasks/approvals, health, and CORS.
+- Rollback: keep previous backend revision, previous frontend deployment, and a database restore point ready.
+
 ## 20. MVP Implementation Order
 
 1. Create backend foundation with FastAPI and Python.
@@ -382,3 +429,11 @@ Do not log plaintext secrets.
 Phase 2 documentation planning is temporarily complete after Step 65. Future documentation changes should be tied to real implementation changes, safety findings, or user-approved scope changes.
 
 Commit and push are manual checkpoints and must not be counted as separate numbered feature steps.
+
+Deferred production features:
+
+- Real tool execution.
+- Real n8n execution unless safely implemented and approved.
+- Real OAuth execution unless fully implemented.
+- External model runtime from frontend.
+- Hermes/OpenClaw runtime execution from frontend.

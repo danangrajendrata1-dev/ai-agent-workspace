@@ -16,6 +16,33 @@ SECRET_VALUE_PATTERNS = [
     r"(?i)^bearer\s+.+",
     r"(?i)\bsk-[A-Za-z0-9_\-]+\b",
 ]
+SECRET_TEXT_PATTERNS = SECRET_VALUE_PATTERNS + [
+    r"(?i)\bapi[_-]?key\b",
+    r"(?i)\bsecret\b",
+    r"(?i)\btoken\b",
+    r"(?i)\bpassword\b",
+    r"(?i)\bauthorization\b",
+    r"(?i)\bcredential\b",
+    r"(?i)\bdatabase[_-]?url\b",
+    r"(?i)\bbearer\b",
+]
+
+
+def redact_sensitive_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    cleaned = " ".join(str(value).split())
+    if not cleaned:
+        return cleaned
+
+    if any(re.search(pattern, cleaned) for pattern in SECRET_TEXT_PATTERNS):
+        return "Sensitive content redacted."
+
+    if len(cleaned) > 500:
+        cleaned = cleaned[:500].rstrip() + "..."
+
+    return cleaned
 
 
 def mask_sensitive_data(value):
@@ -32,10 +59,11 @@ def mask_sensitive_data(value):
     if isinstance(value, list):
         return [mask_sensitive_data(item) for item in value]
 
+    if isinstance(value, tuple):
+        return tuple(mask_sensitive_data(item) for item in value)
+
     if isinstance(value, str):
-        if any(re.search(pattern, value) for pattern in SECRET_VALUE_PATTERNS):
-            return "***"
-        return value
+        return redact_sensitive_text(value)
 
     return value
 
@@ -47,7 +75,7 @@ def serialize_activity_log(log) -> ActivityLogResponse:
         actor_type=log.actor_type,
         actor_id=log.actor_id,
         event_type=log.event_type,
-        message=log.message,
+        message=redact_sensitive_text(log.message) or "",
         metadata=mask_sensitive_data(log.metadata_json),
         created_at=log.created_at,
     )
@@ -77,7 +105,7 @@ def serialize_tool_call(log) -> ToolCallResponse:
         output_payload=mask_sensitive_data(log.output_payload),
         status=log.status,
         latency_ms=log.latency_ms,
-        error_message=log.error_message,
+        error_message=redact_sensitive_text(log.error_message),
         created_at=log.created_at,
     )
 
@@ -94,13 +122,14 @@ def serialize_model_usage_log(log) -> ModelUsageLogResponse:
         estimated_cost=log.estimated_cost,
         latency_ms=log.latency_ms,
         status=log.status,
-        error_message=log.error_message,
+        error_message=redact_sensitive_text(log.error_message),
         created_at=log.created_at,
     )
 
 
 def record_activity(db, **kwargs):
     kwargs["metadata_json"] = mask_sensitive_data(kwargs.get("metadata_json"))
+    kwargs["message"] = redact_sensitive_text(kwargs.get("message")) or ""
     log = log_repository.create_activity_log(db, kwargs)
     return log
 
@@ -115,11 +144,13 @@ def record_audit(db, **kwargs):
 def record_tool_call(db, **kwargs):
     kwargs["input_payload"] = mask_sensitive_data(kwargs.get("input_payload"))
     kwargs["output_payload"] = mask_sensitive_data(kwargs.get("output_payload"))
+    kwargs["error_message"] = redact_sensitive_text(kwargs.get("error_message"))
     log = log_repository.create_tool_call(db, kwargs)
     return log
 
 
 def record_model_usage(db, **kwargs):
+    kwargs["error_message"] = redact_sensitive_text(kwargs.get("error_message"))
     log = log_repository.create_model_usage_log(db, kwargs)
     return log
 

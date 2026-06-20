@@ -1,4 +1,3 @@
-import re
 import uuid
 from datetime import UTC, datetime
 
@@ -14,31 +13,11 @@ from app.schemas.approval import (
 from app.services import log_service
 
 
-SECRET_KEY_PATTERNS = [
-    r"(?i)\bAPI_KEY\b",
-    r"(?i)\bDATABASE_URL\b",
-    r"(?i)\bpassword\b",
-    r"(?i)\bbearer\b",
-    r"(?i)\bsk-[A-Za-z0-9_\-]+\b",
-]
-
-
 def mask_request_payload(payload):
     if payload is None:
         return None
 
-    masked = {}
-    for key, value in payload.items():
-        key_text = str(key)
-        if any(re.search(pattern, key_text) for pattern in SECRET_KEY_PATTERNS):
-            masked[key] = "***"
-            continue
-
-        if isinstance(value, str) and any(re.search(pattern, value) for pattern in SECRET_KEY_PATTERNS):
-            masked[key] = "***"
-        else:
-            masked[key] = value
-    return masked
+    return log_service.mask_sensitive_data(payload)
 
 
 def serialize_approval(approval_request) -> ApprovalRequestResponse:
@@ -47,11 +26,11 @@ def serialize_approval(approval_request) -> ApprovalRequestResponse:
         task_id=approval_request.task_id,
         agent_id=approval_request.agent_id,
         tool_id=approval_request.tool_id,
-        requested_action=approval_request.requested_action,
+        requested_action=log_service.mask_sensitive_data(approval_request.requested_action),
         risk_level=approval_request.risk_level,
         status=approval_request.status,
         request_payload=mask_request_payload(approval_request.request_payload),
-        decision_reason=approval_request.decision_reason,
+        decision_reason=log_service.mask_sensitive_data(approval_request.decision_reason),
         decided_by=approval_request.decided_by,
         decided_at=approval_request.decided_at,
         created_at=approval_request.created_at,

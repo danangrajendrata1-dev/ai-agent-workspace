@@ -196,6 +196,30 @@ export function listWorkflowTemplates() {
   return get("/workflows/templates");
 }
 
+export function listN8nWorkflows(options) {
+  return get("/n8n-workflows", options);
+}
+
+export function createN8nWorkflow(payload, options) {
+  return post("/n8n-workflows", payload, options);
+}
+
+export function updateN8nWorkflow(workflowId, payload, options) {
+  if (!workflowId) {
+    throw new Error("Missing n8n workflow identifier.");
+  }
+
+  return patch(`/n8n-workflows/${workflowId}`, payload, options);
+}
+
+export function deleteN8nWorkflow(workflowId, options) {
+  if (!workflowId) {
+    throw new Error("Missing n8n workflow identifier.");
+  }
+
+  return remove(`/n8n-workflows/${workflowId}`, options);
+}
+
 export function createWorkflowConsent(templateId) {
   ensureIdentifier(templateId, "template");
   return post(`/workflows/consent/${templateId}`);
@@ -354,11 +378,19 @@ export function testProviderConnection(provider, options) {
     throw new Error("Missing model provider identifier.");
   }
 
+  if (!options?.allowUnsafeProviderTest) {
+    throw new Error("test connection not available yet");
+  }
+
   return post("/providers/test-connection", { provider }, options);
 }
 
 export function getActivityLogs(options) {
   return get("/logs/activity", options);
+}
+
+export function getAuditLogs(options) {
+  return get("/logs/audit", options);
 }
 
 export function getTasks(options) {

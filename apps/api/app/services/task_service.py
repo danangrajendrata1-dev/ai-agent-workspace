@@ -9,16 +9,42 @@ from app.services import agent_runtime_service, log_service
 
 
 def serialize_step(step) -> TaskStepResponse:
-    return TaskStepResponse.model_validate(step)
+    return TaskStepResponse(
+        id=step.id,
+        task_id=step.task_id,
+        step_order=step.step_order,
+        step_name=step.step_name,
+        status=step.status,
+        input_summary=log_service.mask_sensitive_data(step.input_summary),
+        output_summary=log_service.mask_sensitive_data(step.output_summary),
+        error_message=log_service.mask_sensitive_data(step.error_message),
+        created_at=step.created_at,
+    )
 
 
 def serialize_task(task) -> TaskResponse:
-    return TaskResponse.model_validate(task)
+    return TaskResponse(
+        id=task.id,
+        request_id=task.request_id,
+        owner_id=task.owner_id,
+        agent_id=task.agent_id,
+        input_text=log_service.mask_sensitive_data(task.input_text),
+        status=task.status,
+        selected_skill_id=task.selected_skill_id,
+        selected_tool_id=task.selected_tool_id,
+        final_response=log_service.mask_sensitive_data(task.final_response),
+        error_message=log_service.mask_sensitive_data(task.error_message),
+        started_at=task.started_at,
+        completed_at=task.completed_at,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
 
 
 def serialize_task_detail(task, steps) -> TaskDetailResponse:
+    task_response = serialize_task(task)
     return TaskDetailResponse(
-        **TaskResponse.model_validate(task).model_dump(),
+        **task_response.model_dump(),
         steps=[serialize_step(step) for step in steps],
     )
 

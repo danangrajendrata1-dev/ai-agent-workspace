@@ -1,7 +1,15 @@
 # Cloud Run Deployment Guide
 
-This repository now includes a Docker deployment foundation for the FastAPI backend.
-Deployment is still manual. Nothing in the container starts a migration or a test run automatically.
+This repository includes a manual deployment path for the FastAPI backend.
+Nothing in the container starts a migration, approval, n8n workflow, tool execution, or test run automatically.
+
+## Production Architecture
+
+```txt
+Vercel Next.js frontend
+  -> Cloud Run FastAPI backend
+  -> Neon PostgreSQL
+```
 
 ## Prerequisites
 
@@ -26,9 +34,14 @@ Set these for Cloud Run:
 
 Important note:
 
-- The current backend config reads `BACKEND_CORS_ORIGINS`.
+- `CORS_ORIGINS` must be a JSON array.
+- Use frontend origins only.
+- Do not include trailing slashes.
+- Do not use `BACKEND_CORS_ORIGINS`.
 - Keep the deployed CORS value aligned with the frontend URL.
-- If you use `CORS_ORIGINS` in your deployment notes, make sure the app is configured with the matching runtime variable it expects.
+- Set `DATABASE_URL` to the Neon production database.
+- Set `JWT_SECRET_KEY` to a production-grade secret.
+- Set `PROVIDER_API_KEY_ENCRYPTION_KEY` before using provider key vault endpoints.
 
 ## Security Notes
 
@@ -48,6 +61,14 @@ Run Alembic manually with a controlled command/environment:
 ```
 
 Keep production migration execution explicit and controlled. Do not hide it in the container `CMD`.
+
+Recommended release order:
+
+1. Deploy backend image to Cloud Run.
+2. Run Alembic against Neon.
+3. Confirm `GET /health` returns `200 OK`.
+4. Update Vercel frontend env if backend URL changed.
+5. Run smoke checklist.
 
 ## Local Docker Example
 
@@ -106,7 +127,63 @@ https://SERVICE-xxxxx-REGION.a.run.app/health
 
 The exact generated URL will differ, so do not assume a fixed suffix.
 
+Health check is the first smoke gate.
+
 ## CORS Note
 
-- After the frontend Vercel URL is known, set the backend CORS origin to that frontend URL.
+- After the frontend Vercel URL is known, set `CORS_ORIGINS` to that frontend URL as a JSON array.
 - For local testing, keep localhost origins only in local environment values.
+
+## Cloud Run Checklist
+
+- Confirm the Cloud Run service points at the correct container image.
+- Confirm `DATABASE_URL` uses the Neon production database.
+- Confirm `JWT_SECRET_KEY` is a production-grade secret.
+- Confirm `PROVIDER_API_KEY_ENCRYPTION_KEY` is present and stable.
+- Confirm `CORS_ORIGINS` contains only the production frontend origin.
+- Confirm the origin value has no trailing slash.
+- Confirm the service has the correct `PORT` handling from Cloud Run.
+- Confirm the backend health endpoint returns `200 OK`.
+- Confirm no secret is printed in build output or logs.
+- Confirm read-only endpoints keep logs, tasks, approvals, and audit data safe.
+
+## Neon Migration Checklist
+
+- Back up the target database state before release.
+- Run Alembic migrations against the Neon database before switching traffic.
+- Verify the migration chain is current.
+- Confirm schema changes match the deployed backend version.
+- Re-check the app after migration for missing tables or broken constraints.
+- Keep a restore point before traffic switch.
+- Roll back the database if the smoke gate fails after migration.
+
+## Production Smoke Checklist
+
+- Open the deployed frontend and confirm the login page loads.
+- Confirm the frontend can call the Cloud Run backend URL.
+- Confirm `GET /health` returns success.
+- Confirm auth still works with the production environment.
+- Confirm no console error about missing environment variables.
+- Confirm the backend accepts the configured CORS origin.
+- Confirm logs, tasks, approvals, and audit endpoints stay read-only.
+- Confirm deferred execution paths stay disabled.
+
+## Rollback Checklist
+
+- Keep the previous backend image available.
+- Keep the previous Neon snapshot or restore point available.
+- Revert the Cloud Run revision to the last known good build if the new one fails.
+- Revert frontend env only if the backend URL changes.
+- Re-run the smoke checklist after rollback.
+- Keep the previous Cloud Run revision available until the new release is proven.
+- Keep a Neon backup or restore point before promotion.
+
+## Deferred Features
+
+These features stay deferred unless a later safe implementation approves them:
+
+- Real tool execution
+- Real n8n execution
+- Real OAuth execution
+- External model runtime from frontend
+- Hermes/OpenClaw runtime execution from frontend

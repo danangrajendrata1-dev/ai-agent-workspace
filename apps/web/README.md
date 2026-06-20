@@ -2,6 +2,14 @@
 
 Frontend for Personal AI Agent Workspace v2.1.
 
+## Production Architecture
+
+```txt
+Vercel Next.js frontend
+  -> Cloud Run FastAPI backend
+  -> Neon PostgreSQL
+```
+
 ## Stack
 
 - Next.js App Router
@@ -30,6 +38,10 @@ Create `.env.local` from `.env.example` and set:
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
+
+In production, set `NEXT_PUBLIC_API_BASE_URL` to the deployed Cloud Run backend URL.
+
+See [VERCEL.md](../../VERCEL.md) for the Vercel deployment checklist.
 
 ## Local Run
 
@@ -62,4 +74,5 @@ npm run build
 
 - `POST /agents` is used only for Create Agent Save.
 - `GET /skills` and `GET /model-providers` are read-only.
-- `GET /logs/activity`, `GET /tasks`, and `GET /approvals/pending` are read-only summaries.
+- `GET /logs/activity`, `GET /logs/audit`, `GET /tasks`, and `GET /approvals/pending` are read-only summaries.
+- See [VERCEL.md](../../VERCEL.md) for frontend deployment and smoke notes.

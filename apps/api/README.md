@@ -2,6 +2,14 @@
 
 Initial FastAPI backend foundation for Personal AI Agent Workspace v2.1.
 
+## Production Architecture
+
+```txt
+Vercel Next.js frontend
+  -> Cloud Run FastAPI backend
+  -> Neon PostgreSQL
+```
+
 ## Setup
 
 ```powershell
@@ -16,9 +24,30 @@ uvicorn app.main:app --reload
 
 See [CLOUD_RUN.md](./CLOUD_RUN.md) for the manual Google Cloud Run deployment package, including Docker build instructions, required environment variables, and migration guidance.
 
+See also [VERCEL.md](../../VERCEL.md) for frontend deployment notes and [docs/QA_PRODUCTION_SMOKE.md](../../docs/QA_PRODUCTION_SMOKE.md) for the release smoke gate.
+
+## Backend Environment
+
+Production and local backend config use these variables:
+
+- `DATABASE_URL`
+- `JWT_SECRET_KEY`
+- `CORS_ORIGINS`
+- `PROVIDER_API_KEY_ENCRYPTION_KEY`
+
+Rules:
+
+- `CORS_ORIGINS` must be a JSON array.
+- Do not include trailing slashes in origin values.
+- Do not use `BACKEND_CORS_ORIGINS` in deployment docs or examples.
+
 ## Available Endpoint
 
 - `GET /health`
+- `GET /logs/activity`
+- `GET /logs/audit`
+- `GET /tasks`
+- `GET /approvals/pending`
 
 ## Current GitHub Import Behavior
 

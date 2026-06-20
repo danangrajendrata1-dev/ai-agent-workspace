@@ -1,11 +1,52 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import AgentChatPanel from "./AgentChatPanel";
 import ProtectedRoute from "./ProtectedRoute";
+import N8nPanel from "./N8nPanel";
 import { clearToken } from "../lib/auth";
-import { getCurrentUser } from "../lib/apiClient";
+import {
+  approveGithubSkillImport,
+  attachImportedSkillToAgent,
+  createAgent,
+  createN8nWorkflow,
+  deleteModelProviderApiKey,
+  deleteN8nWorkflow,
+  detachImportedSkillFromAgent,
+  get,
+  getActivityLogs,
+  getAuditLogs,
+  getAgentActiveSkills,
+  getCurrentUser,
+  getModelProviderKeyStatuses,
+  getModelProviderSettings,
+  getModelProviders,
+  getRuntimeCapabilities,
+  getPendingApprovals,
+  getSkillLibrary,
+  getTasks,
+  importSelectedGithubSkill,
+  deleteWorkflowBinding,
+  listN8nWorkflows,
+  listWorkflowBindings,
+  listWorkflowConsents,
+  listWorkflowExecutionHistory,
+  listWorkflowExecutions,
+  listWorkflowTemplates,
+  post,
+  previewGithubSkillCollection,
+  previewGithubSkillImport,
+  revokeWorkflowConsent,
+  rejectGithubImport,
+  disableGithubImport,
+  patch,
+  remove,
+  saveModelProviderApiKey,
+  updateN8nWorkflow,
+  updateModelProviderSettings
+} from "../lib/apiClient";
 
 const C = {
   bg: "#F6F1EA",
@@ -35,20 +76,28 @@ const SERIF = {
 };
 
 const NAV_ITEMS = [
-  { id: "create-agent", label: "Create Agent", icon: "plus" },
+  { id: "create-agent", label: "Agent", icon: "plus" },
+  { id: "skill-panel", label: "Skill Panel", icon: "book" },
   { id: "import-skill", label: "Import Skill", icon: "upload" },
   { id: "library-skill", label: "Library Skill", icon: "book" },
+  { id: "active-skills", label: "Active Skills", icon: "spark" },
   { id: "library-workflow", label: "Library Workflow", icon: "workflow" },
   { id: "workflow-n8n", label: "Workflow n8n", icon: "nodes" },
+  { id: "providers", label: "Provider / API Key", icon: "key" },
+  { id: "oauth-connections", label: "OAuth / Connections", icon: "link" },
+  { id: "safety-center", label: "Safety Center", icon: "shield" },
   { id: "activity-log", label: "Activity Log", icon: "activity" }
 ];
 
 const WIN_META = {
-  "create-agent": { title: "Create Agent", width: 560, ix: 230, iy: 60 },
-  "import-skill": { title: "Import Skill", width: 520, ix: 290, iy: 80 },
-  "library-skill": { title: "Library Skill", width: 680, ix: 210, iy: 90 },
+  "create-agent": { title: "Agent Panel", width: 560, ix: 230, iy: 60 },
+  "skill-panel": { title: "Skill Panel", width: 640, ix: 250, iy: 80 },
+  "active-skills": { title: "Active Skills", width: 620, ix: 270, iy: 100 },
   "library-workflow": { title: "Library Workflow", width: 680, ix: 250, iy: 110 },
   "workflow-n8n": { title: "Workflow n8n", width: 520, ix: 330, iy: 75 },
+  providers: { title: "Provider / API Key", width: 620, ix: 290, iy: 85 },
+  "oauth-connections": { title: "OAuth / Connections", width: 620, ix: 310, iy: 105 },
+  "safety-center": { title: "Safety Center", width: 600, ix: 330, iy: 95 },
   "activity-log": { title: "Activity Log", width: 460, ix: 270, iy: 60 },
   settings: { title: "Settings", width: 420, ix: 310, iy: 70 }
 };
@@ -126,11 +175,144 @@ const PREVIEW_AGENTS = [
   }
 ];
 
-const CHAT_HISTORY = [
-  { role: "You", text: "bantu convert dokumen" },
-  { role: "Main AI", text: "saya akan arahkan ke agent PDF" },
-  { role: "You", text: "lanjut" },
-  { role: "Main AI", text: "menunggu approval sebelum melanjutkan" }
+const PREVIEW_SKILLS = [
+  {
+    id: "skill-1",
+    name: "PDF Helper",
+    type: "prompt_skill",
+    status: "approved",
+    runtimeStatus: "preview only",
+    agent: "Doc Converter",
+    sourceUrl: "github.com/private/pdf-helper",
+    lastUpdate: "2026-06-18 21:10",
+    action: "Attach"
+  },
+  {
+    id: "skill-2",
+    name: "Knowledge Index",
+    type: "knowledge_skill",
+    status: "imported",
+    runtimeStatus: "safe",
+    agent: "Data Parser",
+    sourceUrl: "github.com/private/knowledge-index",
+    lastUpdate: "2026-06-19 18:40",
+    action: "Attach"
+  },
+  {
+    id: "skill-3",
+    name: "JSON Parser",
+    type: "tool_skill",
+    status: "blocked",
+    runtimeStatus: "blocked",
+    agent: "Data Parser",
+    sourceUrl: "github.com/private/json-parser",
+    lastUpdate: "2026-06-20 09:20",
+    action: "View"
+  },
+  {
+    id: "skill-4",
+    name: "Slack Sync Flow",
+    type: "workflow_skill",
+    status: "blocked",
+    runtimeStatus: "blocked",
+    agent: "Notifier",
+    sourceUrl: "github.com/private/slack-sync-flow",
+    lastUpdate: "2026-06-20 09:30",
+    action: "View"
+  }
+];
+
+const PREVIEW_WORKFLOWS = [
+  {
+    id: "flow-1",
+    name: "Weekly Report",
+    trigger: "cron",
+    status: "preview",
+    agent: "Mail Agent",
+    source: "WF-001",
+    lastUpdate: "2026-06-20 07:30",
+    action: "View"
+  },
+  {
+    id: "flow-2",
+    name: "PDF Intake",
+    trigger: "webhook",
+    status: "disabled",
+    agent: "Doc Converter",
+    source: "WF-002",
+    lastUpdate: "2026-06-19 16:40",
+    action: "Disable"
+  },
+  {
+    id: "flow-3",
+    name: "Slack Summary",
+    trigger: "manual",
+    status: "preview",
+    agent: "Notifier",
+    source: "WF-003",
+    lastUpdate: "2026-06-18 13:05",
+    action: "Duplicate"
+  }
+];
+
+const PREVIEW_N8N_CARDS = [
+  {
+    id: "wf-preview-1",
+    name: "Weekly Report Pipeline",
+    status: "preview",
+    workflowId: "n8n-2401",
+    source: "private workspace",
+    agent: "Mail Agent",
+    trigger: "cron / monday",
+    detail: "Compose report, queue review, push final note."
+  },
+  {
+    id: "wf-preview-2",
+    name: "Document Intake Flow",
+    status: "locked",
+    workflowId: "n8n-2408",
+    source: "github import preview",
+    agent: "Doc Converter",
+    trigger: "webhook",
+    detail: "Receive file metadata, classify file, hold for review."
+  },
+  {
+    id: "wf-preview-3",
+    name: "Summary Broadcast",
+    status: "preview",
+    workflowId: "n8n-2412",
+    source: "workspace draft",
+    agent: "Notifier",
+    trigger: "manual",
+    detail: "Summarize events, draft message, keep send locked."
+  }
+];
+
+const PREVIEW_ACTIVITY = [
+  {
+    id: "activity-preview-1",
+    created_at: "2026-06-20T07:10:00Z",
+    event_type: "workspace.preview",
+    message: "Workspace preview loaded.",
+    status: "info",
+    actor_type: "system"
+  },
+  {
+    id: "activity-preview-2",
+    created_at: "2026-06-20T07:20:00Z",
+    event_type: "provider.snapshot",
+    message: "Provider metadata ready.",
+    status: "info",
+    actor_type: "system"
+  },
+  {
+    id: "activity-preview-3",
+    created_at: "2026-06-20T07:30:00Z",
+    event_type: "safety.lock",
+    message: "Tool and n8n execution stay locked.",
+    status: "review",
+    actor_type: "system"
+  }
 ];
 
 const SKILL_ROWS = [
@@ -152,17 +334,361 @@ const N8N_ROWS = [
   { name: "Data Sync", id: "wf_003", agent: "Data Parser", trigger: "manual", status: "inactive" }
 ];
 
-const ACTIVITY_ROWS = [
-  { time: "21:10", title: "Skill imported", desc: "PDF Helper imported from GitHub", status: "Waiting Review", tone: "review" },
-  { time: "20:45", title: "Agent updated", desc: "Data Agent attached Knowledge Skill", status: "Done", tone: "active" },
-  { time: "20:30", title: "Safety event", desc: "Tool skill blocked from execution", status: "Blocked", tone: "inactive" },
-  { time: "19:55", title: "Workflow added", desc: "Daily Report linked to Doc Converter", status: "Preview", tone: "inactive" }
-];
-
 const SETTINGS_KEYS = [
   { provider: "OpenAI", masked: "sk-************3f2a", status: "encrypted" },
   { provider: "OpenRouter", masked: "not set", status: "not setup" }
 ];
+
+const SKILL_TYPE_META = {
+  prompt_skill: {
+    label: "Prompt",
+    detail: "Prompt / instruction",
+    executionState: "preview only",
+    blocked: false
+  },
+  knowledge_skill: {
+    label: "Knowledge",
+    detail: "Read-only context",
+    executionState: "safe",
+    blocked: false
+  },
+  tool_skill: {
+    label: "Tool",
+    detail: "Blocked from execution",
+    executionState: "blocked",
+    blocked: true
+  },
+  workflow_skill: {
+    label: "Workflow",
+    detail: "Blocked from execution",
+    executionState: "blocked",
+    blocked: true
+  }
+};
+
+function normalizeSkillType(type) {
+  const raw = String(type || "").toLowerCase();
+
+  if (raw === "manual_skill" || raw === "prompt" || raw === "instruction") {
+    return "prompt_skill";
+  }
+
+  if (raw === "knowledge" || raw === "knowledge_skill") {
+    return "knowledge_skill";
+  }
+
+  if (raw === "tool" || raw === "tool_preview" || raw === "tool_skill") {
+    return "tool_skill";
+  }
+
+  if (raw === "workflow" || raw === "workflow_preview" || raw === "workflow_skill") {
+    return "workflow_skill";
+  }
+
+  return raw || "prompt_skill";
+}
+
+function getSkillTypeMeta(type) {
+  return SKILL_TYPE_META[normalizeSkillType(type)] || SKILL_TYPE_META.prompt_skill;
+}
+
+function normalizeCollection(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.results)) return payload.results;
+  return [];
+}
+
+function safeString(value, fallback = "-") {
+  const text = typeof value === "string" ? value.trim() : value;
+  return text ? String(text) : fallback;
+}
+
+function formatShortDate(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(parsed);
+}
+
+function formatTimeOnly(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(parsed);
+}
+
+function getAgentInitials(name) {
+  const text = safeString(name, "AI");
+  const parts = text.split(" ").filter(Boolean).slice(0, 2);
+  if (!parts.length) return "AI";
+  return parts.map((part) => part[0]).join("").toUpperCase();
+}
+
+function buildAgentActivities(agent, activityRows, fallbackRows) {
+  const agentId = String(agent?.id || "");
+  const agentName = String(agent?.name || "").toLowerCase();
+
+  const matches = activityRows.filter((row) => {
+    const actorId = String(row?.actor_id || "");
+    const message = String(row?.message || "").toLowerCase();
+    const eventType = String(row?.event_type || "").toLowerCase();
+    return actorId === agentId || message.includes(agentName) || eventType.includes("agent");
+  });
+
+  if (matches.length) {
+    return matches.slice(0, 3).map((row) => row.message || row.event_type || "-");
+  }
+
+  return fallbackRows.slice(0, 2);
+}
+
+function buildAgentView(agent, index, agentSkillMap, activityRows, approvalRows, fallbackAgent) {
+  if (!agent) return fallbackAgent;
+
+  const skillItems = agentSkillMap[String(agent.id)] || [];
+  const skillNames = skillItems
+    .map((item) => {
+      const skill = item?.skill || {};
+      return skill?.title || skill?.name || skill?.slug || skill?.file_path || "";
+    })
+    .filter(Boolean);
+
+  const fallbackSkills = fallbackAgent?.skills || [];
+
+  const pendingApproval = approvalRows.find((row) => String(row?.agent_id || "") === String(agent.id)) || null;
+
+  return {
+    id: String(agent.id),
+    name: agent.name || `Agent ${index + 1}`,
+    icon: getAgentInitials(agent.name),
+    skillCount: skillNames.length || skillItems.length || Number(agent.skill_count || 0) || fallbackSkills.length || 0,
+    skills: skillNames.length ? skillNames : fallbackSkills,
+    status: agent.status || "inactive",
+    activity: buildAgentActivities(agent, activityRows, fallbackAgent?.activity || []),
+    needApproval: Boolean(pendingApproval),
+    approval: pendingApproval
+  };
+}
+
+function buildSkillRows(skillRows, selectedAgent, agentSkillMap) {
+  const attachedSkillIds = new Set();
+  const attachedAgentBySkill = new Map();
+
+  Object.entries(agentSkillMap).forEach(([agentId, skills]) => {
+    skills.forEach((item) => {
+      const skill = item?.skill || {};
+      if (skill?.id) {
+        attachedSkillIds.add(String(skill.id));
+        attachedAgentBySkill.set(String(skill.id), String(agentId));
+      }
+    });
+  });
+
+  return skillRows.map((row, index) => {
+    const id = String(row?.id || `skill-${index + 1}`);
+    const isAttached = attachedSkillIds.has(id);
+    const attachedAgentId = attachedAgentBySkill.get(id) || "";
+    const attachedAgentLabel = attachedAgentId && selectedAgent?.id === attachedAgentId ? selectedAgent?.name : row.agent || "-";
+    const status = row?.import_status || row?.security_status || row?.status || "active";
+    const normalizedType = normalizeSkillType(row?.skill_type || row?.type || "prompt_skill");
+    const typeMeta = getSkillTypeMeta(normalizedType);
+    const hasReviewSignal = Boolean(row?.security_status === "warning" || row?.security_status === "blocked" || row?.attach_block_reason);
+    const actions = row?.is_attachable
+      ? isAttached
+        ? ["Detach", "Disable"]
+        : ["Attach", "Disable"]
+      : ["View"];
+
+    return {
+      id,
+      name: row?.title || row?.name || `Skill ${index + 1}`,
+      type: normalizedType,
+      typeLabel: typeMeta.label,
+      typeDetail: typeMeta.detail,
+      status,
+      runtimeStatus: row?.is_attachable === false || typeMeta.blocked ? "blocked" : hasReviewSignal ? "review" : typeMeta.executionState,
+      agent: attachedAgentLabel,
+      sourceUrl: row?.source_url || row?.source_reference || row?.file_path || "-",
+      lastUpdate: formatShortDate(row?.updated_at || row?.created_at),
+      action: actions[0] || "View",
+      actions,
+      attachedAgentId,
+      blockedReason: row?.attach_block_reason || (typeMeta.blocked ? "Non-executable skill." : ""),
+      raw: row
+    };
+  });
+}
+
+function buildWorkflowRows(workflows, templates, consents, bindings, executions, history) {
+  if (workflows.length) {
+    return workflows.map((row, index) => ({
+      id: String(row?.id || `workflow-${index + 1}`),
+      name: row?.name || `Workflow ${index + 1}`,
+      type: row?.trigger_type || "manual",
+      status: row?.status || "inactive",
+      agent: row?.metadata?.agent_name || row?.metadata?.agent || row?.metadata?.agent_id || "-",
+      source: row?.workflow_external_id || row?.slug || String(row?.id || "-"),
+      lastUpdate: formatShortDate(row?.updated_at || row?.created_at),
+      action: row?.status === "active" ? "Disable" : "View",
+      raw: row
+    }));
+  }
+
+  const bindingMap = new Map(bindings.map((item) => [String(item?.template_id || ""), item]));
+  const consentMap = new Map(consents.map((item) => [String(item?.template_id || ""), item]));
+  const executionMap = new Map();
+  [...executions, ...history].forEach((item) => {
+    const key = String(item?.template_id || "");
+    if (!key) return;
+    if (!executionMap.has(key)) {
+      executionMap.set(key, item);
+    }
+  });
+
+  return templates.map((template, index) => {
+    const binding = bindingMap.get(String(template?.id || ""));
+    const consent = consentMap.get(String(template?.id || ""));
+    const execution = executionMap.get(String(template?.id || ""));
+    const name = template?.name || `Workflow ${index + 1}`;
+    const status = consent?.status === "active" || template?.consented ? "active" : template?.enabled ? "preview" : "disabled";
+    return {
+      id: String(template?.id || `template-${index + 1}`),
+      name,
+      type: template?.risk_level || "manual",
+      status,
+      agent: binding?.skill_name || binding?.skill_id || "-",
+      source: template?.id || "-",
+      lastUpdate: formatShortDate(consent?.consented_at || execution?.created_at || template?.consented_at || template?.updated_at),
+      action: status === "active" ? "Disable" : "View",
+      raw: { template, consent, binding, execution }
+    };
+  });
+}
+
+function buildN8nRows(workflows, templates, consents, bindings, executions, history) {
+  if (workflows.length) {
+    return workflows.map((row, index) => ({
+      id: String(row?.id || `n8n-${index + 1}`),
+      name: row?.name || `Workflow ${index + 1}`,
+      status: row?.status || "inactive",
+      workflowId: row?.workflow_external_id || row?.slug || String(row?.id || "-"),
+      source: row?.description || row?.metadata?.source || "workspace record",
+      agent: row?.metadata?.agent_name || row?.metadata?.agent || "-",
+      trigger: row?.trigger_type || "manual",
+      detail: row?.description || "Preview only. No execution."
+    }));
+  }
+
+  const consentMap = new Map(consents.map((item) => [String(item?.template_id || ""), item]));
+  const bindingMap = new Map(bindings.map((item) => [String(item?.template_id || ""), item]));
+  const executionMap = new Map();
+  [...executions, ...history].forEach((item) => {
+    const key = String(item?.template_id || "");
+    if (!key) return;
+    if (!executionMap.has(key)) {
+      executionMap.set(key, item);
+    }
+  });
+
+  return templates.slice(0, 4).map((template, index) => {
+    const consent = consentMap.get(String(template?.id || ""));
+    const binding = bindingMap.get(String(template?.id || ""));
+    const execution = executionMap.get(String(template?.id || ""));
+    return {
+      id: String(template?.id || `n8n-${index + 1}`),
+      name: template?.name || `Workflow ${index + 1}`,
+      status: consent?.status === "active" || template?.consented ? "preview" : "locked",
+      workflowId: template?.id || "-",
+      source: template?.description || "workspace template",
+      agent: binding?.skill_name || binding?.skill_id || "-",
+      trigger: template?.input_schema ? "manual" : "scheduled",
+      detail: execution?.output_summary || template?.description || "Preview only. No execution."
+    };
+  });
+}
+
+function buildActivityRows(activityRows) {
+  return activityRows.map((row, index) => {
+    const status = String(row?.status || row?.event_type || "info").toLowerCase();
+    return {
+      id: String(row?.id || `activity-${index + 1}`),
+      time: formatTimeOnly(row?.created_at),
+      title: row?.event_type || row?.title || `Activity ${index + 1}`,
+      desc: row?.message || row?.detail || "-",
+      status: row?.status || row?.event_type || "info",
+      tone: status,
+      actor: row?.actor_type || "-"
+    };
+  });
+}
+
+function buildAuditRows(auditRows) {
+  return auditRows.map((row, index) => {
+    const action = String(row?.action || "audit").toLowerCase();
+    const entityType = safeString(row?.entity_type, "entity");
+    const entityId = safeString(row?.entity_id, "-");
+    return {
+      id: String(row?.id || `audit-${index + 1}`),
+      time: formatShortDate(row?.created_at),
+      title: row?.action || `Audit ${index + 1}`,
+      desc: [entityType, entityId, row?.ip_address ? `ip ${row.ip_address}` : ""].filter(Boolean).join(" | "),
+      status: row?.action || "audit",
+      tone: action,
+      actor: row?.user_id || "-"
+    };
+  });
+}
+
+function buildTaskRows(taskRows) {
+  return taskRows.map((row, index) => {
+    const status = String(row?.status || "received").toLowerCase();
+    const skillId = safeString(row?.selected_skill_id, "");
+    const toolId = safeString(row?.selected_tool_id, "");
+    const selection = skillId ? `skill ${skillId}` : toolId ? `tool ${toolId}` : "no selection";
+    const inputText = safeString(row?.input_text, `Task ${index + 1}`);
+    return {
+      id: String(row?.id || `task-${index + 1}`),
+      time: formatShortDate(row?.created_at),
+      title: inputText.length > 84 ? `${inputText.slice(0, 84)}...` : inputText,
+      desc: [row?.request_id ? `request ${row.request_id}` : "", selection].filter(Boolean).join(" | "),
+      status: row?.status || "received",
+      tone: status,
+      actor: row?.agent_id || "-",
+      startedAt: formatShortDate(row?.started_at),
+      completedAt: formatShortDate(row?.completed_at)
+    };
+  });
+}
+
+function buildApprovalRows(approvalRows) {
+  return approvalRows.map((row, index) => {
+    const status = String(row?.status || "pending").toLowerCase();
+    const riskLevel = String(row?.risk_level || "medium").toLowerCase();
+    return {
+      id: String(row?.id || `approval-${index + 1}`),
+      time: formatShortDate(row?.created_at),
+      title: row?.requested_action || `Approval ${index + 1}`,
+      desc: [row?.task_id ? `task ${row.task_id}` : "", row?.agent_id ? `agent ${row.agent_id}` : ""].filter(Boolean).join(" | "),
+      status: row?.status || "pending",
+      tone: status,
+      riskLevel,
+      taskId: row?.task_id || "-",
+      decisionReason: safeString(row?.decision_reason, ""),
+      isPending: status === "pending",
+      raw: row
+    };
+  });
+}
 
 function SvgIcon({ children, size = 15 }) {
   return (
@@ -172,7 +698,7 @@ function SvgIcon({ children, size = 15 }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.8"
+      strokeWidth="1.85"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -205,6 +731,39 @@ function MenuIcon({ name }) {
           <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H20v15.5a.5.5 0 0 1-.8.4C18 19.2 16.5 18 14 18c-2.7 0-4.1 1.3-5.2 1.9a.5.5 0 0 1-.8-.4V6.5Z" />
           <path d="M8 7h8" />
           <path d="M8 10h8" />
+        </SvgIcon>
+      );
+    case "spark":
+      return (
+        <SvgIcon>
+          <path d="M12 3l1.9 5.4L19 10.5l-5.1 2.1L12 18l-1.9-5.4L5 10.5l5.1-2.1L12 3Z" />
+          <path d="M4 19.5h3" />
+          <path d="M17 19.5h3" />
+        </SvgIcon>
+      );
+    case "key":
+      return (
+        <SvgIcon>
+          <circle cx="8" cy="12" r="3" />
+          <path d="M11 12h9" />
+          <path d="M17 12v3" />
+          <path d="M19 12v2" />
+        </SvgIcon>
+      );
+    case "link":
+      return (
+        <SvgIcon>
+          <path d="M9 12a4 4 0 0 1 4-4h2" />
+          <path d="M15 12a4 4 0 0 1-4 4H9" />
+          <path d="M7 12h10" />
+          <path d="M12 8v8" />
+        </SvgIcon>
+      );
+    case "shield":
+      return (
+        <SvgIcon>
+          <path d="M12 3 19 6v6c0 4.4-3.2 8-7 11-3.8-3-7-6.6-7-11V6l7-3Z" />
+          <path d="M9.5 12.2 11.2 14 14.8 10.4" />
         </SvgIcon>
       );
     case "workflow":
@@ -308,11 +867,14 @@ function Label({ text }) {
   );
 }
 
-function InputField({ label, placeholder }) {
+function InputField({ label, placeholder, value, onChange, type = "text" }) {
   return (
     <div style={{ marginBottom: 10 }}>
       {label ? <Label text={label} /> : null}
       <input
+        type={type}
+        value={value}
+        onChange={onChange}
         placeholder={placeholder}
         style={{
           width: "100%",
@@ -331,7 +893,7 @@ function InputField({ label, placeholder }) {
   );
 }
 
-function DropField({ label, placeholder }) {
+function DropField({ label, placeholder, value, onChange, options = [] }) {
   return (
     <div style={{ marginBottom: 10 }}>
       {label ? <Label text={label} /> : null}
@@ -349,8 +911,45 @@ function DropField({ label, placeholder }) {
           cursor: "pointer"
         }}
       >
-        <span>{placeholder}</span>
-        <span style={{ color: C.textDim }}>v</span>
+        {options.length ? (
+          <select
+            value={value}
+            onChange={onChange}
+            style={{
+              flex: 1,
+              border: "none",
+              background: "none",
+              color: C.text,
+              fontSize: 13,
+              outline: "none",
+              appearance: "none",
+              ...FONT
+            }}
+          >
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            style={{
+              flex: 1,
+              border: "none",
+              background: "none",
+              color: C.text,
+              fontSize: 13,
+              outline: "none",
+              minWidth: 0,
+              ...FONT
+            }}
+          />
+        )}
+        <span style={{ color: C.textDim, flexShrink: 0 }}>v</span>
       </div>
     </div>
   );
@@ -372,6 +971,163 @@ function Card({ children, style }) {
   );
 }
 
+function PanelHeader({ title, description, badge, actionLabel, onAction, actionDisabled = false }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
+          {title}
+        </div>
+        <div style={{ fontSize: 13, lineHeight: 1.65, color: C.textSub }}>{description}</div>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+        {badge ? <span style={statusStyle(badge)}>{badge}</span> : null}
+        {actionLabel ? (
+          <button
+            type="button"
+            onClick={onAction}
+            disabled={actionDisabled || !onAction}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background: C.cardInner,
+              color: actionDisabled || !onAction ? C.textDim : C.textMuted,
+              fontSize: 12,
+              cursor: actionDisabled || !onAction ? "not-allowed" : "pointer",
+              flexShrink: 0,
+              ...FONT
+            }}
+          >
+            {actionLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PanelStateCard({ title, description, tone = "inactive", actionLabel, onAction, disabled = false }) {
+  const toneStyle = tone === "review" ? { background: "rgba(255,244,226,0.96)", borderColor: "rgba(176,120,32,0.18)", color: C.amber } : {
+    background: "rgba(255,255,255,0.74)",
+    borderColor: "rgba(90,65,35,0.10)",
+    color: C.textMuted
+  };
+
+  return (
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 12,
+        border: `1px solid ${toneStyle.borderColor}`,
+        background: toneStyle.background
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: toneStyle.color, marginBottom: 4 }}>{title}</div>
+          <div style={{ fontSize: 12, lineHeight: 1.6, color: C.textMuted }}>{description}</div>
+        </div>
+        {actionLabel ? (
+          <button
+            type="button"
+            disabled={disabled || !onAction}
+            onClick={onAction}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background: C.cardInner,
+              color: disabled ? C.textDim : C.textMuted,
+              fontSize: 12,
+              cursor: disabled || !onAction ? "not-allowed" : "pointer",
+              flexShrink: 0,
+              ...FONT
+            }}
+          >
+            {actionLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ title, subtitle, actionLabel, onAction }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>{title}</div>
+        {subtitle ? <div style={{ marginTop: 3, fontSize: 12, color: C.textDim }}>{subtitle}</div> : null}
+      </div>
+      {actionLabel ? (
+        <button
+          type="button"
+          disabled={!onAction}
+          onClick={onAction}
+          style={{
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            background: C.cardInner,
+            color: onAction ? C.textMuted : C.textDim,
+            fontSize: 12,
+            cursor: onAction ? "pointer" : "not-allowed",
+            opacity: onAction ? 1 : 0.72,
+            flexShrink: 0,
+            ...FONT
+          }}
+        >
+          {actionLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyPanelState({ title, description, actionLabel, onAction }) {
+  return (
+    <PanelStateCard
+      title={title}
+      description={description}
+      tone="review"
+      actionLabel={actionLabel}
+      onAction={onAction}
+    />
+  );
+}
+
+function LoadingPanelState({ title, description }) {
+  return (
+    <PanelStateCard
+      title={title}
+      description={description}
+      tone="inactive"
+    />
+  );
+}
+
+function InlineFeedback({ message, error = false }) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: `1px solid ${error ? "rgba(176,88,80,0.22)" : "rgba(90,65,35,0.10)"}`,
+        background: error ? "rgba(248,236,232,0.96)" : "rgba(255,255,255,0.72)",
+        color: error ? C.accent : C.textMuted,
+        fontSize: 12
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
 function statusStyle(status) {
   const map = {
     active: { color: C.green, background: C.greenLight },
@@ -384,15 +1140,38 @@ function statusStyle(status) {
     "need setup": { color: C.amber, background: C.amberLight },
     ready: { color: C.green, background: C.greenLight },
     locked: { color: C.textMuted, background: "rgba(0,0,0,0.06)" },
-    "preview only": { color: C.textMuted, background: "rgba(0,0,0,0.06)" }
+    "preview only": { color: C.textMuted, background: "rgba(0,0,0,0.06)" },
+    loading: { color: C.amber, background: C.amberLight },
+    blocked: { color: C.accent, background: C.accentLight },
+    safe: { color: C.green, background: C.greenLight },
+    pending: { color: C.amber, background: C.amberLight },
+    approved: { color: C.green, background: C.greenLight },
+    rejected: { color: C.accent, background: C.accentLight },
+    expired: { color: C.textMuted, background: "rgba(0,0,0,0.06)" },
+    low: { color: C.green, background: C.greenLight },
+    medium: { color: C.amber, background: C.amberLight },
+    high: { color: C.accent, background: C.accentLight },
+    critical: { color: C.accent, background: C.accentLight },
+    completed: { color: C.green, background: C.greenLight },
+    failed: { color: C.accent, background: C.accentLight },
+    cancelled: { color: C.textDim, background: "rgba(0,0,0,0.05)" },
+    received: { color: C.textDim, background: "rgba(0,0,0,0.05)" },
+    "waiting approval": { color: C.amber, background: C.amberLight },
+    "running tool": { color: C.amber, background: C.amberLight },
+    "loading memory": { color: C.amber, background: C.amberLight },
+    "selecting skill": { color: C.textDim, background: "rgba(0,0,0,0.05)" },
+    "selecting tool": { color: C.textDim, background: "rgba(0,0,0,0.05)" },
+    audit: { color: C.textMuted, background: "rgba(0,0,0,0.06)" }
   };
+
+  const normalizedStatus = String(status).toLowerCase().replace(/_/g, " ");
 
   return {
     fontSize: 11,
     fontWeight: 600,
     padding: "3px 9px",
     borderRadius: 7,
-    ...(map[String(status).toLowerCase()] || map.inactive)
+    ...(map[normalizedStatus] || map.inactive)
   };
 }
 
@@ -408,6 +1187,7 @@ function FloatingWindow({ id, onClose, onFocus, zIndex, children }) {
         left: pos.x,
         top: pos.y,
         width: meta.width,
+        maxWidth: "calc(100vw - 24px)",
         zIndex,
         background: C.card,
         border: `1.5px solid ${C.borderMid}`,
@@ -463,13 +1243,65 @@ function FloatingWindow({ id, onClose, onFocus, zIndex, children }) {
   );
 }
 
-function CreateAgentContent() {
+function CreateAgentContent({ onCreateAgent, isSubmitting = false, error = "", defaultProviderId = "", modelProviders = [] }) {
+  const [name, setName] = useState("Doc Converter");
+  const [skill, setSkill] = useState("convert pdf");
+  const [model, setModel] = useState("gpt-4o");
   const [pinned, setPinned] = useState(false);
+  const [message, setMessage] = useState("");
+  const canCreate = Boolean(onCreateAgent) && !isSubmitting;
+
+  const modelOptions = useMemo(
+    () =>
+      modelProviders.length
+        ? modelProviders.map((item) => ({
+            value: item?.id || item?.provider || item?.name || "openai",
+            label: item?.name || item?.label || item?.id || item?.provider || "OpenAI"
+          }))
+        : [
+            { value: "openai", label: "OpenAI" },
+            { value: "openrouter", label: "OpenRouter" }
+          ],
+    [modelProviders]
+  );
+
+  useEffect(() => {
+    if (!model && modelOptions.length) {
+      setModel(modelOptions[0].value);
+    }
+  }, [model, modelOptions]);
+
+  async function handleCreate() {
+    if (!onCreateAgent) {
+      setMessage("Create agent backend endpoint not available yet.");
+      return;
+    }
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setMessage("Agent name wajib.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      await onCreateAgent({
+        name: trimmedName,
+        skill,
+        model,
+        defaultProviderId,
+        pinned
+      });
+      setMessage("Agent saved.");
+    } catch (createError) {
+      setMessage(createError?.message || "Create agent gagal.");
+    }
+  }
 
   return (
     <div style={{ display: "flex", gap: 18 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <InputField label="Agent Name" placeholder="e.g. Doc Converter" />
+        <InputField label="Agent Name" placeholder="e.g. Doc Converter" value={name} onChange={(event) => setName(event.target.value)} />
         <div style={{ marginBottom: 10 }}>
           <Label text="Icon" />
           <div
@@ -490,8 +1322,14 @@ function CreateAgentContent() {
             import icon - PNG, JPG, WebP, GIF
           </div>
         </div>
-        <DropField label="Skills" placeholder="search or type skill name..." />
-        <DropField label="Brain / Model" placeholder="select AI model..." />
+        <DropField label="Skills" placeholder="search or type skill name..." value={skill} onChange={(event) => setSkill(event.target.value)} />
+        <DropField
+          label="Brain / Model"
+          placeholder="select AI model..."
+          value={model}
+          onChange={(event) => setModel(event.target.value)}
+          options={modelOptions}
+        />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
           <button
             type="button"
@@ -528,6 +1366,8 @@ function CreateAgentContent() {
           </button>
           <button
             type="button"
+            onClick={handleCreate}
+            disabled={!canCreate}
             style={{
               padding: "8px 22px",
               borderRadius: 10,
@@ -536,12 +1376,18 @@ function CreateAgentContent() {
               color: "#fff",
               fontSize: 13,
               fontWeight: 600,
-              cursor: "pointer",
+              cursor: canCreate ? "pointer" : "not-allowed",
+              opacity: canCreate ? 1 : 0.72,
               ...FONT
             }}
+            title={canCreate ? "Create agent." : "Create agent backend endpoint not available yet."}
           >
-            Create
+            {isSubmitting ? "Saving..." : "Create"}
           </button>
+        </div>
+        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+          <InlineFeedback message={error} error />
+          <InlineFeedback message={message} />
         </div>
       </div>
 
@@ -560,14 +1406,14 @@ function CreateAgentContent() {
               justifyContent: "center",
               fontSize: 14,
               fontWeight: 700,
-              color: C.accent
-            }}
-          >
-            AG
+            color: C.accent
+          }}
+        >
+            {getAgentInitials(name)}
           </div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>nama agent</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{name || "nama agent"}</div>
           <div style={{ fontSize: 11, color: C.textMuted }}>icon</div>
-          {["skill 2", "brain / model"].map((text) => (
+          {[skill || "skill 2", model || "brain / model"].map((text) => (
             <div
               key={text}
               style={{
@@ -584,7 +1430,7 @@ function CreateAgentContent() {
           ))}
           <div style={{ display: "flex", gap: 6 }}>
             <span style={statusStyle("need setup")}>need setup</span>
-            <span style={statusStyle("ready")}>ready</span>
+            <span style={statusStyle(pinned ? "ready" : "preview only")}>{pinned ? "ready" : "preview only"}</span>
           </div>
         </Card>
       </div>
@@ -592,65 +1438,276 @@ function CreateAgentContent() {
   );
 }
 
-function ImportSkillContent() {
+function ImportSkillContent({
+  onPreviewImport,
+  onPreviewCollection,
+  onImportSkill,
+  onApproveImport,
+  onRejectImport,
+  onDisableImport,
+  isSubmitting = false,
+  error = ""
+}) {
+  const [repository, setRepository] = useState("https://github.com/private/pdf-helper");
+  const [branch, setBranch] = useState("main");
+  const [filePath, setFilePath] = useState("skills/pdf/SKILL.md");
+  const [folderPath, setFolderPath] = useState("skills/pdf");
+  const [previewFilePath, setPreviewFilePath] = useState("skills/pdf/SKILL.md");
+  const [previewFolderPath, setPreviewFolderPath] = useState("skills/pdf");
+  const [previewResult, setPreviewResult] = useState(null);
+  const [collectionPreview, setCollectionPreview] = useState(null);
+  const [selectedSkillPath, setSelectedSkillPath] = useState("skills/pdf/SKILL.md");
+  const [message, setMessage] = useState("");
+
+  const collectionCandidates = useMemo(
+    () => (Array.isArray(collectionPreview?.candidates) ? collectionPreview.candidates : []),
+    [collectionPreview],
+  );
+  const selectedCollectionCandidate = collectionCandidates.find((item) => {
+    const candidatePath = String(item?.path || "").trim();
+    const manifestPath = String(item?.manifest_path || "").trim();
+    return candidatePath === selectedSkillPath || manifestPath === selectedSkillPath;
+  }) || null;
+  const canPreviewImport = Boolean(onPreviewImport);
+  const canPreviewCollection = Boolean(onPreviewCollection);
+  const canImportSkill = Boolean(onImportSkill) && !isSubmitting;
+  const canApproveImport = Boolean(onApproveImport);
+  const canRejectImport = Boolean(onRejectImport);
+  const canDisableImport = Boolean(onDisableImport);
+
+  useEffect(() => {
+    if (!selectedSkillPath && filePath) {
+      setSelectedSkillPath(filePath);
+    }
+  }, [filePath, selectedSkillPath]);
+
+  useEffect(() => {
+    if (!collectionCandidates.length) {
+      return;
+    }
+
+    const hasSelectedCandidate = collectionCandidates.some((item) => {
+      const candidatePath = String(item?.path || "").trim();
+      const manifestPath = String(item?.manifest_path || "").trim();
+      return candidatePath === selectedSkillPath || manifestPath === selectedSkillPath;
+    });
+
+    if (!hasSelectedCandidate) {
+      const firstCandidate = collectionCandidates[0];
+      setSelectedSkillPath(String(firstCandidate?.path || firstCandidate?.manifest_path || filePath || "").trim());
+    }
+  }, [collectionCandidates, filePath, selectedSkillPath]);
+
+  async function handlePreviewFile() {
+    if (!onPreviewImport) {
+      setMessage("Preview file endpoint not available yet.");
+      return;
+    }
+
+    setMessage("");
+    setPreviewFilePath(filePath);
+    setSelectedSkillPath(filePath);
+    setCollectionPreview(null);
+    try {
+      const result = await onPreviewImport({
+        repo_url: repository,
+        branch,
+        file_path: filePath
+      });
+      setPreviewResult(result || null);
+      setMessage(result ? "Preview siap." : "Preview kosong.");
+    } catch (previewError) {
+      setMessage(previewError?.message || "Preview gagal.");
+    }
+  }
+
+  async function handlePreviewCollection() {
+    if (!onPreviewCollection) {
+      setMessage("Collection preview endpoint not available yet.");
+      return;
+    }
+
+    setMessage("");
+    setPreviewFolderPath(folderPath);
+    setPreviewResult(null);
+    try {
+      const result = await onPreviewCollection({
+        repo_url: repository,
+        branch
+      });
+      setCollectionPreview(result || null);
+      const firstCandidate = Array.isArray(result?.candidates) ? result.candidates[0] : null;
+      const nextSelectedPath = String(firstCandidate?.path || firstCandidate?.manifest_path || filePath || "").trim();
+      if (nextSelectedPath) {
+        setSelectedSkillPath(nextSelectedPath);
+      }
+      setMessage(result ? "Collection preview siap." : "Preview kosong.");
+    } catch (previewError) {
+      setMessage(previewError?.message || "Preview gagal.");
+    }
+  }
+
+  async function handleImport() {
+    if (!onImportSkill) {
+      setMessage("Import endpoint not available yet.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      const skillPath = String(selectedSkillPath || previewFilePath || filePath || "").trim();
+      const result = await onImportSkill({
+        repo_url: repository,
+        branch,
+        skill_path: skillPath
+      });
+      setPreviewResult(result || null);
+      if (skillPath) {
+        setSelectedSkillPath(skillPath);
+      }
+      setMessage(result ? `Skill imported. Status: ${safeString(result?.status, "preview")}.` : "Import kosong.");
+    } catch (importError) {
+      setMessage(importError?.message || "Import gagal.");
+    }
+  }
+
   return (
-    <div>
-      <InputField label="Repository URL" placeholder="https://github.com/user/repo" />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-        <InputField label="Branch" placeholder="main" />
-        <InputField label="File Path" placeholder="src/skill.py" />
-        <InputField label="Folder Path" placeholder="src/skills/" />
-      </div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
-        {["preview file path", "preview folder path"].map((text) => (
-          <button
-            key={text}
-            type="button"
-            style={{
-              flex: 1,
-              padding: "8px 12px",
-              borderRadius: 10,
-              border: `1.5px solid ${C.border}`,
-              background: C.cardInner,
-              color: C.textMuted,
-              fontSize: 12,
-              cursor: "pointer",
-              ...FONT
-            }}
-          >
-            {text}
-          </button>
-        ))}
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <PanelHeader
+        title="GitHub Skill Import"
+        description="Preview dulu. Pilih `skill_path` dari collection. Import / approve / reject tetap explicit."
+        badge={previewResult?.status || collectionPreview?.warning ? "preview" : "ready"}
+      />
+
+      {error ? <PanelStateCard title="Import data" description={error} tone="review" /> : null}
 
       <Card>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
-          <div>
-            <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Skill Name</div>
-            <div style={{ fontSize: 13, color: C.textMuted }}>-</div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ fontSize: 12, color: C.textMuted }}>status</div>
+        <SectionTitle title="Source" subtitle="Repo, branch, file path, dan folder path." />
+        <InputField label="Repository URL" placeholder="https://github.com/user/repo" value={repository} onChange={(event) => setRepository(event.target.value)} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <InputField label="Branch" placeholder="main" value={branch} onChange={(event) => setBranch(event.target.value)} />
+          <InputField label="File Path" placeholder="src/skill.py" value={filePath} onChange={(event) => setFilePath(event.target.value)} />
+          <InputField label="Folder Path" placeholder="src/skills/" value={folderPath} onChange={(event) => setFolderPath(event.target.value)} />
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          {[
+            { text: "preview file path", action: handlePreviewFile, disabled: !canPreviewImport },
+            { text: "preview collection", action: handlePreviewCollection, disabled: !canPreviewCollection }
+          ].map((item) => (
             <button
+              key={item.text}
               type="button"
+              onClick={item.action}
+              disabled={item.disabled}
               style={{
-                padding: "5px 16px",
-                borderRadius: 8,
-                border: "none",
-                background: C.accent,
-                color: "#fff",
+                flex: 1,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: `1.5px solid ${C.border}`,
+                background: C.cardInner,
+                color: item.disabled ? C.textDim : C.textMuted,
                 fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
+                cursor: item.disabled ? "not-allowed" : "pointer",
+                opacity: item.disabled ? 0.72 : 1,
                 ...FONT
               }}
             >
-              Add
+              {item.text}
             </button>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+            selected skill_path: {safeString(selectedSkillPath, "preview")}
+          </div>
+          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+            import status: {safeString(previewResult?.status, "preview")}
+          </div>
+          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+            class: {safeString(previewResult?.skill_import_type || selectedCollectionCandidate?.skill_import_type, "pending")}
           </div>
         </div>
+
+        {collectionPreview ? (
+          <div style={{ marginBottom: 14 }}>
+            <SectionTitle
+              title="Collection Candidates"
+              subtitle={`${safeString(collectionPreview?.candidate_count, "0")} kandidat ditemukan`}
+            />
+            {collectionPreview?.warning ? (
+              <PanelStateCard title="Collection note" description={collectionPreview.warning} tone="review" />
+            ) : null}
+            {collectionCandidates.length ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                {collectionCandidates.map((candidate) => {
+                  const candidatePath = String(candidate?.path || candidate?.manifest_path || "").trim();
+                  const isSelected = candidatePath === selectedSkillPath || String(candidate?.manifest_path || "").trim() === selectedSkillPath;
+                  return (
+                    <div
+                      key={`${candidate.manifest_path || candidate.path || candidate.title}`}
+                      style={{
+                        padding: 10,
+                        borderRadius: 10,
+                        border: `1px solid ${isSelected ? "rgba(184,92,56,0.28)" : C.border}`,
+                        background: isSelected ? "rgba(255,248,242,0.96)" : C.bgDeep
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{safeString(candidate?.title, safeString(candidate?.path, "skill"))}</div>
+                          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                            {safeString(candidate?.path, "-")} | {safeString(candidate?.manifest_path, "-")}
+                          </div>
+                        </div>
+                        <span style={statusStyle(candidate?.validation_status || "review")}>{candidate?.validation_status || "review"}</span>
+                      </div>
+                      <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <span style={statusStyle("preview only")}>{candidate?.skill_import_type || "skill import"}</span>
+                        {candidate?.warning ? <span style={statusStyle("review")}>{candidate.warning}</span> : null}
+                      </div>
+                      <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                        <div style={{ fontSize: 11, color: C.textDim }}>
+                          {candidate?.description || "no description"}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedSkillPath(candidatePath || filePath)}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: 8,
+                            border: `1px solid ${C.border}`,
+                            background: C.cardInner,
+                            color: C.textMuted,
+                            fontSize: 12,
+                            cursor: "pointer",
+                            ...FONT
+                          }}
+                        >
+                          Select
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyPanelState
+                title="Collection kosong"
+                description="Tidak ada kandidat skill_path. Buka file preview untuk import langsung."
+                actionLabel="Preview file"
+                onAction={handlePreviewFile}
+              />
+            )}
+          </div>
+        ) : null}
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-          {["import type", "file path", "folder path"].map((text) => (
+          {[
+            `import type: ${safeString(previewResult?.import_type, "skill")}`,
+            `file path: ${safeString(previewResult?.file_path || previewFilePath, "preview")}`,
+            `folder path: ${safeString(previewFolderPath || folderPath, "preview")}`
+          ].map((text) => (
             <div
               key={text}
               style={{
@@ -666,6 +1723,19 @@ function ImportSkillContent() {
             </div>
           ))}
         </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+            status: {safeString(previewResult?.status, "preview")}
+          </div>
+          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+            reviewed: {safeString(previewResult?.review_notes, "pending review")}
+          </div>
+          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+            commit: {safeString(previewResult?.commit_sha, "preview only")}
+          </div>
+        </div>
+
         <div
           style={{
             padding: 12,
@@ -677,15 +1747,150 @@ function ImportSkillContent() {
         >
           <div style={{ fontSize: 11, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>Content Review</div>
           <div style={{ fontSize: 12, color: C.textDim, fontFamily: "Consolas, monospace" }}>
-            no clone / no install / no script execution
+            {previewResult?.content_preview || "no clone / no install / no script execution"}
           </div>
+          {Array.isArray(previewResult?.inspection_warnings) && previewResult.inspection_warnings.length ? (
+            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+              {previewResult.inspection_warnings.slice(0, 3).map((warning) => (
+                <div key={warning} style={{ fontSize: 11, color: C.amber }}>
+                  {warning}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {Array.isArray(previewResult?.inspection_errors) && previewResult.inspection_errors.length ? (
+            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+              {previewResult.inspection_errors.slice(0, 3).map((inspectError) => (
+                <div key={inspectError} style={{ fontSize: 11, color: C.accent }}>
+                  {inspectError}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {previewResult?.id ? (
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={!canApproveImport}
+              onClick={async () => {
+                try {
+                  const next = await onApproveImport(previewResult);
+                  if (next) setPreviewResult(next);
+                  setMessage("Import approved.");
+                } catch (approveError) {
+                  setMessage(approveError?.message || "Approve import gagal.");
+                }
+              }}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: C.cardInner,
+                color: canApproveImport ? C.textMuted : C.textDim,
+                fontSize: 12,
+                cursor: canApproveImport ? "pointer" : "not-allowed",
+                opacity: canApproveImport ? 1 : 0.72,
+                ...FONT
+              }}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              disabled={!canRejectImport}
+              onClick={async () => {
+                try {
+                  const next = await onRejectImport(previewResult);
+                  if (next) setPreviewResult(next);
+                  setMessage("Import rejected.");
+                } catch (rejectError) {
+                  setMessage(rejectError?.message || "Reject import gagal.");
+                }
+              }}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: C.cardInner,
+                color: canRejectImport ? C.textMuted : C.textDim,
+                fontSize: 12,
+                cursor: canRejectImport ? "pointer" : "not-allowed",
+                opacity: canRejectImport ? 1 : 0.72,
+                ...FONT
+              }}
+            >
+              Reject
+            </button>
+            <button
+              type="button"
+              disabled={!canDisableImport}
+              onClick={async () => {
+                try {
+                  const next = await onDisableImport(previewResult);
+                  if (next) setPreviewResult(next);
+                  setMessage("Import disabled.");
+                } catch (disableError) {
+                  setMessage(disableError?.message || "Disable import gagal.");
+                }
+              }}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: C.cardInner,
+                color: canDisableImport ? C.textMuted : C.textDim,
+                fontSize: 12,
+                cursor: canDisableImport ? "pointer" : "not-allowed",
+                opacity: canDisableImport ? 1 : 0.72,
+                ...FONT
+              }}
+            >
+              Disable
+            </button>
+          </div>
+        ) : null}
+
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+          <div style={{ fontSize: 12, color: C.textMuted }}>
+            Use selected skill_path: {safeString(selectedSkillPath, "preview")}
+          </div>
+          <button
+            type="button"
+            disabled={!canImportSkill}
+            onClick={handleImport}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 10,
+              border: "none",
+              background: C.accent,
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: canImportSkill ? "pointer" : "not-allowed",
+              opacity: canImportSkill ? 1 : 0.72,
+              ...FONT
+            }}
+            title={canImportSkill ? "Add selected skill." : "Import endpoint not available yet."}
+          >
+            {isSubmitting ? "Saving..." : "Add selected skill"}
+          </button>
         </div>
       </Card>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        <InlineFeedback message={error} error />
+        <InlineFeedback message={message} />
+      </div>
     </div>
   );
 }
 
-function LibraryTable({ rows, columns }) {
+function LibraryTable({ rows, columns, onRowAction }) {
+  const normalizedColumns = columns.map((column) => (typeof column === "string" ? { key: column, label: column } : column));
+  const gridTemplateColumns = normalizedColumns.length >= 7 ? "2fr 1fr 1fr 1.5fr 1.8fr 1fr 1fr" : "2fr 1fr 1fr 1.5fr 1fr";
+
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -734,15 +1939,15 @@ function LibraryTable({ rows, columns }) {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr",
+            gridTemplateColumns,
             padding: "8px 14px",
             background: C.bgDeep,
             borderBottom: `1px solid ${C.border}`
           }}
         >
-          {columns.map((column) => (
-            <div key={column} style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              {column}
+          {normalizedColumns.map((column) => (
+            <div key={column.key} style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              {column.label}
             </div>
           ))}
         </div>
@@ -751,37 +1956,47 @@ function LibraryTable({ rows, columns }) {
             key={`${row.name}-${index}`}
             style={{
               display: "grid",
-              gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1fr",
+              gridTemplateColumns,
               padding: "10px 14px",
               borderBottom: index < rows.length - 1 ? `1px solid ${C.border}` : "none",
               background: index % 2 === 0 ? C.card : C.bgDeep,
               alignItems: "center"
             }}
           >
-            <div style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{row.name}</div>
-            <div style={{ fontSize: 12, color: C.textMuted }}>{row.type}</div>
-            <div><span style={statusStyle(row.status)}>{row.status}</span></div>
-            <div style={{ fontSize: 12, color: C.textMuted }}>{row.agent}</div>
-            <div style={{ display: "flex", gap: 5 }}>
-              {["View", "Edit"].map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  style={{
-                    fontSize: 11,
-                    padding: "3px 8px",
-                    borderRadius: 6,
-                    border: `1px solid ${C.border}`,
-                    background: "none",
-                    color: C.textMuted,
-                    cursor: "pointer",
-                    ...FONT
-                  }}
-                >
-                  {action}
-                </button>
-              ))}
-            </div>
+            {normalizedColumns.map((column) => {
+              if (column.key === "action") {
+                return (
+                  <div key={column.key} style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    {(row.actions || [row.action || "View"]).map((action) => (
+                      <button
+                        key={action}
+                        type="button"
+                        onClick={() => onRowAction?.(action, row)}
+                        style={{
+                          fontSize: 11,
+                          padding: "3px 8px",
+                          borderRadius: 6,
+                          border: `1px solid ${C.border}`,
+                          background: "none",
+                          color: C.textMuted,
+                          cursor: "pointer",
+                          ...FONT
+                        }}
+                      >
+                        {action}
+                      </button>
+                    ))}
+                  </div>
+                );
+              }
+
+              const value = row[column.key];
+              return (
+                <div key={column.key} style={{ fontSize: 12, color: column.key === "name" ? C.text : C.textMuted, fontWeight: column.key === "name" ? 500 : 400 }}>
+                  {column.render ? column.render(value, row) : value || "-"}
+                </div>
+              );
+            })}
           </div>
         ))}
       </div>
@@ -789,45 +2004,85 @@ function LibraryTable({ rows, columns }) {
   );
 }
 
-function LibrarySkillContent() {
-  return <LibraryTable rows={SKILL_ROWS} columns={["nama skill", "type", "status", "agent", "action"]} />;
-}
-
-function LibraryWorkflowContent() {
-  return <LibraryTable rows={FLOW_ROWS} columns={["workflow name", "trigger", "status", "agent", "action"]} />;
-}
-
-function WorkflowN8nContent() {
+function LibrarySkillContent({ rows, onRowAction }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {N8N_ROWS.map((row) => (
-        <Card key={row.id} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{row.name}</div>
-            <span style={statusStyle(row.status)}>{row.status}</span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            {[
-              ["ID", row.id],
-              ["Agent", row.agent],
-              ["Trigger", row.trigger]
-            ].map(([label, value]) => (
-              <div key={label} style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 10, color: C.textDim, marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-                <div style={{ fontSize: 12, color: C.textSub }}>{value}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ padding: 10, borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, minHeight: 40 }}>
-            <div style={{ fontSize: 11, color: C.textDim }}>preview / details area</div>
-          </div>
-        </Card>
-      ))}
-    </div>
+    <LibraryTable
+      rows={rows}
+      columns={[
+        { key: "name", label: "Nama Skill" },
+        {
+          key: "type",
+          label: "Type",
+          render: (_value, row) => (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontWeight: 600, color: C.text }}>{safeString(row.typeLabel, row.type)}</span>
+              <span style={{ fontSize: 11, color: C.textDim }}>{safeString(row.typeDetail, "skill")}</span>
+            </div>
+          )
+        },
+        {
+          key: "runtimeStatus",
+          label: "Runtime",
+          render: (value) => <span style={statusStyle(value)}>{value}</span>
+        },
+        {
+          key: "status",
+          label: "Status",
+          render: (value, row) => (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={statusStyle(value)}>{value}</span>
+              {row?.blockedReason ? <span style={{ fontSize: 11, color: C.textDim }}>{row.blockedReason}</span> : null}
+            </div>
+          )
+        },
+        { key: "agent", label: "Attach Agent" },
+        { key: "sourceUrl", label: "Source URL" },
+        { key: "lastUpdate", label: "Last Update" },
+        { key: "action", label: "Action" }
+      ]}
+      onRowAction={onRowAction}
+    />
   );
 }
 
-function ActivityLogContent() {
+function LibraryWorkflowContent({ rows, onRowAction }) {
+  return (
+    <LibraryTable
+      rows={rows}
+      columns={[
+        { key: "name", label: "Workflow Name" },
+        { key: "type", label: "Trigger" },
+        {
+          key: "status",
+          label: "Status",
+          render: (value) => <span style={statusStyle(value)}>{value}</span>
+        },
+        { key: "agent", label: "Attach Agent" },
+        { key: "source", label: "Source URL" },
+        { key: "lastUpdate", label: "Last Update" },
+        { key: "action", label: "Action" }
+      ]}
+      onRowAction={onRowAction}
+    />
+  );
+}
+
+function WorkflowN8nContent(props) {
+  return <N8nPanel {...props} />;
+}
+
+function ActivityLogContent({ rows }) {
+  const [filter, setFilter] = useState("All");
+  const [query, setQuery] = useState("");
+  const [detail, setDetail] = useState(null);
+
+  const filteredRows = rows.filter((row) => {
+    const haystack = `${row.title} ${row.desc} ${row.status} ${row.actor}`.toLowerCase();
+    const matchesFilter = filter === "All" || haystack.includes(filter.toLowerCase());
+    const matchesQuery = !query.trim() || haystack.includes(query.trim().toLowerCase());
+    return matchesFilter && matchesQuery;
+  });
+
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -846,92 +2101,214 @@ function ActivityLogContent() {
           <span style={{ color: C.textDim }}>o</span>
           <input
             placeholder="search activity..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
             style={{ background: "none", border: "none", outline: "none", fontSize: 13, color: C.text, width: "100%", ...FONT }}
           />
         </div>
-        <button
-          type="button"
-          style={{
-            padding: "7px 14px",
-            borderRadius: 10,
-            border: `1.5px solid ${C.border}`,
-            background: C.cardInner,
-            color: C.textMuted,
-            fontSize: 12,
-            cursor: "pointer",
-            ...FONT
-          }}
-        >
-          All
-        </button>
-        <button
-          type="button"
-          style={{
-            padding: "7px 14px",
-            borderRadius: 10,
-            border: `1.5px solid ${C.border}`,
-            background: C.cardInner,
-            color: C.textMuted,
-            fontSize: 12,
-            cursor: "pointer",
-            ...FONT
-          }}
-        >
-          Today
-        </button>
+        {["All", "Agent", "Skill", "Workflow", "Approval", "Safety", "Settings"].map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setFilter(value)}
+            style={{
+              padding: "7px 14px",
+              borderRadius: 10,
+              border: `1.5px solid ${C.border}`,
+              background: filter === value ? C.card : C.cardInner,
+              color: C.textMuted,
+              fontSize: 12,
+              cursor: "pointer",
+              ...FONT
+            }}
+          >
+            {value}
+          </button>
+        ))}
       </div>
       <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
         Today
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {ACTIVITY_ROWS.map((item) => (
-          <Card key={`${item.time}-${item.title}`} style={{ background: C.card, padding: 12 }}>
-            <div style={{ display: "flex", gap: 10 }}>
-              <div style={{ width: 44, flexShrink: 0, fontSize: 12, color: C.textMuted }}>{item.time}</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{item.title}</div>
-                    <div style={{ fontSize: 12, color: C.textMuted, marginTop: 3 }}>{item.desc}</div>
+      {filteredRows.length ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filteredRows.map((item) => (
+            <Card key={`${item.time}-${item.title}`} style={{ background: C.card, padding: 12 }}>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ width: 44, flexShrink: 0, fontSize: 12, color: C.textMuted }}>{item.time}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{item.title}</div>
+                      <div style={{ fontSize: 12, color: C.textMuted, marginTop: 3 }}>{item.desc}</div>
+                    </div>
+                    <span style={statusStyle(item.tone)}>{item.status}</span>
                   </div>
-                  <span style={statusStyle(item.tone)}>{item.status}</span>
-                </div>
-                <div style={{ marginTop: 9 }}>
-                  <button
-                    type="button"
-                    style={{
-                      fontSize: 11,
-                      padding: "4px 9px",
-                      borderRadius: 7,
-                      border: `1px solid ${C.border}`,
-                      background: "none",
-                      color: C.textMuted,
-                      cursor: "pointer",
-                      ...FONT
-                    }}
-                  >
-                    View Detail
-                  </button>
+                  <div style={{ marginTop: 9 }}>
+                    <button
+                      type="button"
+                      onClick={() => setDetail(item)}
+                      style={{
+                        fontSize: 11,
+                        padding: "4px 9px",
+                        borderRadius: 7,
+                        border: `1px solid ${C.border}`,
+                        background: "none",
+                        color: C.textMuted,
+                        cursor: "pointer",
+                        ...FONT
+                      }}
+                    >
+                      View Detail
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <EmptyPanelState title="No activity log yet" description="Activity log kosong. Panel tetap read-only dan aman." />
+      )}
+      {detail ? (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.cardInner }}>
+          <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Detail</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{detail.title}</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>{detail.desc}</div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function SettingsContent({ currentUser }) {
+function SettingsContent({
+  currentUser,
+  providerSettings,
+  apiKeyStatuses,
+  modelProviders,
+  onSaveSettings,
+  onSaveApiKey,
+  onDeleteApiKey,
+  errors = {}
+}) {
   const user = currentUser || {
     display_name: "nama user",
     username: "nama user",
     email: "user@email.com",
     subscription_plan: "free"
   };
+  const providerOptions = [
+    { value: "openai", label: "OpenAI" },
+    { value: "anthropic", label: "Anthropic" },
+    { value: "google_gemini", label: "Google Gemini" },
+    { value: "openrouter", label: "OpenRouter" },
+    { value: "ollama_local", label: "Ollama Local" },
+    { value: "custom", label: "Custom" }
+  ].map((item) => {
+    const match = modelProviders.find((provider) => {
+      const name = String(provider?.name || "").toLowerCase();
+      const type = String(provider?.provider_type || "").toLowerCase();
+      return type === item.value || name.includes(item.value.replace("_", " "));
+    });
+
+    return {
+      value: item.value,
+      label: match?.name || item.label
+    };
+  });
+  const [preferredProvider, setPreferredProvider] = useState(providerSettings?.preferred_provider || providerOptions[0]?.value || "openai");
+  const [preferredModel, setPreferredModel] = useState(providerSettings?.preferred_model || "gpt-4o");
+  const [message, setMessage] = useState("");
+  const [keyDrafts, setKeyDrafts] = useState({});
+  const testConnectionLabel = "test connection not available yet";
+  const testConnectionEnabled = false;
+  const canSaveSettings = Boolean(onSaveSettings);
+
+  useEffect(() => {
+    setPreferredProvider(providerSettings?.preferred_provider || providerOptions[0]?.value || "openai");
+    setPreferredModel(providerSettings?.preferred_model || "gpt-4o");
+  }, [providerSettings?.preferred_provider, providerSettings?.preferred_model, providerOptions]);
+
+  useEffect(() => {
+    const next = {};
+    (apiKeyStatuses.length ? apiKeyStatuses : SETTINGS_KEYS).forEach((item) => {
+      next[item.provider] = "";
+    });
+    setKeyDrafts(next);
+  }, [apiKeyStatuses]);
+
+  async function handleSaveSettings() {
+    if (!onSaveSettings) {
+      setMessage("Save settings backend endpoint not available yet.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      await onSaveSettings({
+        preferred_provider: preferredProvider,
+        preferred_model: preferredModel
+      });
+      setMessage("Model setting saved.");
+    } catch (saveError) {
+      setMessage(saveError?.message || "Save settings gagal.");
+    }
+  }
+
+  async function handleSaveKey(provider) {
+    if (!onSaveApiKey) {
+      setMessage("Save key backend endpoint not available yet.");
+      return;
+    }
+
+    const apiKey = String(keyDrafts[provider] || "").trim();
+    if (!apiKey) {
+      setMessage("API key kosong.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      await onSaveApiKey(provider, apiKey);
+      setKeyDrafts((current) => ({ ...current, [provider]: "" }));
+      setMessage(`${provider} key saved.`);
+    } catch (saveError) {
+      setMessage(saveError?.message || "Save key gagal.");
+    }
+  }
+
+  async function handleDeleteKey(provider) {
+    if (!onDeleteApiKey) {
+      setMessage("Delete key backend endpoint not available yet.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      await onDeleteApiKey(provider);
+      setMessage(`${provider} key deleted.`);
+    } catch (deleteError) {
+      setMessage(deleteError?.message || "Delete key gagal.");
+    }
+  }
+
+  const keyRows = apiKeyStatuses.length
+    ? apiKeyStatuses.map((item, index) => ({
+        id: item?.provider || `provider-${index + 1}`,
+        provider: item?.provider || "-",
+        masked: item?.masked_key || item?.key_last4 || item?.maskedKey || "not set",
+        status: item?.connection_status || "not setup"
+      }))
+    : SETTINGS_KEYS.map((item) => ({
+        id: item.provider,
+        provider: item.provider,
+        masked: item.masked,
+        status: item.status
+      }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <InlineFeedback message={errors.general} error />
+
       <Card style={{ background: C.card }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
           Account / Profile
@@ -955,16 +2332,53 @@ function SettingsContent({ currentUser }) {
           Brain / Model
         </div>
         <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ padding: "8px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}`, fontSize: 12, color: C.textSub }}>
-            Default Provider: OpenAI
+          <div style={{ padding: "8px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Default Provider</div>
+            <select
+              value={preferredProvider}
+              onChange={(event) => setPreferredProvider(event.target.value)}
+              style={{ width: "100%", background: "none", border: "none", outline: "none", fontSize: 12, color: C.textSub, ...FONT }}
+            >
+              {providerOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
-          <div style={{ padding: "8px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}`, fontSize: 12, color: C.textSub }}>
-            Default Model: gpt-4o
+          <div style={{ padding: "8px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Default Model</div>
+            <input
+              value={preferredModel}
+              onChange={(event) => setPreferredModel(event.target.value)}
+              style={{ width: "100%", background: "none", border: "none", outline: "none", fontSize: 12, color: C.textSub, ...FONT }}
+            />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontSize: 12, color: C.textMuted }}>Status</div>
-            <span style={statusStyle("ready")}>ready</span>
+            <span style={statusStyle(preferredProvider ? "ready" : "need setup")}>{preferredProvider ? "ready" : "need setup"}</span>
           </div>
+          <button
+            type="button"
+            onClick={handleSaveSettings}
+            disabled={!canSaveSettings}
+            style={{
+              marginTop: 4,
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: `1px solid ${C.border}`,
+              background: C.cardInner,
+              color: canSaveSettings ? C.textMuted : C.textDim,
+              fontSize: 12,
+              cursor: canSaveSettings ? "pointer" : "not-allowed",
+              opacity: canSaveSettings ? 1 : 0.72,
+              ...FONT
+            }}
+            title={canSaveSettings ? "Save model settings." : "Save settings backend endpoint not available yet."}
+          >
+            Save Model Settings
+          </button>
         </div>
       </Card>
 
@@ -973,7 +2387,7 @@ function SettingsContent({ currentUser }) {
           API Key Vault
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {SETTINGS_KEYS.map((item) => (
+          {keyRows.map((item) => (
             <div key={item.provider} style={{ padding: "9px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                 <div>
@@ -981,6 +2395,79 @@ function SettingsContent({ currentUser }) {
                   <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{item.masked}</div>
                 </div>
                 <span style={statusStyle(item.status)}>{item.status}</span>
+              </div>
+              <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  value={keyDrafts[item.provider] || ""}
+                  onChange={(event) => setKeyDrafts((current) => ({ ...current, [item.provider]: event.target.value }))}
+                  placeholder="paste api key"
+                  style={{
+                    flex: 1,
+                    padding: "7px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${C.border}`,
+                    background: C.card,
+                    fontSize: 12,
+                    color: C.text,
+                    ...FONT
+                  }}
+                />
+                {(() => {
+                  const draftKey = String(keyDrafts[item.provider] || "").trim();
+                  const canSaveKey = Boolean(onSaveApiKey) && Boolean(draftKey);
+                  const canDeleteKey = Boolean(onDeleteApiKey);
+
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        disabled={!canSaveKey}
+                        onClick={() => handleSaveKey(item.provider)}
+                        style={{
+                          padding: "7px 10px",
+                          borderRadius: 8,
+                          border: `1px solid ${C.border}`,
+                          background: C.cardInner,
+                          color: canSaveKey ? C.textMuted : C.textDim,
+                          fontSize: 12,
+                          cursor: canSaveKey ? "pointer" : "not-allowed",
+                          opacity: canSaveKey ? 1 : 0.72,
+                          ...FONT
+                        }}
+                        title={canSaveKey ? "Save or update key." : "Need key input or backend save endpoint."}
+                      >
+                        Save / Update
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canDeleteKey}
+                        onClick={() => handleDeleteKey(item.provider)}
+                        style={{
+                          padding: "7px 10px",
+                          borderRadius: 8,
+                          border: `1px solid ${C.border}`,
+                          background: C.cardInner,
+                          color: canDeleteKey ? C.textMuted : C.textDim,
+                          fontSize: 12,
+                          cursor: canDeleteKey ? "pointer" : "not-allowed",
+                          opacity: canDeleteKey ? 1 : 0.72,
+                          ...FONT
+                        }}
+                        title={canDeleteKey ? "Delete key." : "Delete key backend endpoint not available yet."}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+              <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.5, color: C.textMuted }}>
+                Raw key cuma hidup di input sementara. Setelah save/update, field langsung dikosongkan.
               </div>
             </div>
           ))}
@@ -1004,10 +2491,1162 @@ function SettingsContent({ currentUser }) {
               <span style={statusStyle(value)}>{value}</span>
             </div>
           ))}
+          <button
+            type="button"
+            disabled={!testConnectionEnabled}
+            title="Backend belum sediakan test endpoint aman."
+            style={{
+              marginTop: 4,
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: `1px solid ${C.border}`,
+              background: C.bgDeep,
+              color: C.textMuted,
+              fontSize: 12,
+              cursor: "not-allowed",
+              opacity: 0.72,
+              ...FONT
+            }}
+          >
+            {testConnectionLabel}
+          </button>
         </div>
       </Card>
+      <div style={{ display: "grid", gap: 8 }}>
+        <InlineFeedback message={errors.apiKeyVault} error />
+        <InlineFeedback message={message} />
+      </div>
     </div>
   );
+}
+
+function SkillHubContent({ rows = [], selectedAgent, selectedAgentSkills = [], error = "", onOpenPanel }) {
+  const libraryCount = rows.length;
+  const activeCount = selectedAgentSkills.length;
+  const typeCounts = rows.reduce((acc, row) => {
+    const key = normalizeSkillType(row?.type || "prompt_skill");
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {
+    prompt_skill: 0,
+    knowledge_skill: 0,
+    tool_skill: 0,
+    workflow_skill: 0
+  });
+  const typeCards = [
+    "prompt_skill",
+    "knowledge_skill",
+    "tool_skill",
+    "workflow_skill"
+  ].map((type) => {
+    const meta = getSkillTypeMeta(type);
+    const count = typeCounts[type] || 0;
+    return { type, count, meta };
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <PanelHeader
+        title="Skill Hub"
+        description="Panel ringkas untuk buka import, library, dan skill aktif tanpa pindah backend flow."
+        badge={libraryCount ? "ready" : "preview only"}
+      />
+
+      {error ? <PanelStateCard title="Skill data" description={error} tone="review" /> : null}
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle
+          title="Quick Actions"
+          subtitle="Buka panel detail kalau mau lihat import atau library."
+        />
+        <div style={{ display: "grid", gap: 8 }}>
+          <PanelStateCard
+            title="Import skill"
+            description="Buka panel import GitHub skill. Preview dulu, baru approve."
+            actionLabel="Open"
+            onAction={() => onOpenPanel?.("import-skill")}
+          />
+          <PanelStateCard
+            title="Library skill"
+            description="Buka daftar skill library dan attach/detach yang sudah ada."
+            actionLabel="Open"
+            onAction={() => onOpenPanel?.("library-skill")}
+          />
+        </div>
+      </Card>
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle title="Skill Type Matrix" subtitle="Semua tipe skill harus kebaca jelas." />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+          {typeCards.map((item) => (
+            <div
+              key={item.type}
+              style={{
+                padding: "10px 11px",
+                borderRadius: 10,
+                border: `1px solid ${C.border}`,
+                background: item.meta.blocked ? "rgba(248,236,232,0.92)" : C.bgDeep
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{item.meta.label}</div>
+                  <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{item.meta.detail}</div>
+                </div>
+                <span style={statusStyle(item.meta.executionState)}>{item.meta.executionState}</span>
+              </div>
+              <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{item.count}</div>
+                <span style={statusStyle(item.meta.blocked ? "blocked" : "safe")}>{item.meta.blocked ? "blocked" : "ready"}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="Library Snapshot" subtitle={`${libraryCount} item terlihat`} />
+          {rows.length ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {rows.slice(0, 4).map((row) => (
+                <div
+                  key={row.id}
+                  style={{
+                    padding: "9px 10px",
+                    borderRadius: 9,
+                    background: C.bgDeep,
+                    border: `1px solid ${C.border}`
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.name}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                        {row.agent || "-"} | {safeString(row.typeLabel || getSkillTypeMeta(row.type).label, "Prompt")}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                      <span style={statusStyle(row.status)}>{row.status}</span>
+                      <span style={statusStyle(row.runtimeStatus || "preview only")}>{row.runtimeStatus || "preview only"}</span>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 7, fontSize: 11, color: C.textDim }}>{safeString(row.sourceUrl, "-")}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyPanelState
+              title="Skill library kosong"
+              description="Belum ada skill yang bisa ditampilkan. Buka import panel untuk menambah sumber."
+              actionLabel="Open import"
+              onAction={() => onOpenPanel?.("import-skill")}
+            />
+          )}
+        </Card>
+
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="Active skills" subtitle={selectedAgent ? `Agent ${selectedAgent.name}` : "Belum ada agent"} />
+          {selectedAgent ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <PanelStateCard
+                title={selectedAgent.name}
+                description={`${activeCount} skill aktif di agent terpilih.`}
+                actionLabel="Open active"
+                onAction={() => onOpenPanel?.("active-skills")}
+              />
+              {selectedAgentSkills.slice(0, 3).map((item) => {
+                const skill = item?.skill || {};
+                const typeMeta = getSkillTypeMeta(skill?.skill_type || skill?.type);
+                return (
+                  <div
+                    key={String(item?.id || skill?.id || skill?.name || `skill-${item?.created_at || "active"}`)}
+                    style={{
+                      padding: "9px 10px",
+                      borderRadius: 9,
+                      background: C.bgDeep,
+                      border: `1px solid ${C.border}`
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{skill?.title || skill?.name || "Skill"}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                          {safeString(typeMeta.label, "Skill")} | {safeString(skill?.skill_type || skill?.type, "active skill")}
+                        </div>
+                      </div>
+                      <span style={statusStyle(item?.is_enabled ? "active" : "inactive")}>
+                        {item?.is_enabled ? "enabled" : "disabled"}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 7, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <span style={statusStyle(typeMeta.executionState)}>{typeMeta.executionState}</span>
+                      {typeMeta.blocked ? <span style={statusStyle("blocked")}>non-executable</span> : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyPanelState
+              title="No agent selected"
+              description="Pilih agent dulu dari lane utama supaya active skill panel kebaca."
+              actionLabel="Open agent"
+              onAction={() => onOpenPanel?.("create-agent")}
+            />
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ProviderApiKeyContent({
+  currentUser,
+  providerSettings,
+  apiKeyStatuses,
+  modelProviders,
+  onSaveSettings,
+  onSaveApiKey,
+  onDeleteApiKey,
+  errors = {},
+  onOpenPanel
+}) {
+  const user = currentUser || {
+    display_name: "nama user",
+    username: "nama user",
+    email: "user@email.com",
+    subscription_plan: "free"
+  };
+  const providerOptions = [
+    { value: "openai", label: "OpenAI" },
+    { value: "anthropic", label: "Anthropic" },
+    { value: "google_gemini", label: "Google Gemini" },
+    { value: "openrouter", label: "OpenRouter" },
+    { value: "ollama_local", label: "Ollama Local" },
+    { value: "custom", label: "Custom" }
+  ].map((item) => {
+    const match = modelProviders.find((provider) => {
+      const name = String(provider?.name || "").toLowerCase();
+      const type = String(provider?.provider_type || "").toLowerCase();
+      return type === item.value || name.includes(item.value.replace("_", " "));
+    });
+
+    return {
+      value: item.value,
+      label: match?.name || item.label
+    };
+  });
+  const [preferredProvider, setPreferredProvider] = useState(providerSettings?.preferred_provider || providerOptions[0]?.value || "openai");
+  const [preferredModel, setPreferredModel] = useState(providerSettings?.preferred_model || "gpt-4o");
+  const [message, setMessage] = useState("");
+  const [keyDrafts, setKeyDrafts] = useState({});
+  const testConnectionLabel = "test connection not available yet";
+  const testConnectionEnabled = false;
+  const canSaveSettings = Boolean(onSaveSettings);
+
+  useEffect(() => {
+    setPreferredProvider(providerSettings?.preferred_provider || providerOptions[0]?.value || "openai");
+    setPreferredModel(providerSettings?.preferred_model || "gpt-4o");
+  }, [providerSettings?.preferred_provider, providerSettings?.preferred_model, providerOptions]);
+
+  useEffect(() => {
+    const next = {};
+    (apiKeyStatuses.length ? apiKeyStatuses : SETTINGS_KEYS).forEach((item) => {
+      next[item.provider] = "";
+    });
+    setKeyDrafts(next);
+  }, [apiKeyStatuses]);
+
+  async function handleSaveSettings() {
+    if (!onSaveSettings) {
+      setMessage("Save settings backend endpoint not available yet.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      await onSaveSettings({
+        preferred_provider: preferredProvider,
+        preferred_model: preferredModel
+      });
+      setMessage("Model setting saved.");
+    } catch (saveError) {
+      setMessage(saveError?.message || "Save settings gagal.");
+    }
+  }
+
+  async function handleSaveKey(provider) {
+    if (!onSaveApiKey) {
+      setMessage("Save key backend endpoint not available yet.");
+      return;
+    }
+
+    const apiKey = String(keyDrafts[provider] || "").trim();
+    if (!apiKey) {
+      setMessage("API key kosong.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      await onSaveApiKey(provider, apiKey);
+      setKeyDrafts((current) => ({ ...current, [provider]: "" }));
+      setMessage(`${provider} key saved.`);
+    } catch (saveError) {
+      setMessage(saveError?.message || "Save key gagal.");
+    }
+  }
+
+  async function handleDeleteKey(provider) {
+    if (!onDeleteApiKey) {
+      setMessage("Delete key backend endpoint not available yet.");
+      return;
+    }
+
+    setMessage("");
+    try {
+      await onDeleteApiKey(provider);
+      setMessage(`${provider} key deleted.`);
+    } catch (deleteError) {
+      setMessage(deleteError?.message || "Delete key gagal.");
+    }
+  }
+
+  const keyRows = apiKeyStatuses.length
+    ? apiKeyStatuses.map((item, index) => ({
+        id: item?.provider || `provider-${index + 1}`,
+        provider: item?.provider || "-",
+        masked: item?.masked_key || item?.key_last4 || item?.maskedKey || "not set",
+        status: item?.connection_status || "not setup"
+      }))
+    : SETTINGS_KEYS.map((item) => ({
+        id: item.provider,
+        provider: item.provider,
+        masked: item.masked,
+        status: item.status
+      }));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <PanelHeader
+        title="Provider / API Key"
+        description="Panel ringkas untuk atur provider default, simpan key, dan lihat status vault."
+        badge={preferredProvider ? "ready" : "need setup"}
+      />
+
+      <InlineFeedback message={errors.general} error />
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle title="Account" subtitle={user.display_name || user.username} />
+        <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ padding: "8px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}`, fontSize: 12, color: C.textSub }}>
+            Email: {user.email || "user@email.com"}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 12, color: C.textMuted }}>Plan</div>
+            <span style={statusStyle("ready")}>{String(user.subscription_plan || "FREE").toUpperCase()}</span>
+          </div>
+        </div>
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="Brain / Model" subtitle="Default provider dan model." />
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ padding: "8px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Default Provider</div>
+              <select
+                value={preferredProvider}
+                onChange={(event) => setPreferredProvider(event.target.value)}
+                style={{ width: "100%", background: "none", border: "none", outline: "none", fontSize: 12, color: C.textSub, ...FONT }}
+              >
+                {providerOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ padding: "8px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Default Model</div>
+              <input
+                value={preferredModel}
+                onChange={(event) => setPreferredModel(event.target.value)}
+                style={{ width: "100%", background: "none", border: "none", outline: "none", fontSize: 12, color: C.textSub, ...FONT }}
+              />
+            </div>
+          <button
+            type="button"
+            onClick={handleSaveSettings}
+            disabled={!canSaveSettings}
+            style={{
+              marginTop: 2,
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: `1px solid ${C.border}`,
+              background: C.cardInner,
+              color: canSaveSettings ? C.textMuted : C.textDim,
+              fontSize: 12,
+              cursor: canSaveSettings ? "pointer" : "not-allowed",
+              opacity: canSaveSettings ? 1 : 0.72,
+              ...FONT
+            }}
+            title={canSaveSettings ? "Save model settings." : "Save settings backend endpoint not available yet."}
+          >
+            Save Model Settings
+          </button>
+          </div>
+        </Card>
+
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="API Key Vault" subtitle="Raw key tidak ditampilkan." />
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {keyRows.map((item) => (
+              <div key={item.provider} style={{ padding: "9px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.provider}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{item.masked}</div>
+                  </div>
+                  <span style={statusStyle(item.status)}>{item.status}</span>
+                </div>
+              <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                {(() => {
+                  const draftKey = String(keyDrafts[item.provider] || "").trim();
+                  const canSaveKey = Boolean(onSaveApiKey) && Boolean(draftKey);
+                  const canDeleteKey = Boolean(onDeleteApiKey);
+
+                  return (
+                    <>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    value={keyDrafts[item.provider] || ""}
+                    onChange={(event) => setKeyDrafts((current) => ({ ...current, [item.provider]: event.target.value }))}
+                    placeholder="paste api key"
+                    style={{
+                      flex: 1,
+                      padding: "7px 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: C.card,
+                      fontSize: 12,
+                      color: C.text,
+                      ...FONT
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={!canSaveKey}
+                    onClick={() => handleSaveKey(item.provider)}
+                    style={{
+                      padding: "7px 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: C.cardInner,
+                      color: canSaveKey ? C.textMuted : C.textDim,
+                      fontSize: 12,
+                      cursor: canSaveKey ? "pointer" : "not-allowed",
+                      opacity: canSaveKey ? 1 : 0.72,
+                      ...FONT
+                    }}
+                    title={canSaveKey ? "Save or update key." : "Need key input or backend save endpoint."}
+                  >
+                    Save / Update
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canDeleteKey}
+                    onClick={() => handleDeleteKey(item.provider)}
+                    style={{
+                      padding: "7px 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: C.cardInner,
+                      color: canDeleteKey ? C.textMuted : C.textDim,
+                      fontSize: 12,
+                      cursor: canDeleteKey ? "pointer" : "not-allowed",
+                      opacity: canDeleteKey ? 1 : 0.72,
+                      ...FONT
+                    }}
+                    title={canDeleteKey ? "Delete key." : "Delete key backend endpoint not available yet."}
+                  >
+                    Delete
+                  </button>
+                    </>
+                  );
+                })()}
+                </div>
+                <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.5, color: C.textMuted }}>
+                  Raw key cuma hidup di input sementara. Setelah save/update, field langsung dikosongkan.
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <PanelStateCard
+        title="Connection note"
+        description="Provider test dan OAuth connection tetap backend-owned. Panel ini cuma mount shell dan simpan metadata aman."
+        tone="review"
+        actionLabel="Open connections"
+        onAction={() => onOpenPanel?.("oauth-connections")}
+      />
+      <button
+        type="button"
+        disabled={!testConnectionEnabled}
+        title="Backend belum sediakan test endpoint aman."
+        style={{
+          width: "100%",
+          padding: "8px 12px",
+          borderRadius: 10,
+          border: `1px solid ${C.border}`,
+          background: C.bgDeep,
+          color: C.textMuted,
+          fontSize: 12,
+          cursor: "not-allowed",
+          opacity: 0.72,
+          ...FONT
+        }}
+      >
+        {testConnectionLabel}
+      </button>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        <InlineFeedback message={errors.apiKeyVault} error />
+        <InlineFeedback message={message} />
+      </div>
+    </div>
+  );
+}
+
+function OAuthConnectionsContent({ modelProviders = [], apiKeyStatuses = [], runtimeCapabilities = [], errors = {}, onOpenPanel }) {
+  const oauthCapability = runtimeCapabilities.find((item) => String(item?.key || "") === "oauth.connection") || null;
+  const oauthBackendAvailable = Boolean(oauthCapability && oauthCapability.status !== "forbidden");
+  const providerRows = modelProviders.length
+    ? modelProviders.map((item, index) => {
+        const providerKey = String(item?.provider || item?.id || item?.name || `provider-${index + 1}`).toLowerCase();
+        const keyStatus = apiKeyStatuses.find((statusItem) => String(statusItem?.provider || "").toLowerCase() === providerKey) || null;
+        const providerType = String(item?.provider_type || item?.type || "").toLowerCase();
+        const authType = String(item?.auth_type || "").toLowerCase();
+        const statusSummary = getOAuthConnectionSummary(
+          keyStatus?.connection_status || item?.connection_status || (authType === "oauth_gateway" || providerType === "subscription_oauth" ? "locked" : "not setup")
+        );
+
+        return {
+          id: providerKey,
+          name: item?.name || item?.label || item?.provider || item?.id || `Provider ${index + 1}`,
+          type: providerType || authType || "api",
+          status: statusSummary.label,
+          statusTone: statusSummary.tone,
+          description: item?.description || item?.summary || keyStatus?.masked_key || "Connection metadata only.",
+          connectionDetail: oauthBackendAvailable ? "Backend metadata only. No token stored in frontend." : "OAuth backend endpoint not available yet.",
+          canConnect: Boolean(oauthBackendAvailable && (item?.oauth_auth_url || item?.auth_url || item?.connect_url || item?.auth_endpoint)),
+          canDisconnect: Boolean(oauthBackendAvailable && (item?.oauth_disconnect_url || item?.disconnect_url || item?.disconnect_endpoint))
+        };
+      })
+    : [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <PanelHeader
+        title="OAuth / Connections"
+        description="Panel koneksi. OAuth flow masih backend-required, jadi shell cuma baca status aman."
+        badge={oauthBackendAvailable ? "preview only" : "locked"}
+      />
+
+      <InlineFeedback message={errors.general} error />
+
+      <PanelStateCard
+        title={safeString(oauthCapability?.label, "OAuth connection")}
+        description={safeString(oauthBackendAvailable ? "OAuth backend endpoint available." : "OAuth backend endpoint not available yet.", "OAuth backend endpoint not available yet.")}
+        tone={oauthBackendAvailable ? "inactive" : "review"}
+        actionLabel="Open safety"
+        onAction={() => onOpenPanel?.("safety-center")}
+      />
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle
+          title="Provider links"
+          subtitle={oauthBackendAvailable ? "Status sinkron dari provider metadata dan vault." : "Backend belum sediakan auth/disconnect URL. Panel hanya tampilkan metadata aman."}
+        />
+        {providerRows.length ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {providerRows.map((row) => (
+              <div
+                key={row.id}
+                style={{
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  background: C.bgDeep,
+                  border: `1px solid ${C.border}`
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.name}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{row.type}</div>
+                  </div>
+                  <span style={statusStyle(row.statusTone)}>{row.status}</span>
+                </div>
+                <div style={{ marginTop: 7, fontSize: 11, lineHeight: 1.55, color: C.textDim }}>
+                  {row.description}
+                </div>
+                <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.55, color: C.textMuted }}>
+                  {row.connectionDetail}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={!row.canConnect}
+                    title={row.canConnect ? "Connect via backend auth URL." : "Backend auth URL belum tersedia."}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: row.canConnect ? C.bg : C.bgDeep,
+                      color: row.canConnect ? C.text : C.textMuted,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: row.canConnect ? "pointer" : "not-allowed",
+                      opacity: row.canConnect ? 1 : 0.7,
+                      ...FONT
+                    }}
+                  >
+                    Connect
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!row.canDisconnect}
+                    title={row.canDisconnect ? "Disconnect via backend endpoint." : "Backend disconnect endpoint belum tersedia."}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: row.canDisconnect ? C.bg : C.bgDeep,
+                      color: row.canDisconnect ? C.text : C.textMuted,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: row.canDisconnect ? "pointer" : "not-allowed",
+                      opacity: row.canDisconnect ? 1 : 0.7,
+                      ...FONT
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyPanelState
+            title="Belum ada connection row"
+            description="Backend belum kirim metadata koneksi. Buka Provider panel kalau mau atur key dulu."
+            actionLabel="Open provider panel"
+            onAction={() => onOpenPanel?.("providers")}
+          />
+        )}
+      </Card>
+
+      <PanelStateCard
+        title="Backend required"
+        description="Tidak ada live OAuth action di shell ini. Kalau endpoint koneksi muncul nanti, baru kita sambungkan."
+        tone="review"
+        actionLabel="Open provider keys"
+        onAction={() => onOpenPanel?.("providers")}
+      />
+    </div>
+  );
+}
+
+function SafetyCenterContent({
+  runtimeCapabilities = [],
+  activityRows = [],
+  auditRows = [],
+  taskRows = [],
+  approvalRows = [],
+  isLoading = false,
+  errors = {},
+  onOpenPanel,
+  onRefresh,
+  onApproveApproval,
+  onRejectApproval
+}) {
+  const capabilityRows = runtimeCapabilities.slice();
+  const pendingApprovals = approvalRows.filter((row) => row?.isPending);
+  const waitingApprovalTasks = taskRows.filter((row) => String(row?.status || "").toLowerCase().replace(/_/g, " ") === "waiting approval");
+  const completedTasks = taskRows.filter((row) => String(row?.status || "").toLowerCase() === "completed");
+  const failedTasks = taskRows.filter((row) => String(row?.status || "").toLowerCase() === "failed");
+  const recentActivity = activityRows.slice(0, 5);
+  const recentAudit = auditRows.slice(0, 5);
+  const recentTasks = taskRows.slice(0, 5);
+
+  const summaryCards = [
+    {
+      title: "Runtime",
+      value: capabilityRows.length,
+      detail: capabilityRows.length ? capabilityRows[0].label : "backend required",
+      badge: isLoading ? "loading" : capabilityRows.length ? "ready" : "preview only"
+    },
+    {
+      title: "Activity",
+      value: activityRows.length,
+      detail: activityRows.length ? recentActivity[0]?.title || "recent event" : "no rows",
+      badge: errors.activity ? "review" : activityRows.length ? "ready" : "preview only"
+    },
+    {
+      title: "Tasks",
+      value: taskRows.length,
+      detail: `${waitingApprovalTasks.length} waiting approval | ${completedTasks.length} completed | ${failedTasks.length} failed`,
+      badge: errors.tasks ? "review" : taskRows.length ? "ready" : "preview only"
+    },
+    {
+      title: "Approvals",
+      value: pendingApprovals.length,
+      detail: pendingApprovals.length ? "pending review" : "no pending approval",
+      badge: errors.approvals ? "review" : pendingApprovals.length ? "pending" : "ready"
+    }
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <PanelHeader
+        title="Safety Center"
+        description="Read-only safe. Logs, audit, task, approval cuma view. Tidak ada execution di sini."
+        badge={isLoading ? "loading" : capabilityRows.length ? "ready" : "preview only"}
+        actionLabel="Refresh"
+        onAction={onRefresh}
+        actionDisabled={isLoading}
+      />
+
+      {errors.safety ? <PanelStateCard title="Safety data" description={errors.safety} tone="review" /> : null}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+        {summaryCards.map((item) => (
+          <Card key={item.title} style={{ background: C.card, padding: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  {item.title}
+                </div>
+                <div style={{ marginTop: 6, fontSize: 22, fontWeight: 700, color: C.text }}>{item.value}</div>
+                <div style={{ marginTop: 3, fontSize: 11, color: C.textMuted, lineHeight: 1.45 }}>{item.detail}</div>
+              </div>
+              <span style={statusStyle(item.badge)}>{item.badge}</span>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle
+          title="Capability matrix"
+          subtitle="Mode backend menentukan mana yang confirm, suggestion-only, atau forbidden."
+        />
+        {errors.safety ? (
+          <PanelStateCard title="Capability data" description={errors.safety} tone="review" />
+        ) : capabilityRows.length ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {capabilityRows.map((item) => (
+              <div
+                key={item.key}
+                style={{
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  background: C.bgDeep,
+                  border: `1px solid ${C.border}`
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.label}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{item.key}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <span style={statusStyle(item.status)}>{item.status}</span>
+                    <span style={statusStyle(item.requires_confirmation ? "review" : "inactive")}>
+                      {item.requires_confirmation ? "confirm" : "no confirm"}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ marginTop: 7, fontSize: 11, lineHeight: 1.55, color: C.textDim }}>
+                  {item.description}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : isLoading ? (
+          <LoadingPanelState
+            title="Capability matrix not loaded"
+            description="Panel ini menunggu data runtime capabilities dari backend."
+          />
+        ) : (
+          <EmptyPanelState
+            title="Capability matrix empty"
+            description="Backend belum kirim runtime capability data. Panel tetap read-only."
+          />
+        )}
+      </Card>
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle
+          title="Activity logs"
+          subtitle="Recent event stream from GET /logs/activity."
+          actionLabel="Open activity log"
+          onAction={() => onOpenPanel?.("activity-log")}
+        />
+        {errors.activity ? (
+          <PanelStateCard title="Activity logs" description={errors.activity} tone="review" />
+        ) : isLoading ? (
+          <LoadingPanelState title="Activity logs loading" description="Menunggu activity log dari backend." />
+        ) : recentActivity.length ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {recentActivity.map((item) => (
+              <div
+                key={`${item.time}-${item.title}`}
+                style={{
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  background: C.bgDeep,
+                  border: `1px solid ${C.border}`
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.title}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, lineHeight: 1.5 }}>{item.desc}</div>
+                    <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}>actor {safeString(item.actor, "-")}</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+                    <span style={statusStyle(item.tone)}>{item.status}</span>
+                    <span style={{ fontSize: 11, color: C.textDim }}>{item.time}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyPanelState
+            title="No activity log yet"
+            description="GET /logs/activity balikin kosong. Shell tetap read-only."
+            actionLabel="Refresh"
+            onAction={onRefresh}
+          />
+        )}
+      </Card>
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle title="Audit logs" subtitle="Recent audit trail from GET /logs/audit." />
+        {errors.audit ? (
+          <PanelStateCard title="Audit logs" description={errors.audit} tone="review" />
+        ) : isLoading ? (
+          <LoadingPanelState title="Audit logs loading" description="Menunggu audit trail dari backend." />
+        ) : recentAudit.length ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {recentAudit.map((item) => (
+              <div
+                key={`${item.time}-${item.title}`}
+                style={{
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  background: C.bgDeep,
+                  border: `1px solid ${C.border}`
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.title}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, lineHeight: 1.5 }}>{item.desc}</div>
+                    <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}>actor {safeString(item.actor, "-")}</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+                    <span style={statusStyle(item.tone)}>{item.status}</span>
+                    <span style={{ fontSize: 11, color: C.textDim }}>{item.time}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyPanelState
+            title="No audit log yet"
+            description="GET /logs/audit balikin kosong. Shell tetap aman."
+            actionLabel="Refresh"
+            onAction={onRefresh}
+          />
+        )}
+      </Card>
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle title="Task summary" subtitle="Ringkas status dari GET /tasks." />
+        {errors.tasks ? (
+          <PanelStateCard title="Task summary" description={errors.tasks} tone="review" />
+        ) : isLoading ? (
+          <LoadingPanelState title="Task summary loading" description="Menunggu task list dari backend." />
+        ) : taskRows.length ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+              {[
+                { label: "Received", value: taskRows.filter((row) => String(row.status || "").toLowerCase() === "received").length },
+                { label: "Waiting approval", value: waitingApprovalTasks.length },
+                { label: "Completed", value: completedTasks.length },
+                { label: "Failed", value: failedTasks.length }
+              ].map((item) => (
+                <div key={item.label} style={{ padding: 10, borderRadius: 9, background: C.bgDeep, border: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.04em" }}>{item.label}</div>
+                  <div style={{ marginTop: 5, fontSize: 18, fontWeight: 700, color: C.text }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {recentTasks.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    padding: "9px 10px",
+                    borderRadius: 9,
+                    background: C.bgDeep,
+                    border: `1px solid ${C.border}`
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.title}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, lineHeight: 1.5 }}>{item.desc}</div>
+                      <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}>
+                        started {safeString(item.startedAt, "-")} | done {safeString(item.completedAt, "-")}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+                      <span style={statusStyle(item.tone)}>{item.status}</span>
+                      <span style={{ fontSize: 11, color: C.textDim }}>{item.time}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <EmptyPanelState
+            title="No task row yet"
+            description="GET /tasks kosong. Task summary tetap tampil kosong, bukan sukses palsu."
+            actionLabel="Refresh"
+            onAction={onRefresh}
+          />
+        )}
+      </Card>
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle title="Pending approvals" subtitle="Record-only approve/reject. No tool, n8n, or model execution." />
+        {errors.approvals ? (
+          <PanelStateCard title="Approvals" description={errors.approvals} tone="review" />
+        ) : isLoading ? (
+          <LoadingPanelState title="Approval list loading" description="Menunggu pending approvals dari backend." />
+        ) : pendingApprovals.length ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {pendingApprovals.map((item) => (
+              <div
+                key={item.id}
+                style={{
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  background: C.bgDeep,
+                  border: `1px solid ${C.border}`
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.title}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2, lineHeight: 1.5 }}>{item.desc}</div>
+                    <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}>task {safeString(item.taskId, "-")}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", flexShrink: 0 }}>
+                    <span style={statusStyle(item.riskLevel)}>{item.riskLevel}</span>
+                    <span style={statusStyle(item.status)}>{item.status}</span>
+                    {item.time ? <span style={{ fontSize: 11, color: C.textDim, alignSelf: "center" }}>{item.time}</span> : null}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => onApproveApproval?.(item.raw)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: C.cardInner,
+                      color: C.green,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRejectApproval?.(item.raw)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: C.cardInner,
+                      color: C.accent,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyPanelState
+            title="No pending approvals"
+            description="Tidak ada approval menunggu keputusan. Aksi tetap hidden."
+            actionLabel="Refresh"
+            onAction={onRefresh}
+          />
+        )}
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <PanelStateCard
+          title="Provider test"
+          description="Model provider test tetap explicit-confirm. Tidak dijalankan otomatis dari shell."
+          tone="review"
+          actionLabel="Open providers"
+          onAction={() => onOpenPanel?.("providers")}
+        />
+        <PanelStateCard
+          title="OAuth guard"
+          description="OAuth connection memang forbidden di release ini."
+          tone="review"
+          actionLabel="Open connections"
+          onAction={() => onOpenPanel?.("oauth-connections")}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ActiveSkillsContent({ selectedAgent, selectedAgentSkills = [], error = "", onOpenPanel }) {
+  const agentName = selectedAgent?.name || "Belum ada agent";
+
+  const rows = selectedAgentSkills.map((item, index) => {
+    const skill = item?.skill || {};
+    return {
+      id: String(item?.id || skill?.id || `active-skill-${index + 1}`),
+      name: skill?.title || skill?.name || skill?.slug || `Skill ${index + 1}`,
+      type: skill?.skill_type || skill?.type || "active_skill",
+      enabled: item?.is_enabled !== false,
+      source: skill?.source_url || skill?.source_reference || skill?.file_path || "-"
+    };
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <PanelHeader
+        title="Active Skills"
+        description="Skill aktif ngikut agent yang sedang dipilih di lane utama."
+        badge={selectedAgent ? "ready" : "preview only"}
+      />
+
+      {error ? <PanelStateCard title="Active skill data" description={error} tone="review" /> : null}
+
+      <PanelStateCard
+        title={agentName}
+        description={selectedAgent ? `${rows.length} skill aktif terhubung.` : "Pilih agent dulu supaya daftar active skill kebaca."}
+        tone={selectedAgent ? "inactive" : "review"}
+        actionLabel="Open skill panel"
+        onAction={() => onOpenPanel?.("skill-panel")}
+      />
+
+      <Card style={{ background: C.card }}>
+        <SectionTitle title="Active list" subtitle="Data dari GET /agents/{id}/active-skills." />
+        {rows.length ? (
+          <div style={{ display: "grid", gap: 8 }}>
+            {rows.map((row) => (
+              <div
+                key={row.id}
+                style={{
+                  padding: "9px 10px",
+                  borderRadius: 9,
+                  background: C.bgDeep,
+                  border: `1px solid ${C.border}`
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.name}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{row.type}</div>
+                  </div>
+                  <span style={statusStyle(row.enabled ? "active" : "inactive")}>{row.enabled ? "enabled" : "disabled"}</span>
+                </div>
+                <div style={{ marginTop: 7, fontSize: 11, color: C.textDim }}>{row.source}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyPanelState
+            title="No active skills"
+            description="Agent ini belum punya active skill. Buka skill panel untuk attach dari library."
+            actionLabel="Open skill hub"
+            onAction={() => onOpenPanel?.("skill-panel")}
+          />
+        )}
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <PanelStateCard
+          title="Agent switch"
+          description="Kalau mau lihat agent lain, balik ke lane utama dulu."
+          actionLabel="Open agent"
+          onAction={() => onOpenPanel?.("create-agent")}
+        />
+        <PanelStateCard
+          title="Library shortcut"
+          description="Attach/detach tetap di library skill panel."
+          actionLabel="Open library"
+          onAction={() => onOpenPanel?.("library-skill")}
+        />
+      </div>
+    </div>
+  );
+}
+
+function getOAuthConnectionSummary(status) {
+  const normalized = String(status || "").toLowerCase();
+
+  if (normalized === "connected" || normalized === "active" || normalized === "ready") {
+    return { label: "connected", tone: "active" };
+  }
+
+  if (normalized === "disconnected" || normalized === "not_connected") {
+    return { label: "disconnected", tone: "not setup" };
+  }
+
+  if (normalized === "locked" || normalized === "forbidden") {
+    return { label: "locked", tone: "locked" };
+  }
+
+  if (normalized === "not setup" || normalized === "inactive") {
+    return { label: "disconnected", tone: "not setup" };
+  }
+
+  return { label: normalized || "unknown", tone: "inactive" };
 }
 
 function NavButton({ label, icon, onClick, active = false }) {
@@ -1023,18 +3662,20 @@ function NavButton({ label, icon, onClick, active = false }) {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 10,
-        padding: "10px 12px",
-        borderRadius: 12,
+        gap: 9,
+        padding: "9px 12px 9px 11px",
+        borderRadius: 13,
         width: "100%",
         textAlign: "left",
-        border: `1px solid ${onState ? C.border : "transparent"}`,
-        background: onState ? C.card : "transparent",
+        border: `1px solid ${onState ? "rgba(90,65,35,0.10)" : "transparent"}`,
+        background: onState ? "rgba(255,255,255,0.86)" : "transparent",
         color: onState ? C.text : C.textSub,
-        fontSize: 13,
+        fontSize: 12.5,
         cursor: "pointer",
-        transition: "background 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease",
+        transition:
+          "background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease",
         transform: onState ? "translateX(1px)" : "translateX(0)",
+        boxShadow: onState ? "inset 0 1px 0 rgba(255,255,255,0.72), 0 3px 10px rgba(90,65,35,0.04)" : "none",
         ...FONT
       }}
     >
@@ -1044,9 +3685,9 @@ function NavButton({ label, icon, onClick, active = false }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          width: 16,
-          height: 16,
-          transition: "color 180ms ease"
+          width: 14,
+          height: 14,
+          transition: "color 160ms ease"
         }}
       >
         <MenuIcon name={icon} />
@@ -1224,6 +3865,188 @@ function AgentCard({ agent }) {
   );
 }
 
+function WorkspaceAgentCard({ agent, selected = false, onSelect, onApprove, onReject, onCaptureCommand }) {
+  const [cmd, setCmd] = useState("");
+  const [notes, setNotes] = useState([]);
+  const statusMap = {
+    idle: { label: "Idle", color: C.textDim, bg: "rgba(0,0,0,0.05)" },
+    active: { label: "Running", color: C.amber, bg: C.amberLight },
+    sending: { label: "Sending", color: C.green, bg: C.greenLight }
+  };
+  const status = statusMap[agent.status] || statusMap.idle;
+  const approval = agent.approval || (agent.needApproval ? { id: `preview-${agent.id}`, requested_action: "use workflow", risk_level: "medium", status: "pending" } : null);
+
+  function handleSend() {
+    const trimmed = cmd.trim();
+    if (!trimmed) return;
+    setNotes((current) => [{ id: Date.now(), text: trimmed }, ...current].slice(0, 2));
+    setCmd("");
+    onCaptureCommand?.(agent, trimmed);
+  }
+
+  return (
+    <div
+      onClick={onSelect}
+      style={{
+        flexShrink: 0,
+        width: 196,
+        background: C.card,
+        border: `1.5px solid ${selected ? "rgba(184,92,56,0.30)" : C.border}`,
+        borderRadius: 16,
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 11,
+        transition: "border-color 0.18s, box-shadow 0.18s",
+        boxShadow: selected ? "0 0 0 1px rgba(184,92,56,0.10), 0 12px 24px rgba(62,54,46,0.06)" : "none",
+        cursor: "pointer"
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 12,
+            background: C.accentLight,
+            border: `1px solid ${C.borderMid}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 13,
+            fontWeight: 700,
+            color: C.accent
+          }}
+        >
+          {agent.icon}
+        </div>
+        <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 7, color: status.color, background: status.bg }}>
+          {status.label}
+        </span>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2 }}>{agent.name}</div>
+        <div style={{ fontSize: 12, color: C.textMuted }}>skill {agent.skillCount}</div>
+      </div>
+
+      <div style={{ background: C.bgDeep, borderRadius: 10, padding: "8px 10px", border: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Skills</div>
+        {agent.skills.map((skill) => (
+          <div key={skill} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <div style={{ width: 4, height: 4, borderRadius: "50%", background: C.textDim, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: C.textMuted }}>{skill}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background: C.bgDeep, borderRadius: 10, padding: "8px 10px", border: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Activity</div>
+        {agent.activity.map((activity, index) => (
+          <div key={activity} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: index < agent.activity.length - 1 ? 4 : 0 }}>
+            <div
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: "50%",
+                flexShrink: 0,
+                background: index === 0 ? C.textDim : index === 1 ? C.amber : C.green
+              }}
+            />
+            <span style={{ fontSize: 11, color: C.textMuted }}>{activity}</span>
+          </div>
+        ))}
+      </div>
+
+      {approval ? (
+        <div
+          style={{
+            background: C.amberLight,
+            border: `1.5px solid rgba(176,120,32,0.25)`,
+            borderRadius: 12,
+            padding: 12
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.amber, marginBottom: 3 }}>Approval Needed</div>
+          <div style={{ fontSize: 11, color: C.textSub, marginBottom: 7 }}>Agent needs permission before continuing.</div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 9 }}>
+            {approval.requested_action || "use workflow"}
+            <br />
+            {approval.risk_level ? `risk: ${approval.risk_level}` : "risk: medium"}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onApprove?.(approval);
+              }}
+              style={{ flex: 1, padding: "5px 0", borderRadius: 7, border: "none", background: C.green, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", ...FONT }}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onReject?.(approval);
+              }}
+              style={{ flex: 1, padding: "5px 0", borderRadius: 7, border: `1px solid ${C.borderMid}`, background: "none", color: C.textMuted, fontSize: 11, cursor: "pointer", ...FONT }}
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {approval?.status && approval.status !== "pending" ? (
+        <div style={{ fontSize: 12, color: approval.status === "approved" ? C.green : C.textDim, textAlign: "center", padding: "4px 0" }}>
+          {approval.status === "approved" ? "Approved" : "Rejected"}
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: "auto" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "7px 10px",
+            borderRadius: 10,
+            border: `1.5px solid ${C.border}`,
+            background: C.bgDeep
+          }}
+        >
+          <input
+            value={cmd}
+            onChange={(event) => setCmd(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder="ketik untuk menyuruh agent..."
+            style={{ flex: 1, background: "none", border: "none", outline: "none", fontSize: 11, color: C.text, minWidth: 0, ...FONT }}
+          />
+          <button type="button" onClick={handleSend} style={{ background: "none", border: "none", cursor: "pointer", color: cmd ? C.accent : C.textDim, padding: 0 }}>
+            &gt;
+          </button>
+        </div>
+        {notes.length ? (
+          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            {notes.map((note) => (
+              <div key={note.id} style={{ padding: "7px 9px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+                {note.text}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function Sidebar({ onOpen }) {
   const [activeId, setActiveId] = useState("create-agent");
 
@@ -1242,7 +4065,9 @@ function Sidebar({ onOpen }) {
         display: "flex",
         flexDirection: "column",
         gap: 2,
-        padding: "10px 10px 12px"
+        padding: "10px 10px 12px",
+        overflowY: "auto",
+        scrollbarWidth: "thin"
       }}
     >
       {NAV_ITEMS.map((item) => (
@@ -1265,69 +4090,32 @@ function Sidebar({ onOpen }) {
   );
 }
 
-function ChatPanel({ open }) {
-  return (
-    <div
-      style={{
-        maxHeight: open ? 240 : 0,
-        overflow: "hidden",
-        transition: "max-height 0.28s ease",
-        borderTop: open ? `1px solid ${C.border}` : "none"
-      }}
-    >
-      <div
-        style={{
-          padding: "12px 16px 8px",
-          background: C.card,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          maxHeight: 240,
-          overflowY: "auto"
-        }}
-      >
-        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-          Main AI Conversation
-        </div>
-        {CHAT_HISTORY.map((message, index) => (
-          <div key={`${message.role}-${index}`} style={{ display: "flex", justifyContent: message.role === "You" ? "flex-end" : "flex-start" }}>
-            <div
-              style={{
-                maxWidth: "70%",
-                padding: "7px 12px",
-                borderRadius: 12,
-                background: message.role === "You" ? C.accentLight : C.bgDeep,
-                border: `1px solid ${C.border}`,
-                fontSize: 13,
-                color: C.textSub
-              }}
-            >
-              <div style={{ fontSize: 10, color: C.textDim, marginBottom: 2 }}>{message.role}</div>
-              {message.text}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WindowContent({ id, currentUser }) {
+function WindowContent({ id, currentUser, panelProps = {} }) {
   switch (id) {
     case "create-agent":
-      return <CreateAgentContent />;
+      return <CreateAgentContent {...panelProps.createAgent} />;
+    case "skill-panel":
+      return <SkillHubContent {...panelProps.skillHub} />;
     case "import-skill":
-      return <ImportSkillContent />;
+      return <ImportSkillContent {...panelProps.importSkill} />;
     case "library-skill":
-      return <LibrarySkillContent />;
+      return <LibrarySkillContent {...panelProps.librarySkill} />;
     case "library-workflow":
-      return <LibraryWorkflowContent />;
+      return <LibraryWorkflowContent {...panelProps.libraryWorkflow} />;
     case "workflow-n8n":
-      return <WorkflowN8nContent />;
+      return <WorkflowN8nContent {...panelProps.workflowN8n} />;
+    case "providers":
+      return <ProviderApiKeyContent {...panelProps.providerApiKey} />;
+    case "oauth-connections":
+      return <OAuthConnectionsContent {...panelProps.oauthConnections} />;
+    case "safety-center":
+      return <SafetyCenterContent {...panelProps.safetyCenter} />;
+    case "active-skills":
+      return <ActiveSkillsContent {...panelProps.activeSkills} />;
     case "activity-log":
-      return <ActivityLogContent />;
+      return <ActivityLogContent {...panelProps.activityLog} />;
     case "settings":
-      return <SettingsContent currentUser={currentUser} />;
+      return <SettingsContent currentUser={currentUser} {...panelProps.settings} />;
     default:
       return null;
   }
@@ -1338,33 +4126,178 @@ export default function FigmaMakeWorkspace() {
   const [currentUser, setCurrentUser] = useState(null);
   const [windows, setWindows] = useState([]);
   const [zTop, setZTop] = useState(100);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [prompt, setPrompt] = useState("");
   const laneRef = useRef(null);
   const laneDrag = useRef(false);
   const laneX0 = useRef(0);
   const laneScroll = useRef(0);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [apiAgents, setApiAgents] = useState([]);
+  const [apiAgentSkillsById, setApiAgentSkillsById] = useState({});
+  const [apiSkillLibrary, setApiSkillLibrary] = useState([]);
+  const [apiN8nWorkflows, setApiN8nWorkflows] = useState([]);
+  const [apiWorkflowTemplates, setApiWorkflowTemplates] = useState([]);
+  const [apiWorkflowConsents, setApiWorkflowConsents] = useState([]);
+  const [apiWorkflowBindings, setApiWorkflowBindings] = useState([]);
+  const [apiWorkflowExecutions, setApiWorkflowExecutions] = useState([]);
+  const [apiWorkflowHistory, setApiWorkflowHistory] = useState([]);
+  const [apiActivityLogs, setApiActivityLogs] = useState([]);
+  const [apiAuditLogs, setApiAuditLogs] = useState([]);
+  const [apiTasks, setApiTasks] = useState([]);
+  const [apiApprovals, setApiApprovals] = useState([]);
+  const [apiProviderSettings, setApiProviderSettings] = useState(null);
+  const [apiKeyStatuses, setApiKeyStatuses] = useState([]);
+  const [apiModelProviders, setApiModelProviders] = useState([]);
+  const [apiRuntimeCapabilities, setApiRuntimeCapabilities] = useState([]);
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const [panelErrors, setPanelErrors] = useState({
+    general: "",
+    createAgent: "",
+    importSkill: "",
+    skills: "",
+    workflows: "",
+    activity: "",
+    audit: "",
+    tasks: "",
+    settings: "",
+    apiKeyVault: "",
+    approvals: "",
+    n8n: "",
+    safety: ""
+  });
+  const [actionBusy, setActionBusy] = useState({
+    createAgent: false,
+    importSkill: false,
+    settings: false,
+    n8n: false
+  });
+  const [conversationEntries, setConversationEntries] = useState([
+    { role: "You", text: "bantu convert dokumen" },
+    { role: "Main AI", text: "saya akan arahkan ke agent PDF" },
+    { role: "You", text: "lanjut" },
+    { role: "Main AI", text: "menunggu approval sebelum melanjutkan" }
+  ]);
+
+  const refreshWorkspace = useCallback(async () => {
+    const results = await Promise.allSettled([
+      getCurrentUser(),
+      get("/agents"),
+      getSkillLibrary(),
+      getActivityLogs(),
+      getAuditLogs(),
+      getTasks(),
+      getPendingApprovals(),
+      getModelProviderSettings(),
+      getModelProviderKeyStatuses(),
+      getModelProviders(),
+      getRuntimeCapabilities(),
+      listN8nWorkflows(),
+      listWorkflowTemplates(),
+      listWorkflowConsents(),
+      listWorkflowBindings(),
+      listWorkflowExecutions(),
+      listWorkflowExecutionHistory()
+    ]);
+
+    const [
+      userResult,
+      agentsResult,
+      skillsResult,
+      activityResult,
+      auditResult,
+      taskResult,
+      approvalsResult,
+      settingsResult,
+      keyStatusResult,
+      modelProvidersResult,
+      runtimeCapabilitiesResult,
+      n8nResult,
+      templatesResult,
+      consentsResult,
+      bindingsResult,
+      executionsResult,
+      historyResult
+    ] = results;
+
+    setCurrentUser(userResult.status === "fulfilled" ? userResult.value : null);
+
+    const agents = agentsResult.status === "fulfilled" ? normalizeCollection(agentsResult.value) : [];
+    setApiAgents(agents);
+
+    const nextAgentSkillMap = {};
+    if (agents.length) {
+      const skillResults = await Promise.allSettled(agents.map((agent) => getAgentActiveSkills(agent.id)));
+      skillResults.forEach((skillResult, index) => {
+        if (skillResult.status === "fulfilled") {
+          nextAgentSkillMap[String(agents[index].id)] = normalizeCollection(skillResult.value);
+        }
+      });
+    }
+    setApiAgentSkillsById(nextAgentSkillMap);
+
+    setApiSkillLibrary(skillsResult.status === "fulfilled" ? normalizeCollection(skillsResult.value) : []);
+    setApiActivityLogs(activityResult.status === "fulfilled" ? normalizeCollection(activityResult.value) : []);
+    setApiAuditLogs(auditResult.status === "fulfilled" ? normalizeCollection(auditResult.value) : []);
+    setApiTasks(taskResult.status === "fulfilled" ? normalizeCollection(taskResult.value) : []);
+    setApiApprovals(approvalsResult.status === "fulfilled" ? normalizeCollection(approvalsResult.value) : []);
+    setApiProviderSettings(settingsResult.status === "fulfilled" ? settingsResult.value : null);
+    setApiKeyStatuses(keyStatusResult.status === "fulfilled" ? normalizeCollection(keyStatusResult.value) : []);
+    setApiModelProviders(modelProvidersResult.status === "fulfilled" ? normalizeCollection(modelProvidersResult.value) : []);
+    setApiRuntimeCapabilities(runtimeCapabilitiesResult.status === "fulfilled" ? normalizeCollection(runtimeCapabilitiesResult.value) : []);
+    setApiN8nWorkflows(n8nResult.status === "fulfilled" ? normalizeCollection(n8nResult.value) : []);
+    setApiWorkflowTemplates(templatesResult.status === "fulfilled" ? normalizeCollection(templatesResult.value) : []);
+    setApiWorkflowConsents(consentsResult.status === "fulfilled" ? normalizeCollection(consentsResult.value) : []);
+    setApiWorkflowBindings(bindingsResult.status === "fulfilled" ? normalizeCollection(bindingsResult.value) : []);
+    setApiWorkflowExecutions(executionsResult.status === "fulfilled" ? normalizeCollection(executionsResult.value) : []);
+    setApiWorkflowHistory(historyResult.status === "fulfilled" ? normalizeCollection(historyResult.value) : []);
+
+    setPanelErrors({
+      general: agentsResult.status === "rejected" ? "Agents unavailable. Preview fallback used." : "",
+      createAgent: "",
+      importSkill: "",
+      skills: skillsResult.status === "rejected" ? "Skill library unavailable. Preview fallback used." : "",
+      workflows: n8nResult.status === "rejected" ? "n8n registry unavailable." : "",
+      activity:
+        activityResult.status === "rejected"
+          ? activityResult.reason?.status === 404 || activityResult.reason?.status === 405
+            ? "GET /logs/activity missing. Backend-required."
+            : activityResult.reason?.message || "Activity log unavailable."
+          : "",
+      audit:
+        auditResult.status === "rejected"
+          ? auditResult.reason?.status === 404 || auditResult.reason?.status === 405
+            ? "GET /logs/audit missing. Backend-required."
+            : auditResult.reason?.message || "Audit log unavailable."
+          : "",
+      tasks:
+        taskResult.status === "rejected"
+          ? taskResult.reason?.status === 404 || taskResult.reason?.status === 405
+            ? "GET /tasks missing. Backend-required."
+            : taskResult.reason?.message || "Task summary unavailable."
+          : "",
+      settings: settingsResult.status === "rejected" || modelProvidersResult.status === "rejected" ? "Settings data unavailable. Preview fallback used." : "",
+      apiKeyVault: keyStatusResult.status === "rejected" ? "API key vault unavailable. Preview fallback used." : "",
+      approvals:
+        approvalsResult.status === "rejected"
+          ? approvalsResult.reason?.status === 404 || approvalsResult.reason?.status === 405
+            ? "GET /approvals/pending missing. Backend-required."
+            : approvalsResult.reason?.message || "Approval data unavailable."
+          : "",
+      n8n:
+        n8nResult.status === "rejected"
+          ? n8nResult.reason?.status === 403
+            ? n8nResult.reason?.message || "Free plan blocked. Upgrade to Pro, Executive, or admin."
+            : n8nResult.reason?.status === 404 || n8nResult.reason?.status === 405
+              ? "n8n backend required. /n8n-workflows endpoint missing."
+              : n8nResult.reason?.message || "n8n backend unavailable."
+          : "",
+      safety: runtimeCapabilitiesResult.status === "rejected" ? "Runtime capabilities unavailable. Backend-required panel only." : ""
+    });
+    setWorkspaceLoaded(true);
+  }, []);
 
   useEffect(() => {
-    let active = true;
-
-    async function loadUser() {
-      try {
-        const user = await getCurrentUser();
-        if (!active) return;
-        setCurrentUser(user);
-      } catch {
-        if (!active) return;
-        setCurrentUser(null);
-      }
-    }
-
-    loadUser();
-
-    return () => {
-      active = false;
-    };
-  }, []);
+    refreshWorkspace().catch(() => {});
+  }, [refreshWorkspace]);
 
   function openWindow(id) {
     const next = zTop + 1;
@@ -1412,12 +4345,471 @@ export default function FigmaMakeWorkspace() {
     if (laneRef.current) laneRef.current.style.cursor = "grab";
   }
 
-  const user = currentUser || {
+  const visibleAgents = useMemo(() => {
+    if (!workspaceLoaded) {
+      return PREVIEW_AGENTS;
+    }
+
+    if (!apiAgents.length) {
+      return [];
+    }
+
+    return apiAgents.map((agent, index) =>
+      buildAgentView(
+        agent,
+        index,
+        apiAgentSkillsById,
+        apiActivityLogs,
+        apiApprovals,
+        PREVIEW_AGENTS[index % PREVIEW_AGENTS.length]
+      )
+    );
+  }, [workspaceLoaded, apiAgents, apiAgentSkillsById, apiActivityLogs, apiApprovals]);
+
+  const selectedAgent = useMemo(() => {
+    return visibleAgents.find((agent) => agent.id === selectedAgentId) || visibleAgents[0] || null;
+  }, [selectedAgentId, visibleAgents]);
+
+  const selectedAgentSkills = useMemo(() => {
+    if (!selectedAgent?.id) return [];
+    return normalizeCollection(apiAgentSkillsById[String(selectedAgent.id)] || []);
+  }, [apiAgentSkillsById, selectedAgent]);
+
+  useEffect(() => {
+    if (!visibleAgents.length) return;
+    if (!selectedAgentId) {
+      setSelectedAgentId(visibleAgents[0].id);
+      return;
+    }
+    if (!visibleAgents.some((agent) => agent.id === selectedAgentId)) {
+      setSelectedAgentId(visibleAgents[0].id);
+    }
+  }, [selectedAgentId, visibleAgents]);
+
+  const activityRows = useMemo(() => {
+    return apiActivityLogs.length ? buildActivityRows(apiActivityLogs) : [];
+  }, [apiActivityLogs]);
+
+  const auditRows = useMemo(() => {
+    return apiAuditLogs.length ? buildAuditRows(apiAuditLogs) : [];
+  }, [apiAuditLogs]);
+
+  const taskRows = useMemo(() => {
+    return apiTasks.length ? buildTaskRows(apiTasks) : [];
+  }, [apiTasks]);
+
+  const approvalRows = useMemo(() => {
+    return apiApprovals.length ? buildApprovalRows(apiApprovals) : [];
+  }, [apiApprovals]);
+
+  const skillRows = useMemo(() => {
+    if (!workspaceLoaded) {
+      return PREVIEW_SKILLS;
+    }
+    return apiSkillLibrary.length ? buildSkillRows(apiSkillLibrary, selectedAgent, apiAgentSkillsById) : [];
+  }, [workspaceLoaded, apiSkillLibrary, selectedAgent, apiAgentSkillsById]);
+
+  const workflowRows = useMemo(() => {
+    if (apiN8nWorkflows.length) {
+      return buildWorkflowRows(apiN8nWorkflows, [], [], [], [], []);
+    }
+    if (apiWorkflowTemplates.length) {
+      return buildWorkflowRows(
+        [],
+        apiWorkflowTemplates,
+        apiWorkflowConsents,
+        apiWorkflowBindings,
+        apiWorkflowExecutions,
+        apiWorkflowHistory
+      );
+    }
+    return PREVIEW_WORKFLOWS;
+  }, [apiN8nWorkflows, apiWorkflowTemplates, apiWorkflowConsents, apiWorkflowBindings, apiWorkflowExecutions, apiWorkflowHistory]);
+
+  const n8nRows = useMemo(() => {
+    if (!apiN8nWorkflows.length) {
+      return [];
+    }
+    return buildN8nRows(apiN8nWorkflows, [], [], [], [], []);
+  }, [apiN8nWorkflows]);
+
+  const currentUserView = currentUser || {
     display_name: "nama user",
     username: "nama user",
     subscription_plan: "free",
     email: "user@email.com"
   };
+
+  const defaultProviderId = apiModelProviders[0]?.id || "";
+
+  async function handleCreateAgent(payload) {
+    setActionBusy((current) => ({ ...current, createAgent: true }));
+    setPanelErrors((current) => ({ ...current, createAgent: "" }));
+
+    try {
+      const defaultProvider =
+        apiModelProviders.find((item) => {
+          const id = String(item?.id || "").toLowerCase();
+          const name = String(item?.name || "").toLowerCase();
+          const preferred = String(apiProviderSettings?.preferred_provider || "").toLowerCase();
+          return id === preferred || name.includes(preferred) || preferred.includes(name);
+        }) || apiModelProviders[0] || null;
+
+      await createAgent({
+        name: payload.name,
+        slug: payload.name.toLowerCase().replace(/\s+/g, "-"),
+        description: `${payload.skill} agent`,
+        role_description: `${payload.skill} workspace agent`,
+        default_model_provider_id: payload.defaultProviderId || defaultProvider?.id || null,
+        default_model_name: payload.model,
+        status: payload.pinned ? "active" : "inactive",
+        max_steps: 10,
+        max_runtime_seconds: 300,
+        max_token_budget: null,
+        requires_approval_by_default: false,
+        instruction_text: `Workspace agent for ${payload.skill}.`
+      });
+
+      setConversationEntries((current) => [
+        {
+          role: "Main AI",
+          text: `agent ${payload.name} saved`
+        },
+        ...current
+      ]);
+      await refreshWorkspace();
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, createAgent: error?.message || "Create agent gagal." }));
+      throw error;
+    } finally {
+      setActionBusy((current) => ({ ...current, createAgent: false }));
+    }
+  }
+
+  async function handlePreviewImport(payload) {
+    return previewGithubSkillImport(payload);
+  }
+
+  async function handlePreviewCollection(payload) {
+    return previewGithubSkillCollection(payload);
+  }
+
+  async function handleImportSkill(payload) {
+    setActionBusy((current) => ({ ...current, importSkill: true }));
+    setPanelErrors((current) => ({ ...current, importSkill: "" }));
+
+    try {
+      const result = await importSelectedGithubSkill(payload);
+      setConversationEntries((current) => [
+        {
+          role: "Main AI",
+          text: `skill imported ${safeString(result?.file_path, payload.skill_path)}`
+        },
+        ...current
+      ]);
+      await refreshWorkspace();
+      return result;
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, importSkill: error?.message || "Import skill gagal." }));
+      throw error;
+    } finally {
+      setActionBusy((current) => ({ ...current, importSkill: false }));
+    }
+  }
+
+  async function handleApproveImport(importRecord) {
+    if (!importRecord?.id) return;
+
+    try {
+      const result = await approveGithubSkillImport(importRecord.id, {
+        name: safeString(importRecord?.skill_import_type || importRecord?.file_path || importRecord?.repo_url, "Imported Skill"),
+        slug: safeString(importRecord?.file_path || importRecord?.repo_url, "imported-skill")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, ""),
+        description: importRecord?.content_preview || "Approved from workspace",
+        version_label: "workspace",
+        risk_level: "medium",
+        status: "active",
+        review_notes: importRecord?.review_notes || "approved from workspace"
+      });
+      await refreshWorkspace();
+      return result;
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, importSkill: error?.message || "Approve import gagal." }));
+      throw error;
+    }
+  }
+
+  async function handleRejectImport(importRecord) {
+    if (!importRecord?.id) return;
+
+    try {
+      const result = await rejectGithubImport(importRecord.id, {
+        review_notes: importRecord?.review_notes || "rejected from workspace"
+      });
+      await refreshWorkspace();
+      return result;
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, importSkill: error?.message || "Reject import gagal." }));
+      throw error;
+    }
+  }
+
+  async function handleDisableImport(importRecord) {
+    if (!importRecord?.id) return;
+
+    try {
+      const result = await disableGithubImport(importRecord.id);
+      await refreshWorkspace();
+      return result;
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, importSkill: error?.message || "Disable import gagal." }));
+      throw error;
+    }
+  }
+
+  async function handleSkillRowAction(action, row) {
+    const agentId = selectedAgent?.id || visibleAgents[0]?.id || "";
+
+    try {
+      if (action === "Attach" && agentId) {
+        await attachImportedSkillToAgent(agentId, row.id);
+      } else if (action === "Detach" && agentId) {
+        await detachImportedSkillFromAgent(agentId, row.id);
+      } else if (action === "Disable") {
+        await post(`/skills/${row.id}/deactivate`);
+      } else {
+        setConversationEntries((current) => [
+          {
+            role: "Main AI",
+            text: `selected skill ${row.name}`
+          },
+          ...current
+        ]);
+        return;
+      }
+
+      await refreshWorkspace();
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, skills: error?.message || "Skill action gagal." }));
+    }
+  }
+
+  async function handleWorkflowRowAction(action, row) {
+    try {
+      if (action === "Disable") {
+        if (row?.raw?.consent?.id) {
+          await revokeWorkflowConsent(row.raw.consent.id);
+        } else if (row?.raw?.binding?.id) {
+          await deleteWorkflowBinding(row.raw.binding.id);
+        } else if (row?.raw?.id) {
+          await patch(`/n8n-workflows/${row.raw.id}`, { status: "disabled" });
+        }
+      } else if (action === "Delete" && row?.raw?.id) {
+        await remove(`/n8n-workflows/${row.raw.id}`);
+      } else {
+        setConversationEntries((current) => [
+          {
+            role: "Main AI",
+            text: `selected workflow ${row.name}`
+          },
+          ...current
+        ]);
+        return;
+      }
+
+      await refreshWorkspace();
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, workflows: error?.message || "Workflow action gagal." }));
+    }
+  }
+
+  async function handleCreateN8nWorkflow(workflowId, payload) {
+    setActionBusy((current) => ({ ...current, n8n: true }));
+    setPanelErrors((current) => ({ ...current, n8n: "" }));
+
+    try {
+      if (workflowId) {
+        await updateN8nWorkflow(workflowId, payload);
+      } else {
+        await createN8nWorkflow(payload);
+      }
+      await refreshWorkspace();
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, n8n: error?.message || "n8n registry save gagal." }));
+      throw error;
+    } finally {
+      setActionBusy((current) => ({ ...current, n8n: false }));
+    }
+  }
+
+  async function handleDeleteN8nWorkflow(workflowId) {
+    if (!workflowId) return;
+
+    setActionBusy((current) => ({ ...current, n8n: true }));
+    setPanelErrors((current) => ({ ...current, n8n: "" }));
+
+    try {
+      await deleteN8nWorkflow(workflowId);
+      await refreshWorkspace();
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, n8n: error?.message || "n8n registry delete gagal." }));
+      throw error;
+    } finally {
+      setActionBusy((current) => ({ ...current, n8n: false }));
+    }
+  }
+
+  async function handleApprovalDecision(approval, decision) {
+    try {
+      await post(`/approvals/${approval.id}/${decision}`, {
+        decision_reason: `${decision} from workspace`
+      });
+      await refreshWorkspace();
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, approvals: error?.message || "Approval action gagal." }));
+    }
+  }
+
+  async function handleSaveSettings(payload) {
+    setActionBusy((current) => ({ ...current, settings: true }));
+    try {
+      await updateModelProviderSettings(payload);
+      await refreshWorkspace();
+    } catch (error) {
+      setPanelErrors((current) => ({ ...current, settings: error?.message || "Settings save gagal." }));
+      throw error;
+    } finally {
+      setActionBusy((current) => ({ ...current, settings: false }));
+    }
+  }
+
+  async function handleSaveApiKey(provider, apiKey) {
+    await saveModelProviderApiKey(provider, { api_key: apiKey });
+    await refreshWorkspace();
+  }
+
+  async function handleDeleteApiKey(provider) {
+    await deleteModelProviderApiKey(provider);
+    await refreshWorkspace();
+  }
+
+  const panelProps = {
+    createAgent: {
+      onCreateAgent: handleCreateAgent,
+      isSubmitting: actionBusy.createAgent,
+      error: panelErrors.createAgent,
+      defaultProviderId,
+      modelProviders: apiModelProviders
+    },
+    skillHub: {
+      rows: skillRows,
+      selectedAgent,
+      selectedAgentSkills,
+      error: panelErrors.skills,
+      onOpenPanel: openWindow
+    },
+    importSkill: {
+      onPreviewImport: handlePreviewImport,
+      onPreviewCollection: handlePreviewCollection,
+      onImportSkill: handleImportSkill,
+      onApproveImport: handleApproveImport,
+      onRejectImport: handleRejectImport,
+      onDisableImport: handleDisableImport,
+      isSubmitting: actionBusy.importSkill,
+      error: panelErrors.importSkill
+    },
+    librarySkill: {
+      rows: skillRows,
+      onRowAction: handleSkillRowAction
+    },
+    libraryWorkflow: {
+      rows: workflowRows,
+      onRowAction: handleWorkflowRowAction
+    },
+    workflowN8n: {
+      currentUser,
+      rows: n8nRows,
+      error: panelErrors.n8n,
+      isLoading: !workspaceLoaded,
+      onRefresh: refreshWorkspace,
+      onSaveWorkflow: handleCreateN8nWorkflow,
+      onDeleteWorkflow: handleDeleteN8nWorkflow
+    },
+    activityLog: {
+      rows: activityRows
+    },
+    auditLog: {
+      rows: auditRows
+    },
+    taskSummary: {
+      rows: taskRows
+    },
+    providerApiKey: {
+      currentUser: currentUserView,
+      providerSettings: apiProviderSettings,
+      apiKeyStatuses,
+      modelProviders: apiModelProviders,
+      onSaveSettings: handleSaveSettings,
+      onSaveApiKey: handleSaveApiKey,
+      onDeleteApiKey: handleDeleteApiKey,
+      errors: {
+        general: panelErrors.settings,
+        apiKeyVault: panelErrors.apiKeyVault
+      },
+      onOpenPanel: openWindow
+    },
+    oauthConnections: {
+      modelProviders: apiModelProviders,
+      apiKeyStatuses,
+      runtimeCapabilities: apiRuntimeCapabilities,
+      errors: {
+        general: panelErrors.settings
+      },
+      onOpenPanel: openWindow
+    },
+    safetyCenter: {
+      runtimeCapabilities: apiRuntimeCapabilities,
+      activityRows,
+      auditRows,
+      taskRows,
+      approvalRows,
+      isLoading: !workspaceLoaded,
+      errors: {
+        activity: panelErrors.activity,
+        audit: panelErrors.audit,
+        tasks: panelErrors.tasks,
+        approvals: panelErrors.approvals,
+        safety: panelErrors.safety
+      },
+      onRefresh: refreshWorkspace,
+      onApproveApproval: (approval) => handleApprovalDecision(approval, "approve"),
+      onRejectApproval: (approval) => handleApprovalDecision(approval, "reject"),
+      onOpenPanel: openWindow
+    },
+    activeSkills: {
+      selectedAgent,
+      selectedAgentSkills,
+      error: panelErrors.skills,
+      onOpenPanel: openWindow
+    },
+    settings: {
+      currentUser: currentUserView,
+      providerSettings: apiProviderSettings,
+      apiKeyStatuses,
+      modelProviders: apiModelProviders,
+      onSaveSettings: handleSaveSettings,
+      onSaveApiKey: handleSaveApiKey,
+      onDeleteApiKey: handleDeleteApiKey,
+      errors: {
+        general: panelErrors.settings,
+        apiKeyVault: panelErrors.apiKeyVault
+      }
+    }
+  };
+
+  const user = currentUserView;
 
   return (
     <ProtectedRoute>
@@ -1433,8 +4825,18 @@ export default function FigmaMakeWorkspace() {
             flexShrink: 0
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <span style={{ fontSize: 22, color: C.text, ...SERIF }}>workspace</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <span
+              style={{
+                fontSize: 21,
+                color: C.text,
+                ...SERIF,
+                letterSpacing: "-0.02em",
+                lineHeight: 1
+              }}
+            >
+              workspace
+            </span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div
                 style={{
@@ -1454,7 +4856,18 @@ export default function FigmaMakeWorkspace() {
                 U
               </div>
               <span style={{ fontSize: 13, color: C.textSub }}>{user.display_name || user.username}</span>
-              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: C.accentLight, color: C.accent, letterSpacing: "0.05em" }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 6,
+                  background: C.accentLight,
+                  color: C.accent,
+                  letterSpacing: "0.05em",
+                  lineHeight: 1
+                }}
+              >
                 {String(user.subscription_plan || "FREE").toUpperCase()}
               </span>
             </div>
@@ -1462,14 +4875,14 @@ export default function FigmaMakeWorkspace() {
           <button
             type="button"
             onClick={handleLogout}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              padding: "7px 14px",
-              borderRadius: 10,
-              border: `1.5px solid ${C.border}`,
-              background: "none",
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "7px 13px",
+                borderRadius: 10,
+                border: `1.5px solid ${C.border}`,
+                background: "none",
               color: C.textMuted,
               fontSize: 13,
               cursor: "pointer",
@@ -1509,91 +4922,165 @@ export default function FigmaMakeWorkspace() {
                   alignItems: "flex-start"
                 }}
               >
-                {PREVIEW_AGENTS.map((agent) => (
-                  <AgentCard key={agent.id} agent={agent} />
-                ))}
+                {!workspaceLoaded ? (
+                  <LoadingPanelState
+                    title="Loading agents"
+                    description="Ambil list agent dan active skill dari backend."
+                  />
+                ) : visibleAgents.length ? (
+                  visibleAgents.map((agent) => (
+                    <WorkspaceAgentCard
+                      key={agent.id}
+                      agent={agent}
+                      selected={selectedAgent?.id === agent.id}
+                      onSelect={() => setSelectedAgentId(agent.id)}
+                      onApprove={(approval) => handleApprovalDecision(approval, "approve")}
+                      onReject={(approval) => handleApprovalDecision(approval, "reject")}
+                      onCaptureCommand={(selected, message) => {
+                        setConversationEntries((current) => [
+                          {
+                            role: selected.name,
+                            text: message
+                          },
+                          ...current
+                        ]);
+                      }}
+                    />
+                  ))
+                ) : (
+                  <EmptyPanelState
+                    title="No agents yet"
+                    description="Buat agent dulu. Setelah itu pilih satu agent buat lihat detail dan chat."
+                    actionLabel="Create agent"
+                    onAction={() => openWindow("create-agent")}
+                  />
+                )}
               </div>
             </div>
 
-            <div style={{ flexShrink: 0, borderTop: `1px solid ${C.border}`, background: C.bgDeep }}>
-              <ChatPanel open={chatOpen} />
-              <div style={{ padding: "10px 16px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-                <button
-                  type="button"
-                  onClick={() => setChatOpen((open) => !open)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "8px 12px",
-                    borderRadius: 10,
-                    border: `1.5px solid ${C.border}`,
-                    background: C.card,
-                    color: C.textMuted,
-                    fontSize: 12,
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    ...FONT
-                  }}
-                >
-                  {chatOpen ? "^" : "v"} History
-                </button>
+            <div style={{ flexShrink: 0, borderTop: `1px solid ${C.border}`, background: C.bgDeep, padding: 12, display: "grid", gap: 12 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 360px) minmax(0, 1fr)",
+                  gap: 12,
+                  alignItems: "stretch"
+                }}
+              >
+                <div style={{ borderRadius: 16, border: `1px solid ${C.border}`, background: C.card, padding: 12, display: "grid", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      Selected Agent
+                    </div>
+                    {selectedAgent ? (
+                      <>
+                        <div style={{ marginTop: 6, fontSize: 18, fontWeight: 700, color: C.text }}>
+                          {selectedAgent.name}
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted, lineHeight: 1.6 }}>
+                          {selectedAgent.roleDescription || "Workspace agent."}
+                        </div>
+                        <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          <span style={statusStyle(selectedAgent.status || "inactive")}>{selectedAgent.status || "inactive"}</span>
+                          <span style={statusStyle("ready")}>{selectedAgent.skillCount || 0} skills</span>
+                          <span style={statusStyle(selectedAgentSkills.length ? "active" : "review")}>{selectedAgentSkills.length ? "active skills" : "no active skills"}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ marginTop: 8 }}>
+                        <EmptyPanelState
+                          title={workspaceLoaded ? "No agent yet" : "Loading agents"}
+                          description={workspaceLoaded ? "Buat agent dulu supaya chat dan active skill kebaca." : "Ambil data agent dari backend dulu."}
+                          actionLabel="Create agent"
+                          onAction={() => openWindow("create-agent")}
+                        />
+                      </div>
+                    )}
+                  </div>
 
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 14px",
-                    borderRadius: 14,
-                    border: `1.5px solid ${C.borderMid}`,
-                    background: C.card
-                  }}
-                >
-                  <input
-                    value={prompt}
-                    onChange={(event) => setPrompt(event.target.value)}
-                    placeholder="ini tempat untuk main AI bisa langsung menyuruh lewat prompt..."
-                    style={{ flex: 1, background: "none", border: "none", outline: "none", fontSize: 13, color: C.text, ...FONT }}
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      Recent command notes
+                    </div>
+                    {conversationEntries.length ? (
+                      conversationEntries.slice(0, 3).map((entry, index) => (
+                        <div key={`${entry.role}-${index}`} style={{ borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep, padding: "8px 10px" }}>
+                          <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                            {entry.role}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, color: C.textSub, lineHeight: 1.5 }}>
+                            {entry.text}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ borderRadius: 10, border: `1px dashed ${C.border}`, background: "rgba(255,255,255,0.6)", padding: "10px 12px", fontSize: 12, color: C.textMuted }}>
+                        Belum ada catatan command.
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => openWindow("active-skills")}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        background: C.cardInner,
+                        color: C.textMuted,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        ...FONT
+                      }}
+                    >
+                      Open active skills
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openWindow("skill-panel")}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        background: C.cardInner,
+                        color: C.textMuted,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        ...FONT
+                      }}
+                    >
+                      Open skill panel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openWindow("create-agent")}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        background: C.cardInner,
+                        color: C.textMuted,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        ...FONT
+                      }}
+                    >
+                      Create agent
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ minWidth: 0 }}>
+                  <AgentChatPanel
+                    agent={selectedAgent}
+                    providerLabel={
+                      apiProviderSettings?.preferred_provider || apiProviderSettings?.preferred_model
+                        ? [apiProviderSettings?.preferred_provider, apiProviderSettings?.preferred_model].filter(Boolean).join(" / ")
+                        : "preview only"
+                    }
                   />
-                  <button
-                    type="button"
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "5px 14px",
-                      borderRadius: 9,
-                      border: `1px solid ${C.border}`,
-                      background: C.cardInner,
-                      color: C.textMuted,
-                      fontSize: 12,
-                      cursor: "pointer",
-                      flexShrink: 0,
-                      ...FONT
-                    }}
-                  >
-                    model <span>v</span>
-                  </button>
-                  <button
-                    type="button"
-                    style={{
-                      width: 34,
-                      height: 34,
-                      borderRadius: 10,
-                      border: "none",
-                      cursor: "pointer",
-                      background: prompt ? C.accent : "rgba(90,65,35,0.1)",
-                      color: prompt ? "#fff" : C.textDim,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0
-                    }}
-                  >
-                    &gt;
-                  </button>
                 </div>
               </div>
             </div>
@@ -1608,7 +5095,7 @@ export default function FigmaMakeWorkspace() {
             onFocus={() => focusWindow(windowItem.id)}
             zIndex={windowItem.zIndex}
           >
-            <WindowContent id={windowItem.id} currentUser={user} />
+            <WindowContent id={windowItem.id} currentUser={user} panelProps={panelProps} />
           </FloatingWindow>
         ))}
       </div>
