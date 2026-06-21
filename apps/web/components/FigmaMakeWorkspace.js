@@ -89,7 +89,9 @@ const NAV_ITEMS = [
 ];
 
 const WIN_META = {
-  "create-agent": { title: "Agent Panel", width: 560, ix: 230, iy: 60 },
+  "create-agent": { title: "Create Agent", width: 920, ix: 120, iy: 60 },
+  "create-agent-skills": { title: "Choose Agent Skills", width: 820, ix: 180, iy: 90 },
+  "create-agent-brain": { title: "Choose Agent Brain", width: 780, ix: 220, iy: 100 },
   "skill-panel": { title: "Skill Panel", width: 640, ix: 250, iy: 80 },
   "import-skill": { title: "Import Skill", width: 720, ix: 220, iy: 90 },
   "library-skill": { title: "Library Skill", width: 900, ix: 180, iy: 70 },
@@ -1938,33 +1940,379 @@ function AgentAvatar({ agent, size = 42 }) {
   );
 }
 
-function CreateAgentContent({ onCreateAgent, isSubmitting = false, error = "", defaultProviderId = "", modelProviders = [] }) {
+function CreateAgentContent({
+  onCreateAgent,
+  isSubmitting = false,
+  error = "",
+  defaultProviderId = "",
+  modelProviders = [],
+  providerSettings = null,
+  apiKeyStatuses = [],
+  skillLibrary = [],
+  skillLibraryLoading = false,
+  skillLibraryError = "",
+  submitStage = "idle"
+}) {
   const [name, setName] = useState("Doc Converter");
-  const [skill, setSkill] = useState("convert pdf");
-  const [model, setModel] = useState("gpt-4o");
   const [pinned, setPinned] = useState(false);
   const [message, setMessage] = useState("");
+  const [selectedSkillIds, setSelectedSkillIds] = useState([]);
+  const [draftSelectedSkillIds, setDraftSelectedSkillIds] = useState([]);
+  const [selectedBrainId, setSelectedBrainId] = useState("");
+  const [draftSelectedBrainId, setDraftSelectedBrainId] = useState("");
+  const [skillSearch, setSkillSearch] = useState("");
+  const [skillFilter, setSkillFilter] = useState("all");
+  const [brainSearch, setBrainSearch] = useState("");
+  const [brainFilter, setBrainFilter] = useState("all");
+  const [activePicker, setActivePicker] = useState("");
+  const [avatarMode, setAvatarMode] = useState("emoji");
+  const [avatarEmoji, setAvatarEmoji] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarPreviewFailed, setAvatarPreviewFailed] = useState(false);
+  const [avatarUploadKind, setAvatarUploadKind] = useState("image");
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarFeedback, setAvatarFeedback] = useState("");
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState("");
+  const avatarFileInputRef = useRef(null);
   const canCreate = Boolean(onCreateAgent) && !isSubmitting;
-
-  const modelOptions = useMemo(
-    () =>
-      modelProviders.length
-        ? modelProviders.map((item) => ({
-            value: item?.id || item?.provider || item?.name || "openai",
-            label: item?.name || item?.label || item?.id || item?.provider || "OpenAI"
-          }))
-        : [
-            { value: "openai", label: "OpenAI" },
-            { value: "openrouter", label: "OpenRouter" }
-          ],
-    [modelProviders]
+  const maxAvatarBytes = 2 * 1024 * 1024;
+  const normalizedSkillLibrary = useMemo(() => (Array.isArray(skillLibrary) ? skillLibrary : []), [skillLibrary]);
+  const brainOptions = useMemo(
+    () => getBrainOptions(modelProviders, providerSettings, apiKeyStatuses),
+    [apiKeyStatuses, modelProviders, providerSettings]
   );
+  const selectedBrainEntry = useMemo(() => {
+    if (!brainOptions.length) {
+      return null;
+    }
+
+    return brainOptions.find((item) => item.id === selectedBrainId) || brainOptions[0] || null;
+  }, [brainOptions, selectedBrainId]);
+  const draftBrainEntry = useMemo(() => {
+    if (!brainOptions.length) {
+      return null;
+    }
+
+    return brainOptions.find((item) => item.id === draftSelectedBrainId) || brainOptions[0] || null;
+  }, [brainOptions, draftSelectedBrainId]);
+  const skillEntryMap = useMemo(() => {
+    const map = new Map();
+    normalizeSkillPickerOptions(normalizedSkillLibrary, [], "").forEach((entry) => {
+      if (entry?.id) {
+        map.set(entry.id, entry);
+      }
+    });
+    return map;
+  }, [normalizedSkillLibrary]);
+  const selectedSkillEntries = useMemo(
+    () => selectedSkillIds.map((id) => skillEntryMap.get(id)).filter(Boolean),
+    [selectedSkillIds, skillEntryMap]
+  );
+  const draftSelectedSkillEntries = useMemo(
+    () => draftSelectedSkillIds.map((id) => skillEntryMap.get(id)).filter(Boolean),
+    [draftSelectedSkillIds, skillEntryMap]
+  );
+  const draftSkillEntries = useMemo(
+    () => normalizeSkillPickerOptions(normalizedSkillLibrary, draftSelectedSkillIds, skillSearch),
+    [draftSelectedSkillIds, normalizedSkillLibrary, skillSearch]
+  );
+  const visibleSkillEntries = useMemo(() => {
+    return draftSkillEntries.filter((entry) => {
+      if (skillFilter === "all") {
+        return true;
+      }
+      if (skillFilter === "unavailable") {
+        return !entry.selectable;
+      }
+      return entry.type === `${skillFilter}_skill`;
+    });
+  }, [draftSkillEntries, skillFilter]);
+  const visibleBrainOptions = useMemo(() => {
+    const query = brainSearch.trim().toLowerCase();
+
+    return brainOptions.filter((entry) => {
+      const searchable = [entry.providerLabel, entry.model, entry.mode, entry.status, entry.description, entry.family].join(" ").toLowerCase();
+      const matchesQuery = !query || searchable.includes(query);
+
+      const matchesFilter =
+        brainFilter === "all"
+          ? true
+          : brainFilter === "configured"
+            ? entry.status === "configured" || entry.status === "default"
+            : brainFilter === "deferred"
+              ? entry.status === "deferred" || entry.status === "not configured"
+              : entry.family === brainFilter;
+
+      return matchesQuery && matchesFilter;
+    });
+  }, [brainOptions, brainFilter, brainSearch]);
 
   useEffect(() => {
-    if (!model && modelOptions.length) {
-      setModel(modelOptions[0].value);
+    if (!brainOptions.length) {
+      return;
     }
-  }, [model, modelOptions]);
+
+    if (!selectedBrainId || !brainOptions.some((item) => item.id === selectedBrainId)) {
+      setSelectedBrainId(brainOptions[0].id);
+    }
+  }, [brainOptions, selectedBrainId]);
+
+  useEffect(() => {
+    if (!brainOptions.length) {
+      return;
+    }
+
+    if (!draftSelectedBrainId || !brainOptions.some((item) => item.id === draftSelectedBrainId)) {
+      setDraftSelectedBrainId(brainOptions[0].id);
+    }
+  }, [brainOptions, draftSelectedBrainId]);
+
+  useEffect(() => {
+    const validSelectedIds = selectedSkillIds.filter((id) => skillEntryMap.has(id));
+    const validDraftIds = draftSelectedSkillIds.filter((id) => skillEntryMap.has(id));
+
+    if (validSelectedIds.length !== selectedSkillIds.length) {
+      setSelectedSkillIds(validSelectedIds);
+    }
+    if (validDraftIds.length !== draftSelectedSkillIds.length) {
+      setDraftSelectedSkillIds(validDraftIds);
+    }
+  }, [draftSelectedSkillIds, selectedSkillIds, skillEntryMap]);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreviewUrl("");
+      return undefined;
+    }
+
+    const objectUrl = URL.createObjectURL(avatarFile);
+    setAvatarPreviewUrl(objectUrl);
+    setAvatarPreviewFailed(false);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [avatarFile]);
+
+  useEffect(() => {
+    setAvatarPreviewFailed(false);
+  }, [avatarEmoji, avatarMode, avatarPreviewUrl, avatarUrl]);
+
+  useEffect(() => {
+    if (!activePicker) {
+      return undefined;
+    }
+
+    function handleEscape(event) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      setActivePicker("");
+      setDraftSelectedSkillIds(selectedSkillIds);
+      setDraftSelectedBrainId(selectedBrainId);
+      setSkillSearch("");
+      setSkillFilter("all");
+      setBrainSearch("");
+      setBrainFilter("all");
+    }
+
+    window.addEventListener("keydown", handleEscape);
+
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [activePicker, selectedBrainId, selectedSkillIds]);
+
+  function normalizeHttpUrl(value) {
+    const text = String(value || "").trim();
+
+    if (!text || text.startsWith("//")) {
+      return "";
+    }
+
+    try {
+      const parsed = new URL(text);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return "";
+      }
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  }
+
+  function openSkillsPicker() {
+    setDraftSelectedSkillIds(selectedSkillIds);
+    setSkillSearch("");
+    setSkillFilter("all");
+    setActivePicker("skills");
+  }
+
+  function closeSkillsPicker() {
+    setActivePicker("");
+    setDraftSelectedSkillIds(selectedSkillIds);
+    setSkillSearch("");
+    setSkillFilter("all");
+  }
+
+  function openBrainPicker() {
+    setDraftSelectedBrainId(selectedBrainId || (brainOptions[0] && brainOptions[0].id) || "");
+    setBrainSearch("");
+    setBrainFilter("all");
+    setActivePicker("brain");
+  }
+
+  function closeBrainPicker() {
+    setActivePicker("");
+    setDraftSelectedBrainId(selectedBrainId || (brainOptions[0] && brainOptions[0].id) || "");
+    setBrainSearch("");
+    setBrainFilter("all");
+  }
+
+  function toggleDraftSkill(skillId) {
+    const nextId = String(skillId || "").trim();
+    if (!nextId) {
+      return;
+    }
+
+    const entry = skillEntryMap.get(nextId);
+    if (!entry?.selectable) {
+      return;
+    }
+
+    setDraftSelectedSkillIds((current) =>
+      current.includes(nextId) ? current.filter((value) => value !== nextId) : [...current, nextId]
+    );
+  }
+
+  function applySelectedSkills() {
+    const nextIds = Array.from(new Set(draftSelectedSkillIds.filter((id) => skillEntryMap.has(id))));
+    setSelectedSkillIds(nextIds);
+    setDraftSelectedSkillIds(nextIds);
+    setActivePicker("");
+    setSkillSearch("");
+    setSkillFilter("all");
+  }
+
+  function applySelectedBrain() {
+    const nextBrainId = draftSelectedBrainId || (brainOptions[0] && brainOptions[0].id) || "";
+    setSelectedBrainId(nextBrainId);
+    setDraftSelectedBrainId(nextBrainId);
+    setActivePicker("");
+    setBrainSearch("");
+    setBrainFilter("all");
+  }
+
+  function handleAvatarFileChange(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    const name = String(file.name || "").toLowerCase();
+    const mime = String(file.type || "").toLowerCase();
+    const isSvg = mime === "image/svg+xml" || name.endsWith(".svg");
+    const imageAllowed = new Set(["image/png", "image/jpeg", "image/webp"]);
+    const animationAllowed = new Set(["image/gif", "image/webp"]);
+
+    if (file.size > maxAvatarBytes) {
+      setAvatarFeedback("File avatar terlalu besar. Maks 2MB.");
+      setAvatarFile(null);
+      return;
+    }
+
+    if (isSvg) {
+      setAvatarFeedback("SVG tidak boleh dipakai.");
+      setAvatarFile(null);
+      return;
+    }
+
+    let nextUploadKind = avatarUploadKind;
+    if (mime === "image/gif") {
+      nextUploadKind = "animation";
+    } else if (mime === "image/png" || mime === "image/jpeg") {
+      nextUploadKind = "image";
+    }
+
+    if (nextUploadKind !== avatarUploadKind) {
+      setAvatarUploadKind(nextUploadKind);
+    }
+
+    if (nextUploadKind === "animation") {
+      if (!animationAllowed.has(mime)) {
+        setAvatarFeedback("File animasi harus GIF atau WebP.");
+        setAvatarFile(null);
+        return;
+      }
+    } else if (!imageAllowed.has(mime) && !animationAllowed.has(mime)) {
+      setAvatarFeedback("File avatar harus PNG, JPG, WebP, atau GIF.");
+      setAvatarFile(null);
+      return;
+    }
+
+    setAvatarFeedback("");
+    setAvatarFile(file);
+  }
+
+  function validateAvatarDraft() {
+    if (avatarMode === "emoji") {
+      const value = String(avatarEmoji || "").trim();
+      if (!value) {
+        return { ok: false, message: "Emoji avatar wajib diisi." };
+      }
+      if (Array.from(value).length > 16) {
+        return { ok: false, message: "Emoji avatar maksimal 16 karakter." };
+      }
+      return { ok: true, avatarType: "emoji", avatarValue: value };
+    }
+
+    if (avatarMode === "image_url" || avatarMode === "animation_url") {
+      const value = normalizeHttpUrl(avatarUrl);
+      if (!value) {
+        return { ok: false, message: "URL avatar wajib http/https valid." };
+      }
+      return {
+        ok: true,
+        avatarType: avatarMode === "image_url" ? "image_url" : "animation_url",
+        avatarValue: value
+      };
+    }
+
+    if (avatarMode === "upload") {
+      if (!avatarFile) {
+        return { ok: false, message: "Pilih file avatar dulu." };
+      }
+
+      if (avatarFile.size > maxAvatarBytes) {
+        return { ok: false, message: "File avatar terlalu besar. Maks 2MB." };
+      }
+
+      const name = String(avatarFile.name || "").toLowerCase();
+      const mime = String(avatarFile.type || "").toLowerCase();
+      const isSvg = mime === "image/svg+xml" || name.endsWith(".svg");
+      const imageAllowed = new Set(["image/png", "image/jpeg", "image/webp"]);
+      const animationAllowed = new Set(["image/gif", "image/webp"]);
+
+      if (isSvg) {
+        return { ok: false, message: "SVG tidak boleh dipakai." };
+      }
+
+      if (avatarUploadKind === "animation") {
+        if (!animationAllowed.has(mime)) {
+          return { ok: false, message: "File animasi harus GIF atau WebP." };
+        }
+        return { ok: true, avatarType: "uploaded_animation", avatarKind: "uploaded_animation", avatarFile };
+      }
+
+      if (!imageAllowed.has(mime) && !animationAllowed.has(mime)) {
+        return { ok: false, message: "File avatar harus PNG, JPG, WebP, atau GIF." };
+      }
+
+      return { ok: true, avatarType: "uploaded_image", avatarKind: "uploaded_image", avatarFile };
+    }
+
+    return { ok: true };
+  }
 
   async function handleCreate() {
     if (!onCreateAgent) {
@@ -1978,54 +2326,385 @@ function CreateAgentContent({ onCreateAgent, isSubmitting = false, error = "", d
       return;
     }
 
+    const avatarValidation = validateAvatarDraft();
+    if (!avatarValidation.ok) {
+      setAvatarFeedback(avatarValidation.message || "Avatar tidak valid.");
+      return;
+    }
+
+    const selectedBrain = selectedBrainEntry || brainOptions[0] || null;
+    const brainProviderId =
+      selectedBrain?.providerId && selectedBrain.providerId !== "default"
+        ? selectedBrain.providerId
+        : defaultProviderId || "";
+    const brainModel = selectedBrain?.model || "gpt-4o";
+
     setMessage("");
+    setAvatarFeedback("");
+
     try {
-      await onCreateAgent({
+      const result = await onCreateAgent({
         name: trimmedName,
-        skill,
-        model,
-        defaultProviderId,
-        pinned
+        selectedSkillIds,
+        model: brainModel,
+        defaultProviderId: brainProviderId,
+        pinned,
+        avatarMode,
+        avatarType: avatarValidation.avatarType || null,
+        avatarValue: avatarValidation.avatarValue || null,
+        avatarFile: avatarValidation.avatarFile || null,
+        avatarKind: avatarValidation.avatarKind || null
       });
-      setMessage("Agent saved.");
+
+      setMessage(result?.message || "Agent saved.");
     } catch (createError) {
       setMessage(createError?.message || "Create agent gagal.");
     }
   }
 
+  const selectedSkillSummary = selectedSkillEntries.slice(0, 4);
+  const remainingSkillCount = Math.max(0, selectedSkillEntries.length - selectedSkillSummary.length);
+  const submitLabel =
+    submitStage === "uploading"
+      ? "Uploading..."
+      : submitStage === "attaching"
+        ? "Attaching..."
+        : isSubmitting
+          ? "Saving..."
+          : "Create";
+  const selectedBrainStatusLabel = selectedBrainEntry ? selectedBrainEntry.status : "default";
+  const selectedBrainDisplay = selectedBrainEntry
+    ? `${selectedBrainEntry.providerLabel} · ${selectedBrainEntry.model}`
+    : "Default workspace model will be used.";
+  const selectedBrainMode = selectedBrainEntry?.mode || "balanced";
+  const selectedBrainDescription = selectedBrainEntry?.description || "Default workspace model will be used.";
+  const selectedBrainProvider = selectedBrainEntry?.providerLabel || "Default workspace";
+  const selectedAvatarPreviewSource =
+    avatarMode === "upload"
+      ? avatarPreviewUrl
+      : avatarMode === "image_url" || avatarMode === "animation_url"
+        ? normalizeHttpUrl(avatarUrl)
+        : "";
+  const selectedAvatarEmoji = avatarMode === "emoji" ? String(avatarEmoji || "").trim() : "";
+  const selectedAvatarFallback = getAgentInitials(name);
+
+  const avatarModeButtons = [
+    { key: "emoji", label: "Emoji" },
+    { key: "image_url", label: "Image URL" },
+    { key: "animation_url", label: "Animation URL" },
+    { key: "upload", label: "Upload" }
+  ];
+
+  const skillFilterTabs = [
+    { key: "all", label: "All" },
+    { key: "prompt", label: "Prompt" },
+    { key: "knowledge", label: "Knowledge" },
+    { key: "workflow", label: "Workflow" },
+    { key: "tool", label: "Tool" },
+    { key: "unavailable", label: "Unavailable" }
+  ];
+
+  const brainFilterTabs = [
+    { key: "all", label: "All" },
+    { key: "configured", label: "Configured" },
+    { key: "openai", label: "OpenAI" },
+    { key: "anthropic", label: "Anthropic" },
+    { key: "google", label: "Google" },
+    { key: "local", label: "Local" },
+    { key: "deferred", label: "Deferred" }
+  ];
+
   return (
-    <div style={{ display: "flex", gap: 18 }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <InputField label="Agent Name" placeholder="e.g. Doc Converter" value={name} onChange={(event) => setName(event.target.value)} />
-        <div style={{ marginBottom: 10 }}>
-          <Label text="Icon" />
-          <div
-            style={{
-              padding: "9px 12px",
-              borderRadius: 10,
-              border: `1.5px dashed ${C.borderMid}`,
-              background: C.cardInner,
-              color: C.textMuted,
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              cursor: "pointer"
-            }}
-          >
-            <span style={{ color: C.textDim }}>^</span>
-            import icon - PNG, JPG, WebP, GIF
+    <div style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 520px", minWidth: 0, display: "grid", gap: 12 }}>
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="Agent Name" subtitle="Nama utama agent." />
+          <InputField
+            label=""
+            placeholder="e.g. Doc Converter"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Card>
+
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="Agent Avatar" subtitle="Emoji, URL, atau upload file." />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            {avatarModeButtons.map((item) => {
+              const active = avatarMode === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    setAvatarMode(item.key);
+                    setAvatarFeedback("");
+                  }}
+                  style={{
+                    padding: "7px 10px",
+                    borderRadius: 999,
+                    border: `1px solid ${active ? C.accent : C.border}`,
+                    background: active ? C.accentLight : C.cardInner,
+                    color: active ? C.accent : C.textMuted,
+                    fontSize: 12,
+                    cursor: "pointer",
+                    ...FONT
+                  }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
           </div>
-        </div>
-        <DropField label="Skills" placeholder="search or type skill name..." value={skill} onChange={(event) => setSkill(event.target.value)} />
-        <DropField
-          label="Brain / Model"
-          placeholder="select AI model..."
-          value={model}
-          onChange={(event) => setModel(event.target.value)}
-          options={modelOptions}
-        />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 120px", gap: 12, alignItems: "center" }}>
+            <div style={{ minWidth: 0 }}>
+              {avatarMode === "emoji" ? (
+                <InputField
+                  label="Emoji"
+                  placeholder="🤖"
+                  value={avatarEmoji}
+                  onChange={(event) => setAvatarEmoji(event.target.value)}
+                />
+              ) : avatarMode === "image_url" ? (
+                <InputField
+                  label="Image URL"
+                  placeholder="https://example.com/avatar.png"
+                  value={avatarUrl}
+                  onChange={(event) => setAvatarUrl(event.target.value)}
+                />
+              ) : avatarMode === "animation_url" ? (
+                <InputField
+                  label="Animation URL"
+                  placeholder="https://example.com/avatar.gif"
+                  value={avatarUrl}
+                  onChange={(event) => setAvatarUrl(event.target.value)}
+                />
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <Label text="Upload Avatar" />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {[
+                      { key: "image", label: "Image" },
+                      { key: "animation", label: "Animation" }
+                    ].map((item) => {
+                      const active = avatarUploadKind === item.key;
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => setAvatarUploadKind(item.key)}
+                          style={{
+                            padding: "7px 10px",
+                            borderRadius: 999,
+                            border: `1px solid ${active ? C.accent : C.border}`,
+                            background: active ? C.accentLight : C.cardInner,
+                            color: active ? C.accent : C.textMuted,
+                            fontSize: 12,
+                            cursor: "pointer",
+                            ...FONT
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => avatarFileInputRef.current?.click()}
+                      style={{
+                        padding: "7px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        background: C.cardInner,
+                        color: C.textMuted,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        ...FONT
+                      }}
+                    >
+                      Select file
+                    </button>
+                    <div style={{ fontSize: 12, color: C.textMuted, minWidth: 0 }}>
+                      {avatarFile ? safeString(avatarFile.name, "Selected file") : "PNG, JPG, WebP, GIF. Max 2MB."}
+                    </div>
+                  </div>
+                  <input
+                    ref={avatarFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    onChange={handleAvatarFileChange}
+                    style={{ display: "none" }}
+                  />
+                </div>
+              )}
+
+              <div style={{ marginTop: 10 }}>
+                <InlineFeedback message={avatarFeedback} error />
+              </div>
+            </div>
+
+            <div
+              style={{
+                width: 120,
+                height: 120,
+                borderRadius: 18,
+                border: `1px solid ${C.borderMid}`,
+                background: C.bgDeep,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                color: C.accent,
+                fontWeight: 700,
+                fontSize: 30
+              }}
+            >
+              {avatarMode === "emoji" && selectedAvatarEmoji ? (
+                <span style={{ lineHeight: 1 }}>{selectedAvatarEmoji}</span>
+              ) : selectedAvatarPreviewSource && !avatarPreviewFailed ? (
+                <img
+                  src={selectedAvatarPreviewSource}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarPreviewFailed(true)}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                />
+              ) : (
+                <span>{selectedAvatarFallback}</span>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="Agent Brain" subtitle="Choose model brain for this agent." />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={activePicker === "brain" ? closeBrainPicker : openBrainPicker}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: `1px solid ${C.borderMid}`,
+                background: C.cardInner,
+                color: C.textMuted,
+                fontSize: 12,
+                cursor: "pointer",
+                ...FONT
+              }}
+            >
+              Choose brain
+            </button>
+            <div style={{ fontSize: 12, color: C.textMuted, textAlign: "right" }}>
+              {selectedBrainDisplay}
+            </div>
+          </div>
+          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1.25fr 0.75fr", gap: 10 }}>
+            <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+              <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Primary
+              </div>
+              <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: C.text }}>{selectedBrainProvider}</div>
+              <div style={{ marginTop: 2, fontSize: 12, color: C.textMuted }}>{selectedBrainDisplay}</div>
+              <div style={{ marginTop: 6, fontSize: 12, color: C.textMuted }}>{selectedBrainDescription}</div>
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <span style={statusStyle(selectedBrainStatusLabel)}>{selectedBrainStatusLabel}</span>
+              <span style={statusStyle(selectedBrainMode)}>{selectedBrainMode}</span>
+            </div>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: C.textMuted }}>Default workspace model will be used.</div>
+        </Card>
+
+        <Card style={{ background: C.card }}>
+          <SectionTitle title="Agent Skills" subtitle="Choose from approved attachable skills." />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={activePicker === "skills" ? closeSkillsPicker : openSkillsPicker}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: `1px solid ${C.borderMid}`,
+                background: C.cardInner,
+                color: C.textMuted,
+                fontSize: 12,
+                cursor: "pointer",
+                ...FONT
+              }}
+            >
+              Choose skills
+            </button>
+            <div style={{ fontSize: 12, color: C.textMuted }}>{selectedSkillIds.length} selected</div>
+          </div>
+          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+            {selectedSkillEntries.length ? (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {selectedSkillSummary.map((entry) => (
+                  <span
+                    key={entry.id}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 9px",
+                      borderRadius: 999,
+                      border: `1px solid ${C.border}`,
+                      background: C.bgDeep,
+                      fontSize: 12,
+                      color: C.textSub
+                    }}
+                  >
+                    <span>{entry.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSkillIds((current) => current.filter((id) => id !== entry.id))}
+                      style={{
+                        border: "none",
+                        background: "none",
+                        color: C.textMuted,
+                        cursor: "pointer",
+                        padding: 0,
+                        fontSize: 12,
+                        lineHeight: 1
+                      }}
+                      title={`Remove ${entry.label}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {remainingSkillCount > 0 ? (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "6px 9px",
+                      borderRadius: 999,
+                      border: `1px solid ${C.border}`,
+                      background: C.cardInner,
+                      fontSize: 12,
+                      color: C.textMuted
+                    }}
+                  >
+                    +{remainingSkillCount} more
+                  </span>
+                ) : null}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: C.textMuted }}>No skills selected.</div>
+            )}
+            {skillLibraryLoading ? <LoadingPanelState title="Skills loading" description="Menunggu skill library." /> : null}
+            {!skillLibraryLoading && skillLibraryError ? (
+              <PanelStateCard title="Skill library" description={skillLibraryError} tone="review" />
+            ) : null}
+          </div>
+        </Card>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={() => setPinned((value) => !value)}
@@ -2064,7 +2743,7 @@ function CreateAgentContent({ onCreateAgent, isSubmitting = false, error = "", d
             onClick={handleCreate}
             disabled={!canCreate}
             style={{
-              padding: "8px 22px",
+              padding: "9px 22px",
               borderRadius: 10,
               border: "none",
               background: C.accent,
@@ -2077,58 +2756,437 @@ function CreateAgentContent({ onCreateAgent, isSubmitting = false, error = "", d
             }}
             title={canCreate ? "Create agent." : "Create agent backend endpoint not available yet."}
           >
-            {isSubmitting ? "Saving..." : "Create"}
+            {submitLabel}
           </button>
         </div>
-        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+
+        <div style={{ display: "grid", gap: 8 }}>
           <InlineFeedback message={error} error />
           <InlineFeedback message={message} />
         </div>
       </div>
 
-      <div style={{ width: 148, flexShrink: 0 }}>
-        <Label text="Preview Agent" />
-        <Card style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ flex: "0 1 280px", minWidth: 260, maxWidth: "100%" }}>
+        <Card style={{ display: "grid", gap: 12, background: C.card }}>
+          <SectionTitle title="Preview" subtitle="Read-only summary before create." />
           <div
             style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              background: C.accentLight,
+              width: 84,
+              height: 84,
+              borderRadius: 18,
               border: `1px solid ${C.borderMid}`,
+              background: C.accentLight,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 14,
+              overflow: "hidden",
+              color: C.accent,
               fontWeight: 700,
-              color: C.accent
+              fontSize: 24
             }}
           >
-            {getAgentInitials(name)}
+            {avatarMode === "emoji" && selectedAvatarEmoji ? (
+              <span style={{ lineHeight: 1 }}>{selectedAvatarEmoji}</span>
+            ) : selectedAvatarPreviewSource && !avatarPreviewFailed ? (
+              <img
+                src={selectedAvatarPreviewSource}
+                alt=""
+                referrerPolicy="no-referrer"
+                onError={() => setAvatarPreviewFailed(true)}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+              />
+            ) : (
+              <span>{selectedAvatarFallback}</span>
+            )}
           </div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{name || "nama agent"}</div>
-          <div style={{ fontSize: 11, color: C.textMuted }}>icon</div>
-          {[skill || "skill 2", model || "brain / model"].map((text) => (
-            <div
-              key={text}
-              style={{
-                padding: "6px 9px",
-                borderRadius: 8,
-                background: C.card,
-                border: `1px solid ${C.border}`,
-                fontSize: 11,
-                color: C.textMuted
-              }}
-            >
-              {text}
+
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>{name || "Agent name"}</div>
+            <div style={{ fontSize: 12, color: C.textMuted }}>Agent preview only.</div>
+          </div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+              <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Brain</div>
+              <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: C.text }}>{selectedBrainDisplay}</div>
+              <div style={{ marginTop: 2, fontSize: 12, color: C.textMuted }}>{selectedBrainMode}</div>
             </div>
-          ))}
-          <div style={{ display: "flex", gap: 6 }}>
-            <span style={statusStyle("need setup")}>need setup</span>
-            <span style={statusStyle(pinned ? "ready" : "preview only")}>{pinned ? "ready" : "preview only"}</span>
+            <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+              <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Skills</div>
+              {selectedSkillEntries.length ? (
+                <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {selectedSkillSummary.map((entry) => (
+                    <span
+                      key={entry.id}
+                      style={{
+                        padding: "5px 8px",
+                        borderRadius: 999,
+                        border: `1px solid ${C.border}`,
+                        background: C.card,
+                        fontSize: 11,
+                        color: C.textSub
+                      }}
+                    >
+                      {entry.label}
+                    </span>
+                  ))}
+                  {remainingSkillCount > 0 ? (
+                    <span
+                      style={{
+                        padding: "5px 8px",
+                        borderRadius: 999,
+                        border: `1px solid ${C.border}`,
+                        background: C.card,
+                        fontSize: 11,
+                        color: C.textMuted
+                      }}
+                    >
+                      +{remainingSkillCount} more
+                    </span>
+                  ) : null}
+                </div>
+              ) : (
+                <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>No skills selected.</div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span style={statusStyle(pinned ? "ready" : "preview")}>{pinned ? "ready" : "preview"}</span>
+              <span style={statusStyle(selectedBrainStatusLabel)}>{selectedBrainStatusLabel}</span>
+            </div>
           </div>
         </Card>
       </div>
+
+      {activePicker === "skills" ? (
+        <FloatingWindow id="create-agent-skills" onClose={closeSkillsPicker} onFocus={() => {}} zIndex={9100}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Select approved skills for this agent.</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>
+                Draft selection only. Apply Skills before create.
+              </div>
+            </div>
+
+            <InputField
+              label="Search"
+              placeholder="Search skills by name, type, or description..."
+              value={skillSearch}
+              onChange={(event) => setSkillSearch(event.target.value)}
+            />
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {skillFilterTabs.map((tab) => {
+                const active = skillFilter === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setSkillFilter(tab.key)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: `1px solid ${active ? C.accent : C.border}`,
+                      background: active ? C.accentLight : C.cardInner,
+                      color: active ? C.accent : C.textMuted,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {skillLibraryLoading ? (
+              <LoadingPanelState title="Skills loading" description="Menunggu skill library dari backend." />
+            ) : skillLibraryError ? (
+              <PanelStateCard title="Skill library" description={skillLibraryError} tone="review" />
+            ) : visibleSkillEntries.length ? (
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(260px, 0.8fr)", gap: 12, alignItems: "start" }}>
+                <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto", paddingRight: 4 }}>
+                  {visibleSkillEntries.map((entry) => {
+                    const active = entry.selected;
+                    const unavailable = !entry.selectable;
+
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        onClick={() => toggleDraftSkill(entry.id)}
+                        disabled={unavailable}
+                        style={{
+                          padding: 12,
+                          borderRadius: 12,
+                          border: `1px solid ${active ? C.accent : C.border}`,
+                          background: unavailable ? "rgba(244,238,231,0.82)" : active ? C.accentLight : C.card,
+                          color: unavailable ? C.textDim : C.text,
+                          textAlign: "left",
+                          cursor: unavailable ? "not-allowed" : "pointer",
+                          display: "grid",
+                          gap: 8,
+                          ...FONT
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 13, fontWeight: 700 }}>{entry.label}</span>
+                              <span style={statusStyle(entry.typeLabel)}>{entry.typeLabel}</span>
+                            </div>
+                            <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted, lineHeight: 1.55 }}>{entry.description || "No description."}</div>
+                          </div>
+                          <span style={statusStyle(unavailable ? entry.status : "safe")}>{unavailable ? "needs review" : "safe to import"}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                          <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                            {entry.id}
+                          </div>
+                          <div style={{ fontSize: 12, color: active ? C.accent : C.textMuted }}>{active ? "selected" : unavailable ? entry.disabledReason : "view details"}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <Card style={{ background: C.bgDeep, display: "grid", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Selected Skills</div>
+                    {draftSelectedSkillEntries.length ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {draftSelectedSkillEntries.map((entry) => (
+                          <span
+                            key={entry.id}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "6px 8px",
+                              borderRadius: 999,
+                              border: `1px solid ${C.border}`,
+                              background: C.card,
+                              fontSize: 11,
+                              color: C.textSub
+                            }}
+                          >
+                            <span>{entry.label}</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleDraftSkill(entry.id)}
+                              style={{
+                                border: "none",
+                                background: "none",
+                                color: C.textMuted,
+                                cursor: "pointer",
+                                padding: 0,
+                                fontSize: 12,
+                                lineHeight: 1
+                              }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: C.textMuted }}>No skills selected.</div>
+                    )}
+                    <div style={{ marginTop: 6, fontSize: 12, color: C.textMuted }}>{draftSelectedSkillEntries.length} selected</div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={closeSkillsPicker}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        background: C.cardInner,
+                        color: C.textMuted,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        ...FONT
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applySelectedSkills}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: "none",
+                        background: C.accent,
+                        color: "#fff",
+                        fontSize: 12,
+                        cursor: "pointer",
+                        ...FONT
+                      }}
+                    >
+                      Apply Skills
+                    </button>
+                  </div>
+                </Card>
+              </div>
+            ) : (
+              <EmptyPanelState title="No matching skill candidates." description="Coba ubah search atau filter." />
+            )}
+          </div>
+        </FloatingWindow>
+      ) : null}
+
+      {activePicker === "brain" ? (
+        <FloatingWindow id="create-agent-brain" onClose={closeBrainPicker} onFocus={() => {}} zIndex={9101}>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Select the model brain this agent should use.</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>
+                Single select. No provider call. No test run.
+              </div>
+            </div>
+
+            <InputField
+              label="Search"
+              placeholder="Search model or provider..."
+              value={brainSearch}
+              onChange={(event) => setBrainSearch(event.target.value)}
+            />
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {brainFilterTabs.map((tab) => {
+                const active = brainFilter === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setBrainFilter(tab.key)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: `1px solid ${active ? C.accent : C.border}`,
+                      background: active ? C.accentLight : C.cardInner,
+                      color: active ? C.accent : C.textMuted,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(250px, 0.9fr)", gap: 12, alignItems: "start" }}>
+              <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto", paddingRight: 4 }}>
+                {visibleBrainOptions.map((entry) => {
+                  const active = entry.id === draftSelectedBrainId;
+                  const unavailable = entry.selectable === false && entry.status !== "default";
+
+                  return (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      onClick={() => {
+                        if (!unavailable) {
+                          setDraftSelectedBrainId(entry.id);
+                        }
+                      }}
+                      disabled={unavailable}
+                      style={{
+                        padding: 12,
+                        borderRadius: 12,
+                        border: `1px solid ${active ? C.accent : C.border}`,
+                        background: unavailable ? "rgba(244,238,231,0.82)" : active ? C.accentLight : C.card,
+                        color: unavailable ? C.textDim : C.text,
+                        textAlign: "left",
+                        cursor: unavailable ? "not-allowed" : "pointer",
+                        display: "grid",
+                        gap: 8,
+                        ...FONT
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700 }}>{entry.providerLabel} · {entry.model}</span>
+                            <span style={statusStyle(entry.family)}>{entry.family}</span>
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted, lineHeight: 1.55 }}>{entry.description || "No description."}</div>
+                        </div>
+                        <span style={statusStyle(entry.status)}>{entry.status}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                        <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          {entry.mode}
+                        </div>
+                        <div style={{ fontSize: 12, color: active ? C.accent : C.textMuted }}>{active ? "selected" : unavailable ? "not available yet" : "choose brain"}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <Card style={{ background: C.bgDeep, display: "grid", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 }}>Brain preview</div>
+                  <div style={{ fontSize: 12, color: C.textMuted }}>
+                    {draftBrainEntry ? `${draftBrainEntry.providerLabel} · ${draftBrainEntry.model}` : "No brain selected"}
+                  </div>
+                </div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.card }}>
+                  <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Primary</div>
+                  <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: C.text }}>
+                    {draftBrainEntry ? `${draftBrainEntry.providerLabel} · ${draftBrainEntry.model}` : "Default workspace model will be used."}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>{draftBrainEntry?.description || "Default workspace model will be used."}</div>
+                  <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <span style={statusStyle(draftBrainEntry?.status || "default")}>{draftBrainEntry?.status || "default"}</span>
+                    <span style={statusStyle(draftBrainEntry?.mode || "balanced")}>{draftBrainEntry?.mode || "balanced"}</span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={closeBrainPicker}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      border: `1px solid ${C.border}`,
+                      background: C.cardInner,
+                      color: C.textMuted,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applySelectedBrain}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      border: "none",
+                      background: C.accent,
+                      color: "#fff",
+                      fontSize: 12,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    Apply Brain
+                  </button>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </FloatingWindow>
+      ) : null}
     </div>
   );
 }
