@@ -29,6 +29,7 @@ import {
   getSkillLibrary,
   getTasks,
   chatWithAgent,
+  fetchAgentAvatarBlob,
   importSelectedGithubSkill,
   deleteWorkflowBinding,
   listN8nWorkflows,
@@ -46,6 +47,7 @@ import {
   patch,
   remove,
   saveModelProviderApiKey,
+  uploadAgentAvatar,
   orchestratorChat,
   updateN8nWorkflow,
   updateModelProviderSettings
@@ -434,10 +436,142 @@ function safeString(value, fallback = "-") {
   return text ? String(text) : fallback;
 }
 
+function getSkillLibraryId(skill, fallbackIndex = 0) {
+  const candidate = skill?.id || skill?.skill_id || skill?.imported_skill_id || skill?.import_id || skill?.slug || skill?.name || "";
+  return safeString(candidate, fallbackIndex ? `skill-${fallbackIndex + 1}` : "");
+}
+
+function getSkillLibraryLabel(skill) {
+  return safeString(skill?.name || skill?.title || skill?.display_name || skill?.slug || skill?.skill_path, "Unnamed skill");
+}
+
+function getSkillLibraryType(skill) {
+  const raw = String(skill?.skill_type || skill?.type || "").toLowerCase();
+
+  if (raw === "prompt" || raw === "instruction" || raw === "manual_skill") {
+    return "prompt_skill";
+  }
+
+  if (raw === "knowledge") {
+    return "knowledge_skill";
+  }
+
+  if (raw === "workflow" || raw === "workflow_preview") {
+    return "workflow_skill";
+  }
+
+  if (raw === "tool" || raw === "tool_preview") {
+    return "tool_skill";
+  }
+
+  if (raw === "prompt_skill" || raw === "knowledge_skill" || raw === "workflow_skill" || raw === "tool_skill") {
+    return raw;
+  }
+
+  return "unknown";
+}
+
+function getSkillLibraryTypeLabel(type) {
+  const normalized = String(type || "").toLowerCase();
+  const labels = {
+    prompt_skill: "prompt",
+    knowledge_skill: "knowledge",
+    workflow_skill: "workflow",
+    tool_skill: "tool",
+    unknown: "unknown"
+  };
+
+  return labels[normalized] || labels.unknown;
+}
+
+function getSkillLibraryStatus(skill) {
+  return safeString(skill?.import_status || skill?.security_status || skill?.status, "unknown");
+}
+
+function getSkillLibraryDescription(skill) {
+  return safeString(skill?.description || skill?.summary || skill?.content_preview || skill?.file_path || skill?.source_reference, "");
+}
+
+function getSkillLibrarySelectionState(skill) {
+  const id = getSkillLibraryId(skill);
+  const status = String(skill?.status || skill?.import_status || skill?.security_status || "").toLowerCase();
+  const attachBlockReason = safeString(skill?.attach_block_reason, "");
+  const rejected = status === "rejected" || status === "disabled" || status === "blocked" || status === "pending" || status === "draft" || status === "inactive";
+  const isAttachable = skill?.is_attachable !== false && !rejected;
+  const selectable = Boolean(id) && isAttachable;
+
+  return {
+    id,
+    selectable,
+    disabledReason: selectable ? "" : attachBlockReason || (Boolean(id) ? `Status ${status || "unknown"}` : "Missing skill id.")
+  };
+}
+
+function isSkillSelectable(skill) {
+  return Boolean(getSkillLibrarySelectionState(skill).selectable);
+}
+
+function getSkillPickerEntry(skill, index, selectedSkillIdSet = new Set()) {
+  const id = getSkillLibraryId(skill, index);
+  const type = getSkillLibraryType(skill);
+  const selectionState = getSkillLibrarySelectionState(skill);
+  const label = getSkillLibraryLabel(skill);
+  const status = getSkillLibraryStatus(skill);
+  const description = getSkillLibraryDescription(skill);
+  const searchText = [label, id, type, status, description].join(" ").toLowerCase();
+  const selected = selectedSkillIdSet.has(id);
+
+  return {
+    raw: skill,
+    id,
+    label,
+    type,
+    typeLabel: getSkillLibraryTypeLabel(type),
+    status,
+    description,
+    selected,
+    selectable: isSkillSelectable(skill),
+    disabledReason: selectionState.disabledReason,
+    searchText,
+  };
+}
+
+function normalizeSkillPickerOptions(skills, selectedSkillIds = [], query = "") {
+  const source = Array.isArray(skills) ? skills : [];
+  const selectedSkillIdSet = new Set((Array.isArray(selectedSkillIds) ? selectedSkillIds : []).map((item) => String(item || "").trim()).filter(Boolean));
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+
+  return source
+    .map((skill, index) => getSkillPickerEntry(skill, index, selectedSkillIdSet))
+    .filter((item) => !normalizedQuery || item.searchText.includes(normalizedQuery))
+    .sort((a, b) => {
+      if (a.selectable !== b.selectable) return a.selectable ? -1 : 1;
+      if (a.selected !== b.selected) return a.selected ? -1 : 1;
+      const statusRank = (value) => {
+        const normalized = String(value || "").toLowerCase();
+        if (normalized === "approved" || normalized === "active" || normalized === "ready" || normalized === "imported") return 0;
+        if (normalized === "review" || normalized === "warning") return 1;
+        if (normalized === "pending" || normalized === "draft") return 2;
+        if (normalized === "disabled" || normalized === "rejected" || normalized === "blocked" || normalized === "inactive") return 3;
+        return 2;
+      };
+
+      const statusDiff = statusRank(a.status) - statusRank(b.status);
+      if (statusDiff !== 0) return statusDiff;
+      return a.label.localeCompare(b.label);
+    });
+}
+
 function formatShortDate(value) {
-  if (!value) return "-";
+  if (!value) {
+    return "-";
+  }
+
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
@@ -447,9 +581,15 @@ function formatShortDate(value) {
 }
 
 function formatTimeOnly(value) {
-  if (!value) return "-";
+  if (!value) {
+    return "-";
+  }
+
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+
   return new Intl.DateTimeFormat("en-US", {
     hour: "2-digit",
     minute: "2-digit"
@@ -457,10 +597,25 @@ function formatTimeOnly(value) {
 }
 
 function getAgentInitials(name) {
-  const text = safeString(name, "AI");
-  const parts = text.split(" ").filter(Boolean).slice(0, 2);
-  if (!parts.length) return "AI";
-  return parts.map((part) => part[0]).join("").toUpperCase();
+  const source = String(name || "AI").trim();
+
+  if (!source) {
+    return "AI";
+  }
+
+  const words = source
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!words.length) {
+    return "AI";
+  }
+
+  return words
+    .slice(0, 2)
+    .map((word) => word.charAt(0))
+    .join("")
+    .toUpperCase();
 }
 
 function buildAgentActivities(agent, activityRows, fallbackRows) {
@@ -719,6 +874,382 @@ function buildApprovalRows(approvalRows) {
   });
 }
 
+function clampCardPosition(x, y, width, height) {
+  if (typeof window === "undefined") {
+    return { x, y };
+  }
+
+  const margin = 12;
+  const maxX = Math.max(margin, window.innerWidth - width - margin);
+  const maxY = Math.max(margin, window.innerHeight - height - margin);
+
+  return {
+    x: Math.min(Math.max(margin, x), maxX),
+    y: Math.min(Math.max(margin, y), maxY)
+  };
+}
+
+function getCenteredCardPosition(width, height, offsetX = 0, offsetY = 0) {
+  if (typeof window === "undefined") {
+    return { x: 24 + offsetX, y: 24 + offsetY };
+  }
+
+  const left = Math.round((window.innerWidth - width) / 2) + offsetX;
+  const top = Math.round((window.innerHeight - height) / 2) + offsetY;
+  return clampCardPosition(left, top, width, height);
+}
+
+function getBrainProviderKey(provider, fallbackIndex = 0) {
+  return safeString(provider?.id || provider?.provider || provider?.name || `brain-${fallbackIndex + 1}`, "");
+}
+
+function getBrainProviderLabel(provider) {
+  return safeString(provider?.name || provider?.label || provider?.provider || provider?.id, "Default workspace");
+}
+
+function getBrainModelName(provider, providerSettings = null) {
+  return safeString(
+    provider?.model_name || provider?.default_model_name || provider?.preferred_model || provider?.model || providerSettings?.preferred_model || "gpt-4o",
+    "gpt-4o"
+  );
+}
+
+function getBrainModeLabel(modelName) {
+  const normalized = String(modelName || "").toLowerCase();
+  if (normalized.includes("mini") || normalized.includes("fast")) {
+    return "fast";
+  }
+  if (normalized.includes("reason") || normalized.includes("o1") || normalized.includes("thinking")) {
+    return "reasoning";
+  }
+  if (normalized.includes("code")) {
+    return "coding";
+  }
+  return "balanced";
+}
+
+function getBrainStatusLabel(provider, providerSettings = null, apiKeyStatuses = []) {
+  const providerKey = String(provider?.provider || provider?.id || provider?.name || "").toLowerCase();
+  const providerType = String(provider?.provider_type || provider?.type || "").toLowerCase();
+  const authType = String(provider?.auth_type || "").toLowerCase();
+  const isLocal = providerType.includes("local") || providerType.includes("ollama") || providerKey.includes("local");
+  const keyStatus = (Array.isArray(apiKeyStatuses) ? apiKeyStatuses : []).find((item) => String(item?.provider || "").toLowerCase() === providerKey) || null;
+  const connectionStatus = String(keyStatus?.connection_status || provider?.connection_status || "").toLowerCase();
+  const preferredProvider = String(providerSettings?.preferred_provider || "").toLowerCase();
+
+  if (providerKey && providerKey === preferredProvider) {
+    return "default";
+  }
+  if (isLocal || authType === "deferred" || connectionStatus === "deferred") {
+    return "deferred";
+  }
+  if (connectionStatus === "active" || connectionStatus === "configured") {
+    return "configured";
+  }
+  if (connectionStatus === "locked" || authType === "oauth_gateway" || providerType.includes("subscription_oauth")) {
+    return "deferred";
+  }
+  if (providerKey) {
+    return "not configured";
+  }
+  return "default";
+}
+
+function getBrainDescription(provider, providerSettings = null) {
+  return safeString(
+    provider?.description ||
+      provider?.summary ||
+      provider?.notes ||
+      provider?.model_description ||
+      (provider ? `${getBrainProviderLabel(provider)} · ${getBrainModelName(provider, providerSettings)}` : "Default workspace model will be used."),
+    "Default workspace model will be used."
+  );
+}
+
+function getBrainOptions(modelProviders = [], providerSettings = null, apiKeyStatuses = []) {
+  const providers = Array.isArray(modelProviders) ? modelProviders : [];
+  const preferredProvider = String(providerSettings?.preferred_provider || "").toLowerCase();
+  const preferredModel = safeString(providerSettings?.preferred_model, "gpt-4o");
+  const options = [];
+  const defaultOption = {
+    id: "default-workspace",
+    providerId: "default",
+    providerKey: "default",
+    providerLabel: "Default workspace",
+    model: preferredModel,
+    mode: getBrainModeLabel(preferredModel),
+    status: "default",
+    description: "Default workspace model will be used.",
+    selectable: true,
+    family: "default"
+  };
+
+  options.push(defaultOption);
+
+  providers.forEach((provider, index) => {
+    const providerId = getBrainProviderKey(provider, index);
+    const providerLabel = getBrainProviderLabel(provider);
+    const model = getBrainModelName(provider, providerSettings);
+    const mode = getBrainModeLabel(model);
+    const providerKey = String(provider?.provider || provider?.provider_type || provider?.type || providerId).toLowerCase();
+    const family =
+      providerKey.includes("anthropic") || providerLabel.toLowerCase().includes("anthropic")
+        ? "anthropic"
+        : providerKey.includes("google") || providerLabel.toLowerCase().includes("google")
+          ? "google"
+          : providerKey.includes("local") || providerKey.includes("ollama") || providerLabel.toLowerCase().includes("local")
+            ? "local"
+            : providerKey.includes("openrouter") || providerLabel.toLowerCase().includes("openrouter")
+              ? "openrouter"
+              : "openai";
+    const status = getBrainStatusLabel(provider, providerSettings, apiKeyStatuses);
+    const selectable = status === "configured" || status === "default";
+    const preferred = providerKey === preferredProvider;
+
+    options.push({
+      id: providerId,
+      providerId,
+      providerKey,
+      providerLabel,
+      model,
+      mode,
+      status,
+      preferred,
+      selectable,
+      family,
+      description: getBrainDescription(provider, providerSettings)
+    });
+  });
+
+  if (!providers.length) {
+    options.push({
+      id: "openai-gpt-4o",
+      providerId: "openai",
+      providerKey: "openai",
+      providerLabel: "OpenAI",
+      model: preferredModel,
+      mode: getBrainModeLabel(preferredModel),
+      status: "default",
+      preferred: true,
+      selectable: true,
+      family: "openai",
+      description: "Balanced general workspace model."
+    });
+    options.push({
+      id: "openai-gpt-4o-mini",
+      providerId: "openai",
+      providerKey: "openai",
+      providerLabel: "OpenAI",
+      model: "gpt-4o-mini",
+      mode: "fast",
+      status: "not configured",
+      preferred: false,
+      selectable: false,
+      family: "openai",
+      description: "Fast and cheaper model."
+    });
+  }
+
+  return options;
+}
+
+function getGitHubImportStatusMeta(validationStatus, imported = false, importStatus = "") {
+  const normalized = String(validationStatus || importStatus || "").toLowerCase();
+
+  if (imported || normalized === "imported" || normalized === "approved") {
+    return { tone: "ready", label: "Already in library" };
+  }
+
+  if (normalized === "blocked") {
+    return { tone: "blocked", label: "Blocked: needs review" };
+  }
+
+  if (normalized === "warning" || normalized === "review" || normalized === "pending") {
+    return { tone: "review", label: "Review needed" };
+  }
+
+  if (normalized === "rejected") {
+    return { tone: "rejected", label: "Rejected" };
+  }
+
+  if (normalized === "disabled") {
+    return { tone: "inactive", label: "Disabled" };
+  }
+
+  return { tone: "safe", label: "Safe to import" };
+}
+
+function getGitHubImportBlockedSummary(candidate) {
+  const rawText = [
+    candidate?.warning,
+    candidate?.review_notes,
+    candidate?.description,
+    candidate?.content_preview,
+    Array.isArray(candidate?.inspection_errors) ? candidate.inspection_errors.join(" ") : "",
+    Array.isArray(candidate?.inspection_warnings) ? candidate.inspection_warnings.join(" ") : ""
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (!rawText) {
+    return "Needs review.";
+  }
+
+  if (rawText.includes("localhost") || rawText.includes("127.0.0.1")) {
+    return "Localhost reference detected";
+  }
+
+  if (rawText.includes("local file") || rawText.includes("file path") || rawText.includes("drive path") || rawText.includes("/tmp")) {
+    return "Local file path detected";
+  }
+
+  if (rawText.includes("external resource") || rawText.includes("http://") || rawText.includes("https://")) {
+    return "External resource reference detected";
+  }
+
+  if (rawText.includes("resource reference")) {
+    return "Resource reference detected";
+  }
+
+  if (rawText.includes("blocked")) {
+    return "Blocked reference detected";
+  }
+
+  return safeString(candidate?.warning || candidate?.review_notes || candidate?.description || candidate?.content_preview || "", "Needs review.");
+}
+
+function getGitHubImportTechnicalDetail(candidate) {
+  const text = safeString(
+    candidate?.warning ||
+      candidate?.review_notes ||
+      (Array.isArray(candidate?.inspection_errors) ? candidate.inspection_errors.join(" · ") : "") ||
+      (Array.isArray(candidate?.inspection_warnings) ? candidate.inspection_warnings.join(" · ") : "") ||
+      candidate?.content_preview ||
+      "",
+    ""
+  );
+
+  return text;
+}
+
+function getGitHubImportFriendlyError(error) {
+  const raw = safeString(error?.message || error, "");
+  const lowered = raw.toLowerCase();
+
+  if (!raw) {
+    return { message: "Import gagal.", technical: "" };
+  }
+
+  if (lowered.includes("slug") || lowered.includes("already in use") || lowered.includes("already in your library") || lowered.includes("duplicate")) {
+    return {
+      message: "This skill is already in your library. Review it in Skill Library or choose a different skill.",
+      technical: raw
+    };
+  }
+
+  if (lowered.includes("blocked")) {
+    return {
+      message: "This skill cannot be imported until blocked references are cleaned.",
+      technical: raw
+    };
+  }
+
+  return { message: raw, technical: "" };
+}
+
+function getGitHubImportCandidateView(candidate, selectedSkillPath = "", importedSkillPath = "") {
+  const path = safeString(candidate?.path || candidate?.manifest_path || "", "");
+  const manifestPath = safeString(candidate?.manifest_path || candidate?.path || "", "");
+  const title = safeString(candidate?.title || path || manifestPath, "skill");
+  const skillType = safeString(candidate?.skill_import_type || "skill import", "skill import");
+  const status = String(candidate?.validation_status || candidate?.status || candidate?.import_status || "").toLowerCase();
+  const imported = Boolean(importedSkillPath) && (path === importedSkillPath || manifestPath === importedSkillPath);
+  const statusMeta = getGitHubImportStatusMeta(status, imported, candidate?.import_status);
+  const searchText = [title, path, manifestPath, skillType, safeString(candidate?.description || ""), safeString(candidate?.warning || ""), status, statusMeta.label]
+    .join(" ")
+    .toLowerCase();
+
+  return {
+    raw: candidate,
+    path,
+    manifestPath,
+    title,
+    description: safeString(candidate?.description || "", ""),
+    skillType,
+    validationStatus: status || "review",
+    imported,
+    selected: Boolean(selectedSkillPath) && (path === selectedSkillPath || manifestPath === selectedSkillPath),
+    statusMeta,
+    blockedSummary: getGitHubImportBlockedSummary(candidate),
+    technicalDetail: getGitHubImportTechnicalDetail(candidate),
+    searchText
+  };
+}
+
+function useDraggableCardPosition(isOpen, width, height) {
+  const [position, setPosition] = useState(() => getCenteredCardPosition(width, height));
+  const dragStateRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    setPosition((current) => clampCardPosition(current.x, current.y, width, height));
+  }, [height, isOpen, width]);
+
+  const startDrag = useCallback(
+    (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+      dragStateRef.current = {
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: position.x,
+        originY: position.y
+      };
+      setIsDragging(true);
+    },
+    [position.x, position.y]
+  );
+
+  useEffect(() => {
+    if (!isOpen || !isDragging) {
+      return undefined;
+    }
+
+    function handleMove(event) {
+      const dragState = dragStateRef.current;
+      if (!dragState) {
+        return;
+      }
+
+      const nextX = dragState.originX + (event.clientX - dragState.startX);
+      const nextY = dragState.originY + (event.clientY - dragState.startY);
+      setPosition(clampCardPosition(nextX, nextY, width, height));
+    }
+
+    function handleUp() {
+      dragStateRef.current = null;
+      setIsDragging(false);
+    }
+
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup", handleUp);
+    };
+  }, [height, isDragging, isOpen, width]);
+
+  return { position, startDrag, isDragging, setPosition };
+}
+
 function SvgIcon({ children, size = 15 }) {
   return (
     <svg
@@ -839,44 +1370,6 @@ function MenuIcon({ name }) {
     default:
       return null;
   }
-}
-
-function useWindowDrag(ix, iy) {
-  const [pos, setPos] = useState({ x: ix, y: iy });
-  const active = useRef(false);
-  const offset = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    function handleMove(event) {
-      if (!active.current) return;
-      setPos({
-        x: Math.max(16, event.clientX - offset.current.x),
-        y: Math.max(16, event.clientY - offset.current.y)
-      });
-    }
-
-    function handleUp() {
-      active.current = false;
-    }
-
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-
-    return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-    };
-  }, []);
-
-  function handleDown(event) {
-    active.current = true;
-    offset.current = {
-      x: event.clientX - pos.x,
-      y: event.clientY - pos.y
-    };
-  }
-
-  return { pos, handleDown };
 }
 
 function Label({ text }) {
@@ -1037,11 +1530,14 @@ function PanelHeader({ title, description, badge, actionLabel, onAction, actionD
 }
 
 function PanelStateCard({ title, description, tone = "inactive", actionLabel, onAction, disabled = false }) {
-  const toneStyle = tone === "review" ? { background: "rgba(255,244,226,0.96)", borderColor: "rgba(176,120,32,0.18)", color: C.amber } : {
-    background: "rgba(255,255,255,0.74)",
-    borderColor: "rgba(90,65,35,0.10)",
-    color: C.textMuted
-  };
+  const toneStyle =
+    tone === "review"
+      ? { background: "rgba(255,244,226,0.96)", borderColor: "rgba(176,120,32,0.18)", color: C.amber }
+      : {
+          background: "rgba(255,255,255,0.74)",
+          borderColor: "rgba(90,65,35,0.10)",
+          color: C.textMuted
+        };
 
   return (
     <div
@@ -1115,25 +1611,11 @@ function SectionTitle({ title, subtitle, actionLabel, onAction }) {
 }
 
 function EmptyPanelState({ title, description, actionLabel, onAction }) {
-  return (
-    <PanelStateCard
-      title={title}
-      description={description}
-      tone="review"
-      actionLabel={actionLabel}
-      onAction={onAction}
-    />
-  );
+  return <PanelStateCard title={title} description={description} tone="review" actionLabel={actionLabel} onAction={onAction} />;
 }
 
 function LoadingPanelState({ title, description }) {
-  return (
-    <PanelStateCard
-      title={title}
-      description={description}
-      tone="inactive"
-    />
-  );
+  return <PanelStateCard title={title} description={description} tone="inactive" />;
 }
 
 function InlineFeedback({ message, error = false }) {
@@ -1155,53 +1637,6 @@ function InlineFeedback({ message, error = false }) {
       {message}
     </div>
   );
-}
-
-function statusStyle(status) {
-  const map = {
-    active: { color: C.green, background: C.greenLight },
-    review: { color: C.amber, background: C.amberLight },
-    inactive: { color: C.textDim, background: "rgba(0,0,0,0.05)" },
-    idle: { color: C.textDim, background: "rgba(0,0,0,0.05)" },
-    sending: { color: C.green, background: C.greenLight },
-    encrypted: { color: C.green, background: C.greenLight },
-    "not setup": { color: C.textDim, background: "rgba(0,0,0,0.05)" },
-    "need setup": { color: C.amber, background: C.amberLight },
-    ready: { color: C.green, background: C.greenLight },
-    locked: { color: C.textMuted, background: "rgba(0,0,0,0.06)" },
-    "preview only": { color: C.textMuted, background: "rgba(0,0,0,0.06)" },
-    loading: { color: C.amber, background: C.amberLight },
-    blocked: { color: C.accent, background: C.accentLight },
-    safe: { color: C.green, background: C.greenLight },
-    pending: { color: C.amber, background: C.amberLight },
-    approved: { color: C.green, background: C.greenLight },
-    rejected: { color: C.accent, background: C.accentLight },
-    expired: { color: C.textMuted, background: "rgba(0,0,0,0.06)" },
-    low: { color: C.green, background: C.greenLight },
-    medium: { color: C.amber, background: C.amberLight },
-    high: { color: C.accent, background: C.accentLight },
-    critical: { color: C.accent, background: C.accentLight },
-    completed: { color: C.green, background: C.greenLight },
-    failed: { color: C.accent, background: C.accentLight },
-    cancelled: { color: C.textDim, background: "rgba(0,0,0,0.05)" },
-    received: { color: C.textDim, background: "rgba(0,0,0,0.05)" },
-    "waiting approval": { color: C.amber, background: C.amberLight },
-    "running tool": { color: C.amber, background: C.amberLight },
-    "loading memory": { color: C.amber, background: C.amberLight },
-    "selecting skill": { color: C.textDim, background: "rgba(0,0,0,0.05)" },
-    "selecting tool": { color: C.textDim, background: "rgba(0,0,0,0.05)" },
-    audit: { color: C.textMuted, background: "rgba(0,0,0,0.06)" }
-  };
-
-  const normalizedStatus = String(status).toLowerCase().replace(/_/g, " ");
-
-  return {
-    fontSize: 11,
-    fontWeight: 600,
-    padding: "3px 9px",
-    borderRadius: 7,
-    ...(map[normalizedStatus] || map.inactive)
-  };
 }
 
 function FloatingWindow({ id, onClose, onFocus, zIndex, children }) {
@@ -1268,6 +1703,96 @@ function FloatingWindow({ id, onClose, onFocus, zIndex, children }) {
         </button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 18, scrollbarWidth: "thin" }}>{children}</div>
+    </div>
+  );
+}
+
+function AgentAvatar({ agent, size = 42 }) {
+  const avatarType = safeString(agent?.avatar_type || agent?.avatarType || "", "").toLowerCase();
+  const avatarValue = safeString(
+    agent?.avatar_value || agent?.avatarValue || agent?.avatar_url || agent?.avatarUrl || agent?.avatar_content_url || agent?.avatarContentUrl,
+    ""
+  );
+  const [blobUrl, setBlobUrl] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+
+    setLoadFailed(false);
+    setBlobUrl("");
+
+    const wantsUploadedAvatar = avatarType === "uploaded_image" || avatarType === "uploaded_animation" || avatarType === "uploaded";
+    if (!wantsUploadedAvatar || !agent?.id) {
+      return undefined;
+    }
+
+    fetchAgentAvatarBlob(agent.id)
+      .then((blob) => {
+        if (cancelled || !blob) {
+          return;
+        }
+
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadFailed(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [agent?.id, avatarType]);
+
+  const initials = getAgentInitials(agent?.name || "AI");
+  const isRemoteAvatar = (avatarType === "image_url" || avatarType === "animation_url") && /^https?:\/\//i.test(avatarValue);
+  const imageSrc = blobUrl || (isRemoteAvatar ? avatarValue : "");
+  const emojiAvatar = avatarType === "emoji" && avatarValue ? avatarValue : "";
+
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 12,
+        border: `1px solid ${C.borderMid}`,
+        background: C.accentLight,
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        color: C.accent,
+        fontSize: Math.max(14, Math.round(size * 0.38)),
+        fontWeight: 700
+      }}
+    >
+      {emojiAvatar ? (
+        <span style={{ lineHeight: 1 }}>{emojiAvatar}</span>
+      ) : imageSrc && !loadFailed ? (
+        <img
+          src={imageSrc}
+          alt=""
+          referrerPolicy="no-referrer"
+          onError={() => setLoadFailed(true)}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block"
+          }}
+        />
+      ) : (
+        <span>{initials}</span>
+      )}
     </div>
   );
 }
@@ -1435,9 +1960,9 @@ function CreateAgentContent({ onCreateAgent, isSubmitting = false, error = "", d
               justifyContent: "center",
               fontSize: 14,
               fontWeight: 700,
-            color: C.accent
-          }}
-        >
+              color: C.accent
+            }}
+          >
             {getAgentInitials(name)}
           </div>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{name || "nama agent"}</div>
@@ -1487,22 +2012,123 @@ function ImportSkillContent({
   const [collectionPreview, setCollectionPreview] = useState(null);
   const [selectedSkillPath, setSelectedSkillPath] = useState("skills/pdf/SKILL.md");
   const [message, setMessage] = useState("");
+  const [technicalMessage, setTechnicalMessage] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [activeFilter, setActiveFilter] = useState("all");
+  const [previewTab, setPreviewTab] = useState("summary");
+  const [importedSkillRecord, setImportedSkillRecord] = useState(null);
 
   const collectionCandidates = useMemo(
     () => normalizeArrayResponse(collectionPreview, ["candidates"]),
     [collectionPreview],
   );
-  const selectedCollectionCandidate = collectionCandidates.find((item) => {
-    const candidatePath = String(item?.path || "").trim();
-    const manifestPath = String(item?.manifest_path || "").trim();
-    return candidatePath === selectedSkillPath || manifestPath === selectedSkillPath;
-  }) || null;
+  const filePreviewCandidates = useMemo(() => {
+    if (!previewResult) {
+      return [];
+    }
+
+    const previewPath = safeString(previewFilePath || filePath, "");
+    if (!previewPath) {
+      return [];
+    }
+
+    const validationStatus = Array.isArray(previewResult?.inspection_errors) && previewResult.inspection_errors.length
+      ? "blocked"
+      : Array.isArray(previewResult?.inspection_warnings) && previewResult.inspection_warnings.length
+        ? "warning"
+        : previewResult?.requires_review
+          ? "warning"
+          : "safe";
+
+    return [
+      {
+        path: previewPath,
+        manifest_path: previewPath,
+        title: safeString(previewResult?.skill_import_type || previewResult?.file_path || previewPath, "Selected skill"),
+        description: safeString(previewResult?.content_preview || previewResult?.review_notes || "", ""),
+        skill_import_type: safeString(previewResult?.skill_import_type || "skill import", "skill import"),
+        validation_status: validationStatus,
+        warning: safeString(previewResult?.inspection_errors?.[0] || previewResult?.inspection_warnings?.[0] || previewResult?.review_notes || "", ""),
+        status: safeString(previewResult?.status, "preview"),
+        content_preview: safeString(previewResult?.content_preview || "", ""),
+        inspection_warnings: Array.isArray(previewResult?.inspection_warnings) ? previewResult.inspection_warnings : [],
+        inspection_errors: Array.isArray(previewResult?.inspection_errors) ? previewResult.inspection_errors : []
+      }
+    ];
+  }, [filePath, previewFilePath, previewResult]);
+  const candidateSource = useMemo(() => (collectionCandidates.length ? collectionCandidates : filePreviewCandidates), [collectionCandidates, filePreviewCandidates]);
+  const importedSkillPath = safeString(importedSkillRecord?.file_path || importedSkillRecord?.skill_path || importedSkillRecord?.path || "", "");
+  const candidateEntries = useMemo(
+    () => candidateSource.map((candidate) => getGitHubImportCandidateView(candidate, selectedSkillPath, importedSkillPath)),
+    [candidateSource, importedSkillPath, selectedSkillPath]
+  );
+  const selectedCollectionCandidate = candidateEntries.find((item) => item.selected) || candidateEntries[0] || null;
+  const selectedImportedSkill = useMemo(() => {
+    if (!importedSkillRecord?.id || !selectedCollectionCandidate) {
+      return null;
+    }
+
+    if (!importedSkillPath) {
+      return importedSkillRecord;
+    }
+
+    if (selectedCollectionCandidate.path === importedSkillPath || selectedCollectionCandidate.manifestPath === importedSkillPath) {
+      return importedSkillRecord;
+    }
+
+    return null;
+  }, [importedSkillPath, importedSkillRecord, selectedCollectionCandidate]);
+  const candidateSummary = useMemo(
+    () =>
+      candidateEntries.reduce(
+        (acc, item) => {
+          acc.found += 1;
+          if (item.validationStatus === "safe") acc.safe += 1;
+          if (item.validationStatus === "blocked") acc.blocked += 1;
+          if (item.validationStatus === "warning") acc.warning += 1;
+          if (item.imported) acc.imported += 1;
+          return acc;
+        },
+        { found: 0, safe: 0, blocked: 0, warning: 0, imported: 0 }
+      ),
+    [candidateEntries]
+  );
+  const filteredCandidates = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+
+    return candidateEntries.filter((item) => {
+      const matchesQuery = !query || item.searchText.includes(query);
+      const matchesFilter =
+        activeFilter === "all"
+          ? true
+          : activeFilter === "selected"
+            ? item.selected
+            : activeFilter === "safe"
+              ? item.validationStatus === "safe"
+              : activeFilter === "blocked"
+                ? item.validationStatus === "blocked"
+                : activeFilter === "warning"
+                  ? item.validationStatus === "warning"
+                  : activeFilter === "imported"
+                    ? item.imported
+                    : true;
+      return matchesQuery && matchesFilter;
+    });
+  }, [activeFilter, candidateEntries, searchText]);
+  const selectedCandidateStatus = selectedCollectionCandidate?.statusMeta?.label || "Select a skill first";
+  const importActionLabel = !selectedCollectionCandidate
+    ? "Select a skill first"
+    : selectedCollectionCandidate.imported
+      ? "Already in Library"
+      : selectedCollectionCandidate.validationStatus === "blocked" || selectedCollectionCandidate.validationStatus === "warning"
+        ? "Import for Review"
+        : "Import to Library";
   const canPreviewImport = Boolean(onPreviewImport);
   const canPreviewCollection = Boolean(onPreviewCollection);
-  const canImportSkill = Boolean(onImportSkill) && !isSubmitting && Boolean(String(selectedSkillPath || previewFilePath || filePath || "").trim());
-  const canApproveImport = Boolean(onApproveImport);
-  const canRejectImport = Boolean(onRejectImport);
-  const canDisableImport = Boolean(onDisableImport);
+  const canImportSkill = Boolean(onImportSkill) && !isSubmitting && Boolean(selectedCollectionCandidate?.path || selectedCollectionCandidate?.manifestPath) && !selectedCollectionCandidate?.imported;
+  const canApproveImport = Boolean(onApproveImport) && Boolean(selectedImportedSkill?.id);
+  const canRejectImport = Boolean(onRejectImport) && Boolean(selectedImportedSkill?.id);
+  const canDisableImport = Boolean(onDisableImport) && Boolean(selectedImportedSkill?.id);
 
   useEffect(() => {
     if (!selectedSkillPath && filePath) {
@@ -1511,21 +2137,21 @@ function ImportSkillContent({
   }, [filePath, selectedSkillPath]);
 
   useEffect(() => {
-    if (!collectionCandidates.length) {
+    if (!candidateSource.length) {
       return;
     }
 
-    const hasSelectedCandidate = collectionCandidates.some((item) => {
+    const hasSelectedCandidate = candidateSource.some((item) => {
       const candidatePath = String(item?.path || "").trim();
       const manifestPath = String(item?.manifest_path || "").trim();
       return candidatePath === selectedSkillPath || manifestPath === selectedSkillPath;
     });
 
     if (!hasSelectedCandidate) {
-      const firstCandidate = collectionCandidates[0];
+      const firstCandidate = candidateSource[0];
       setSelectedSkillPath(String(firstCandidate?.path || firstCandidate?.manifest_path || filePath || "").trim());
     }
-  }, [collectionCandidates, filePath, selectedSkillPath]);
+  }, [candidateSource, filePath, selectedSkillPath]);
 
   async function handlePreviewFile() {
     if (!onPreviewImport) {
@@ -1534,6 +2160,8 @@ function ImportSkillContent({
     }
 
     setMessage("");
+    setTechnicalMessage("");
+    setPreviewTab("summary");
     setPreviewFilePath(filePath);
     setSelectedSkillPath(filePath);
     setCollectionPreview(null);
@@ -1557,6 +2185,8 @@ function ImportSkillContent({
     }
 
     setMessage("");
+    setTechnicalMessage("");
+    setPreviewTab("summary");
     setPreviewFolderPath(folderPath);
     setPreviewResult(null);
     try {
@@ -1584,337 +2214,538 @@ function ImportSkillContent({
     }
 
     setMessage("");
+    setTechnicalMessage("");
+    setPreviewTab("summary");
     try {
-      const skillPath = String(selectedSkillPath || previewFilePath || filePath || "").trim();
+      const skillPath = String(selectedCollectionCandidate?.path || selectedCollectionCandidate?.manifestPath || selectedSkillPath || previewFilePath || filePath || "").trim();
       const result = await onImportSkill({
         repo_url: repository,
         branch,
         skill_path: skillPath
       });
       setPreviewResult(result || null);
+      setImportedSkillRecord(result || null);
       if (skillPath) {
         setSelectedSkillPath(skillPath);
       }
-      setMessage(result ? `Skill imported. Status: ${safeString(result?.status, "preview")}.` : "Import kosong.");
+      setMessage("Skill imported to library for review.");
     } catch (importError) {
-      setMessage(importError?.message || "Import gagal.");
+      const friendly = getGitHubImportFriendlyError(importError);
+      setMessage(friendly.message || "Import gagal.");
+      setTechnicalMessage(friendly.technical || "");
     }
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <PanelHeader
-        title="GitHub Skill Import"
-        description="Preview dulu. Pilih `skill_path` dari collection. Import / approve / reject tetap explicit."
-        badge={previewResult?.status || collectionPreview?.warning ? "preview" : "ready"}
-      />
-
-      {error ? <PanelStateCard title="Import data" description={error} tone="review" /> : null}
-
-      <Card>
-        <SectionTitle title="Source" subtitle="Repo, branch, file path, dan folder path." />
-        <InputField label="Repository URL" placeholder="https://github.com/user/repo" value={repository} onChange={(event) => setRepository(event.target.value)} />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-          <InputField label="Branch" placeholder="main" value={branch} onChange={(event) => setBranch(event.target.value)} />
-          <InputField label="File Path" placeholder="src/skill.py" value={filePath} onChange={(event) => setFilePath(event.target.value)} />
-          <InputField label="Folder Path" placeholder="src/skills/" value={folderPath} onChange={(event) => setFolderPath(event.target.value)} />
+      <Card style={{ display: "grid", gap: 12 }}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>Import Skill</div>
+          <div style={{ fontSize: 12, color: C.textMuted }}>Review skill candidates before adding them to your library.</div>
+          <div style={{ fontSize: 11, color: C.textDim }}>Imported skills stay inactive until approved.</div>
         </div>
-        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-          {[
-            { text: "preview file path", action: handlePreviewFile, disabled: !canPreviewImport },
-            { text: "preview collection", action: handlePreviewCollection, disabled: !canPreviewCollection }
-          ].map((item) => (
-            <button
-              key={item.text}
-              type="button"
-              onClick={item.action}
-              disabled={item.disabled}
+        {error ? <PanelStateCard title="Import data" description={error} tone="review" /> : null}
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 10 }}>
+          <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+            <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.04em" }}>Candidates found</div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: C.text }}>{candidateSummary.found}</div>
+          </div>
+          <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+            <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.04em" }}>Safe</div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: C.green }}>{candidateSummary.safe}</div>
+          </div>
+          <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+            <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.04em" }}>Blocked</div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: C.accent }}>{candidateSummary.blocked}</div>
+          </div>
+          <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+            <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.04em" }}>Already imported</div>
+            <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: C.textMuted }}>{candidateSummary.imported}</div>
+          </div>
+        </div>
+
+        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.card }}>
+          <SectionTitle title="Source / scan summary" subtitle="Repo, branch, file path, dan folder path." />
+          <InputField label="Repository URL" placeholder="https://github.com/user/repo" value={repository} onChange={(event) => setRepository(event.target.value)} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <InputField label="Branch" placeholder="main" value={branch} onChange={(event) => setBranch(event.target.value)} />
+            <InputField label="File Path" placeholder="src/skill.py" value={filePath} onChange={(event) => setFilePath(event.target.value)} />
+            <InputField label="Folder Path" placeholder="src/skills/" value={folderPath} onChange={(event) => setFolderPath(event.target.value)} />
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+            {[
+              { text: "Preview file", action: handlePreviewFile, disabled: !canPreviewImport },
+              { text: "Preview collection", action: handlePreviewCollection, disabled: !canPreviewCollection }
+            ].map((item) => (
+              <button
+                key={item.text}
+                type="button"
+                onClick={item.action}
+                disabled={item.disabled}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  border: `1px solid ${C.border}`,
+                  background: C.cardInner,
+                  color: item.disabled ? C.textDim : C.textMuted,
+                  fontSize: 12,
+                  cursor: item.disabled ? "not-allowed" : "pointer",
+                  opacity: item.disabled ? 0.72 : 1,
+                  ...FONT
+                }}
+              >
+                {item.text}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr", gap: 8 }}>
+            <div style={{ padding: "7px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+              selected candidate: {safeString(selectedCollectionCandidate?.title || selectedCollectionCandidate?.path, "No candidate selected")}
+            </div>
+            <div style={{ padding: "7px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+              status: {selectedCandidateStatus}
+            </div>
+            <div style={{ padding: "7px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+              class: {safeString(selectedCollectionCandidate?.skillType || selectedCollectionCandidate?.raw?.skill_import_type, "preview")}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.card }}>
+          <SectionTitle title="Candidate list" subtitle="Search, filter, lalu buka detail kandidat." />
+          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+            <div
               style={{
-                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
                 padding: "8px 12px",
                 borderRadius: 10,
-                border: `1.5px solid ${C.border}`,
-                background: C.cardInner,
-                color: item.disabled ? C.textDim : C.textMuted,
-                fontSize: 12,
-                cursor: item.disabled ? "not-allowed" : "pointer",
-                opacity: item.disabled ? 0.72 : 1,
-                ...FONT
+                border: `1px solid ${C.border}`,
+                background: C.cardInner
               }}
             >
-              {item.text}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
-            selected skill_path: {safeString(selectedSkillPath, "preview")}
-          </div>
-          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
-            import status: {safeString(previewResult?.status, "preview")}
-          </div>
-          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
-            class: {safeString(previewResult?.skill_import_type || selectedCollectionCandidate?.skill_import_type, "pending")}
-          </div>
-        </div>
-
-        {collectionPreview ? (
-          <div style={{ marginBottom: 14 }}>
-            <SectionTitle
-              title="Collection Candidates"
-              subtitle={`${safeString(collectionPreview?.candidate_count, "0")} kandidat ditemukan`}
-            />
-            {collectionPreview?.warning ? (
-              <PanelStateCard title="Collection note" description={collectionPreview.warning} tone="review" />
-            ) : null}
-            {collectionCandidates.length ? (
-              <div style={{ display: "grid", gap: 8 }}>
-                {collectionCandidates.map((candidate) => {
-                  const candidatePath = String(candidate?.path || candidate?.manifest_path || "").trim();
-                  const isSelected = candidatePath === selectedSkillPath || String(candidate?.manifest_path || "").trim() === selectedSkillPath;
-                  return (
-                    <div
-                      key={`${candidate.manifest_path || candidate.path || candidate.title}`}
-                      style={{
-                        padding: 10,
-                        borderRadius: 10,
-                        border: `1px solid ${isSelected ? "rgba(184,92,56,0.28)" : C.border}`,
-                        background: isSelected ? "rgba(255,248,242,0.96)" : C.bgDeep
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{safeString(candidate?.title, safeString(candidate?.path, "skill"))}</div>
-                          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                            {safeString(candidate?.path, "-")} | {safeString(candidate?.manifest_path, "-")}
-                          </div>
-                        </div>
-                        <span style={statusStyle(candidate?.validation_status || "review")}>{candidate?.validation_status || "review"}</span>
-                      </div>
-                      <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        <span style={statusStyle("preview only")}>{candidate?.skill_import_type || "skill import"}</span>
-                        {candidate?.warning ? <span style={statusStyle("review")}>{candidate.warning}</span> : null}
-                      </div>
-                      <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                        <div style={{ fontSize: 11, color: C.textDim }}>
-                          {candidate?.description || "no description"}
-                        </div>
-                        <button
-                          type="button"
-                          disabled={!candidatePath}
-                          onClick={() => setSelectedSkillPath(candidatePath || filePath)}
-                          style={{
-                            padding: "6px 10px",
-                            borderRadius: 8,
-                            border: `1px solid ${C.border}`,
-                            background: C.cardInner,
-                            color: candidatePath ? C.textMuted : C.textDim,
-                            fontSize: 12,
-                            cursor: candidatePath ? "pointer" : "not-allowed",
-                            opacity: candidatePath ? 1 : 0.72,
-                            ...FONT
-                          }}
-                        >
-                          Select
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <EmptyPanelState
-                title="Collection kosong"
-                description="Tidak ada kandidat skill_path. Buka file preview untuk import langsung."
-                actionLabel="Preview file"
-                onAction={handlePreviewFile}
+              <span style={{ color: C.textDim }}>o</span>
+              <input
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Search skill candidates..."
+                style={{ background: "none", border: "none", outline: "none", width: "100%", fontSize: 13, color: C.text, ...FONT }}
               />
-            )}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                { key: "all", label: `All (${candidateEntries.length})` },
+                { key: "safe", label: `Safe (${candidateSummary.safe})` },
+                { key: "blocked", label: `Blocked (${candidateSummary.blocked})` },
+                { key: "warning", label: `Warning (${candidateSummary.warning})` },
+                { key: "imported", label: `Imported (${candidateSummary.imported})` },
+                { key: "selected", label: "Selected" }
+              ].map((tab) => {
+                const active = activeFilter === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setActiveFilter(tab.key)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: `1px solid ${active ? C.accent : C.border}`,
+                      background: active ? C.accentLight : C.cardInner,
+                      color: active ? C.accent : C.textMuted,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        ) : null}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-          {[
-            `import type: ${safeString(previewResult?.import_type, "skill")}`,
-            `file path: ${safeString(previewResult?.file_path || previewFilePath, "preview")}`,
-            `folder path: ${safeString(previewFolderPath || folderPath, "preview")}`
-          ].map((text) => (
+          {filteredCandidates.length ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {filteredCandidates.map((candidate) => {
+                const isSelected = candidate.selected;
+                return (
+                  <div
+                    key={`${candidate.manifestPath || candidate.path || candidate.title}`}
+                    style={{
+                      padding: 12,
+                      borderRadius: 12,
+                      border: `1px solid ${isSelected ? C.accent : C.border}`,
+                      background: isSelected ? "rgba(255,248,242,0.96)" : C.bgDeep,
+                      boxShadow: isSelected ? "0 8px 18px rgba(154,74,31,0.08)" : "none"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                      <div style={{ minWidth: 0, display: "grid", gap: 3 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {candidate.title}
+                          </div>
+                          {isSelected ? <span style={statusStyle("ready")}>selected</span> : null}
+                          {candidate.imported ? <span style={statusStyle("ready")}>Already in library</span> : null}
+                        </div>
+                        <div style={{ fontSize: 11, color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {candidate.path} · {candidate.manifestPath}
+                        </div>
+                      </div>
+                      <span style={statusStyle(candidate.statusMeta.tone)}>{candidate.statusMeta.label}</span>
+                    </div>
+                    <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <span style={statusStyle(candidate.skillType === "workflow_skill" ? "review" : candidate.skillType === "tool_skill" ? "blocked" : "ready")}>
+                        {candidate.skillType}
+                      </span>
+                      {candidate.validationStatus === "blocked" ? <span style={statusStyle("blocked")}>{candidate.blockedSummary}</span> : null}
+                      {candidate.validationStatus === "warning" ? <span style={statusStyle("review")}>{candidate.blockedSummary || "Review needed"}</span> : null}
+                    </div>
+                    <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                      <div style={{ minWidth: 0, flex: 1, fontSize: 11, color: C.textDim, lineHeight: 1.5 }}>
+                        {safeString(candidate.description, candidate.validationStatus === "blocked" ? "Blocked candidate." : "Preview candidate.")}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!candidate.path}
+                        onClick={() => {
+                          setSelectedSkillPath(candidate.path || filePath);
+                          setMessage("");
+                          setTechnicalMessage("");
+                        }}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: `1px solid ${C.border}`,
+                          background: C.cardInner,
+                          color: candidate.path ? C.textMuted : C.textDim,
+                          fontSize: 12,
+                          cursor: candidate.path ? "pointer" : "not-allowed",
+                          opacity: candidate.path ? 1 : 0.72,
+                          ...FONT
+                        }}
+                      >
+                        View details
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyPanelState
+              title="No matching skill candidates."
+              description="Ubah search atau filter, lalu preview source lagi kalau perlu."
+              actionLabel="Preview collection"
+              onAction={handlePreviewCollection}
+            />
+          )}
+        </div>
+
+        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.card }}>
+          <SectionTitle title="Selected Skill Review" subtitle="Nama, path, type, status, alasan blocked, lalu next action." />
+          {!selectedCollectionCandidate ? (
+            <div style={{ padding: 12, borderRadius: 12, border: `1px dashed ${C.border}`, background: C.bgDeep, color: C.textMuted, fontSize: 12 }}>
+              Select a skill candidate to review details before importing.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{selectedCollectionCandidate.title}</div>
+                  <div style={{ marginTop: 3, fontSize: 11, color: C.textMuted }}>{selectedCollectionCandidate.path}</div>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <span style={statusStyle(selectedCollectionCandidate.statusMeta.tone)}>{selectedCollectionCandidate.statusMeta.label}</span>
+                  <span style={statusStyle(selectedCollectionCandidate.imported ? "ready" : selectedCollectionCandidate.validationStatus || "review")}>
+                    {selectedCollectionCandidate.imported ? "Already in library" : safeString(selectedCollectionCandidate.validationStatus, "preview")}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Skill type</div>
+                  <div style={{ fontSize: 12, color: C.text }}>{selectedCollectionCandidate.skillType}</div>
+                </div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Import state</div>
+                  <div style={{ fontSize: 12, color: C.text }}>{selectedCollectionCandidate.imported ? "Already in library" : "Not imported yet"}</div>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Why blocked</div>
+                  <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>
+                    {selectedCollectionCandidate.validationStatus === "blocked"
+                      ? selectedCollectionCandidate.blockedSummary
+                      : selectedCollectionCandidate.validationStatus === "warning"
+                        ? "Review needed before import."
+                        : "Safe to import."}
+                  </div>
+                  {selectedCollectionCandidate.technicalDetail ? (
+                    <div style={{ marginTop: 8, fontSize: 11, color: C.textDim }}>
+                      Technical details: {selectedCollectionCandidate.technicalDetail}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Next action</div>
+                  <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>
+                    {selectedCollectionCandidate.imported
+                      ? "Skill already in library. Open library or review approval state."
+                      : selectedCollectionCandidate.validationStatus === "blocked"
+                        ? "You can import for review, but blocked references must be cleaned before approval."
+                        : selectedCollectionCandidate.validationStatus === "warning"
+                          ? "You can import for review, then approve or reject after review."
+                          : "You can import to library, then approve or reject after review."}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: C.textMuted }}>
+                  Selected candidate: {selectedCollectionCandidate.title} · {selectedCollectionCandidate.path}
+                </div>
+                <button
+                  type="button"
+                  disabled={!canImportSkill}
+                  onClick={handleImport}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: selectedCollectionCandidate.imported ? C.textDim : C.accent,
+                    color: "#fff",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: canImportSkill ? "pointer" : "not-allowed",
+                    opacity: canImportSkill ? 1 : 0.72,
+                    ...FONT
+                  }}
+                  title={canImportSkill ? "Import candidate to library." : "Import endpoint not available yet."}
+                >
+                  {isSubmitting ? "Importing..." : importActionLabel}
+                </button>
+              </div>
+              {selectedCollectionCandidate.imported ? (
+                <div style={{ fontSize: 11, color: C.textDim }}>
+                  This skill already exists in your library.
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.card }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+            <SectionTitle title="Skill Manifest Preview" subtitle="Summary default. Raw Manifest bounded and scrollable." />
+            <div style={{ display: "flex", gap: 8 }}>
+              {[
+                { key: "summary", label: "Summary" },
+                { key: "raw", label: "Raw Manifest" }
+              ].map((tab) => {
+                const active = previewTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setPreviewTab(tab.key)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: `1px solid ${active ? C.accent : C.border}`,
+                      background: active ? C.accentLight : C.cardInner,
+                      color: active ? C.accent : C.textMuted,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      ...FONT
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {previewTab === "summary" ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8 }}>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Import type</div>
+                  <div style={{ fontSize: 12, color: C.text }}>{safeString(previewResult?.import_type || selectedCollectionCandidate?.skillType, "skill")}</div>
+                </div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>File path</div>
+                  <div style={{ fontSize: 12, color: C.text }}>{safeString(previewResult?.file_path || selectedCollectionCandidate?.path || previewFilePath, "preview")}</div>
+                </div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Folder path</div>
+                  <div style={{ fontSize: 12, color: C.text }}>{safeString(previewFolderPath || folderPath, "preview")}</div>
+                </div>
+              </div>
+
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>Summary</div>
+                <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.6 }}>
+                  {previewResult?.content_preview
+                    ? previewResult.content_preview
+                    : "Review candidate list dulu. Manifest detail tampil di Raw Manifest tab."}
+                </div>
+                <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <span style={statusStyle(previewResult?.status || "preview")}>{safeString(previewResult?.status, "preview")}</span>
+                  {Array.isArray(previewResult?.inspection_warnings) && previewResult.inspection_warnings.length ? (
+                    <span style={statusStyle("review")}>{previewResult.inspection_warnings.length} warning</span>
+                  ) : null}
+                  {Array.isArray(previewResult?.inspection_errors) && previewResult.inspection_errors.length ? (
+                    <span style={statusStyle("blocked")}>{previewResult.inspection_errors.length} blocked</span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : (
             <div
-              key={text}
               style={{
-                padding: "7px 10px",
-                borderRadius: 8,
-                background: C.card,
+                padding: 12,
+                borderRadius: 12,
                 border: `1px solid ${C.border}`,
-                fontSize: 11,
-                color: C.textMuted
+                background: C.bgDeep,
+                maxHeight: 240,
+                overflowY: "auto"
               }}
             >
-              {text}
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Skill Manifest Preview
+              </div>
+              <pre style={{ margin: 0, fontSize: 11, lineHeight: 1.6, color: C.textMuted, whiteSpace: "pre-wrap", wordBreak: "break-word", ...FONT }}>
+                {safeString(previewResult?.content_preview || JSON.stringify(previewResult || selectedCollectionCandidate?.raw || {}, null, 2), "no clone / no install / no script execution")}
+              </pre>
             </div>
-          ))}
+          )}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
-            status: {safeString(previewResult?.status, "preview")}
-          </div>
-          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
-            reviewed: {safeString(previewResult?.review_notes, "pending review")}
-          </div>
-          <div style={{ padding: "7px 10px", borderRadius: 8, background: C.card, border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
-            commit: {safeString(previewResult?.commit_sha, "preview only")}
-          </div>
-        </div>
-
-        <div
-          style={{
-            padding: 12,
-            borderRadius: 10,
-            background: C.card,
-            border: `1px solid ${C.border}`,
-            minHeight: 90
-          }}
-        >
-          <div style={{ fontSize: 11, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>Content Review</div>
-          <div style={{ fontSize: 12, color: C.textDim, fontFamily: "Consolas, monospace" }}>
-            {previewResult?.content_preview || "no clone / no install / no script execution"}
-          </div>
-          {Array.isArray(previewResult?.inspection_warnings) && previewResult.inspection_warnings.length ? (
-            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-              {previewResult.inspection_warnings.slice(0, 3).map((warning) => (
-                <div key={warning} style={{ fontSize: 11, color: C.amber }}>
-                  {warning}
-                </div>
-              ))}
+        {selectedImportedSkill?.id ? (
+          <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.card }}>
+            <SectionTitle
+              title="Imported Skill Review"
+              subtitle="Approval makes reviewed skill available for agent attachment. Reject keeps it blocked. Disable turns off imported skill."
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+              <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep, fontSize: 11, color: C.textMuted }}>
+                name: {safeString(selectedImportedSkill?.name || selectedImportedSkill?.skill_name || selectedCollectionCandidate?.title, "Imported skill")}
+              </div>
+              <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep, fontSize: 11, color: C.textMuted }}>
+                status: {safeString(selectedImportedSkill?.status, "imported")}
+              </div>
+              <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep, fontSize: 11, color: C.textMuted }}>
+                next: Review then approve / reject / disable
+              </div>
             </div>
-          ) : null}
-          {Array.isArray(previewResult?.inspection_errors) && previewResult.inspection_errors.length ? (
-            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
-              {previewResult.inspection_errors.slice(0, 3).map((inspectError) => (
-                <div key={inspectError} style={{ fontSize: 11, color: C.accent }}>
-                  {inspectError}
-                </div>
-              ))}
+            <div style={{ marginBottom: 10, fontSize: 12, color: C.textMuted, lineHeight: 1.6 }}>
+              Approval makes a reviewed skill available for agent attachment.
             </div>
-          ) : null}
-        </div>
-
-        {previewResult?.id ? (
-          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              disabled={!canApproveImport}
-              onClick={async () => {
-                try {
-                  const next = await onApproveImport(previewResult);
-                  if (next) setPreviewResult(next);
-                  setMessage("Import approved.");
-                } catch (approveError) {
-                  setMessage(approveError?.message || "Approve import gagal.");
-                }
-              }}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: C.cardInner,
-                color: canApproveImport ? C.textMuted : C.textDim,
-                fontSize: 12,
-                cursor: canApproveImport ? "pointer" : "not-allowed",
-                opacity: canApproveImport ? 1 : 0.72,
-                ...FONT
-              }}
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              disabled={!canRejectImport}
-              onClick={async () => {
-                try {
-                  const next = await onRejectImport(previewResult);
-                  if (next) setPreviewResult(next);
-                  setMessage("Import rejected.");
-                } catch (rejectError) {
-                  setMessage(rejectError?.message || "Reject import gagal.");
-                }
-              }}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: C.cardInner,
-                color: canRejectImport ? C.textMuted : C.textDim,
-                fontSize: 12,
-                cursor: canRejectImport ? "pointer" : "not-allowed",
-                opacity: canRejectImport ? 1 : 0.72,
-                ...FONT
-              }}
-            >
-              Reject
-            </button>
-            <button
-              type="button"
-              disabled={!canDisableImport}
-              onClick={async () => {
-                try {
-                  const next = await onDisableImport(previewResult);
-                  if (next) setPreviewResult(next);
-                  setMessage("Import disabled.");
-                } catch (disableError) {
-                  setMessage(disableError?.message || "Disable import gagal.");
-                }
-              }}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: C.cardInner,
-                color: canDisableImport ? C.textMuted : C.textDim,
-                fontSize: 12,
-                cursor: canDisableImport ? "pointer" : "not-allowed",
-                opacity: canDisableImport ? 1 : 0.72,
-                ...FONT
-              }}
-            >
-              Disable
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={!canApproveImport}
+                onClick={async () => {
+                  try {
+                    const next = await onApproveImport(selectedImportedSkill);
+                    if (next) setImportedSkillRecord(next);
+                    setPreviewResult(next || selectedImportedSkill);
+                    setMessage("Imported skill approved.");
+                    setTechnicalMessage("");
+                  } catch (approveError) {
+                    setMessage(approveError?.message || "Approve import gagal.");
+                  }
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.cardInner,
+                  color: canApproveImport ? C.textMuted : C.textDim,
+                  fontSize: 12,
+                  cursor: canApproveImport ? "pointer" : "not-allowed",
+                  opacity: canApproveImport ? 1 : 0.72,
+                  ...FONT
+                }}
+              >
+                Approve imported skill
+              </button>
+              <button
+                type="button"
+                disabled={!canRejectImport}
+                onClick={async () => {
+                  try {
+                    const next = await onRejectImport(selectedImportedSkill);
+                    if (next) setImportedSkillRecord(next);
+                    setPreviewResult(next || selectedImportedSkill);
+                    setMessage("Imported skill rejected.");
+                    setTechnicalMessage("");
+                  } catch (rejectError) {
+                    setMessage(rejectError?.message || "Reject import gagal.");
+                  }
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.cardInner,
+                  color: canRejectImport ? C.textMuted : C.textDim,
+                  fontSize: 12,
+                  cursor: canRejectImport ? "pointer" : "not-allowed",
+                  opacity: canRejectImport ? 1 : 0.72,
+                  ...FONT
+                }}
+              >
+                Reject imported skill
+              </button>
+              <button
+                type="button"
+                disabled={!canDisableImport}
+                onClick={async () => {
+                  try {
+                    const next = await onDisableImport(selectedImportedSkill);
+                    if (next) setImportedSkillRecord(next);
+                    setPreviewResult(next || selectedImportedSkill);
+                    setMessage("Imported skill disabled.");
+                    setTechnicalMessage("");
+                  } catch (disableError) {
+                    setMessage(disableError?.message || "Disable import gagal.");
+                  }
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: C.cardInner,
+                  color: canDisableImport ? C.textMuted : C.textDim,
+                  fontSize: 12,
+                  cursor: canDisableImport ? "pointer" : "not-allowed",
+                  opacity: canDisableImport ? 1 : 0.72,
+                  ...FONT
+                }}
+              >
+                Disable imported skill
+              </button>
+            </div>
           </div>
         ) : null}
 
-        <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-          <div style={{ fontSize: 12, color: C.textMuted }}>
-            Use selected skill_path: {safeString(selectedSkillPath, "preview")}
-          </div>
-          <button
-            type="button"
-            disabled={!canImportSkill}
-            onClick={handleImport}
-            style={{
-              padding: "8px 16px",
-              borderRadius: 10,
-              border: "none",
-              background: C.accent,
-              color: "#fff",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: canImportSkill ? "pointer" : "not-allowed",
-              opacity: canImportSkill ? 1 : 0.72,
-              ...FONT
-            }}
-            title={canImportSkill ? "Add selected skill." : "Import endpoint not available yet."}
-          >
-            {isSubmitting ? "Saving..." : "Add selected skill"}
-          </button>
+        <div style={{ display: "grid", gap: 8 }}>
+          <InlineFeedback message={message} />
+          {technicalMessage ? <InlineFeedback message={technicalMessage} /> : null}
+          <InlineFeedback message={error} error />
         </div>
       </Card>
-
-      <div style={{ display: "grid", gap: 8 }}>
-        <InlineFeedback message={error} error />
-        <InlineFeedback message={message} />
-      </div>
     </div>
   );
 }
@@ -2791,6 +3622,7 @@ function SettingsContent({
 function SkillHubContent({ rows = [], selectedAgent, selectedAgentSkills = [], error = "", onOpenPanel }) {
   const libraryCount = rows.length;
   const activeCount = selectedAgentSkills.length;
+  const activeSkillItems = Array.isArray(selectedAgentSkills) ? selectedAgentSkills : [];
   const typeCounts = rows.reduce((acc, row) => {
     const key = normalizeSkillType(row?.type || "prompt_skill");
     acc[key] = (acc[key] || 0) + 1;
@@ -2923,7 +3755,7 @@ function SkillHubContent({ rows = [], selectedAgent, selectedAgentSkills = [], e
                 actionLabel="Open active"
                 onAction={() => onOpenPanel?.("active-skills")}
               />
-              {selectedAgentSkills.slice(0, 3).map((item) => {
+              {activeSkillItems.slice(0, 3).map((item) => {
                 const skill = item?.skill || {};
                 const typeMeta = getSkillTypeMeta(skill?.skill_type || skill?.type);
                 return (
@@ -2954,6 +3786,7 @@ function SkillHubContent({ rows = [], selectedAgent, selectedAgentSkills = [], e
                   </div>
                 );
               })}
+              {activeSkillItems.length > 3 ? <div style={{ fontSize: 11, color: C.textDim }}>+{activeSkillItems.length - 3} more</div> : null}
             </div>
           ) : (
             <EmptyPanelState
@@ -3968,6 +4801,8 @@ function AgentCard({ agent }) {
   const [cmd, setCmd] = useState("");
   const [decision, setDecision] = useState(null);
   const [notes, setNotes] = useState([]);
+  const skillItems = Array.isArray(agent?.skills) ? agent.skills : [];
+  const activityItems = Array.isArray(agent?.activity) ? agent.activity : [];
   const statusMap = {
     idle: { label: "Idle", color: C.textDim, bg: "rgba(0,0,0,0.05)" },
     active: { label: "Running", color: C.amber, bg: C.amberLight },
@@ -3998,23 +4833,7 @@ function AgentCard({ agent }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div
-          style={{
-            width: 42,
-            height: 42,
-            borderRadius: 12,
-            background: C.accentLight,
-            border: `1px solid ${C.borderMid}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 13,
-            fontWeight: 700,
-            color: C.accent
-          }}
-        >
-          {agent.icon}
-        </div>
+        <AgentAvatar agent={agent} size={42} />
         <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 7, color: status.color, background: status.bg }}>
           {status.label}
         </span>
@@ -4027,18 +4846,19 @@ function AgentCard({ agent }) {
 
       <div style={{ background: C.bgDeep, borderRadius: 10, padding: "8px 10px", border: `1px solid ${C.border}` }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Skills</div>
-        {agent.skills.map((skill) => (
+        {skillItems.slice(0, 3).map((skill) => (
           <div key={skill} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
             <div style={{ width: 4, height: 4, borderRadius: "50%", background: C.textDim, flexShrink: 0 }} />
             <span style={{ fontSize: 11, color: C.textMuted }}>{skill}</span>
           </div>
         ))}
+        {skillItems.length > 3 ? <div style={{ fontSize: 11, color: C.textDim }}>+{skillItems.length - 3} more</div> : null}
       </div>
 
       <div style={{ background: C.bgDeep, borderRadius: 10, padding: "8px 10px", border: `1px solid ${C.border}` }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Activity</div>
-        {agent.activity.map((activity, index) => (
-          <div key={activity} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: index < agent.activity.length - 1 ? 4 : 0 }}>
+        {activityItems.map((activity, index) => (
+          <div key={activity} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: index < activityItems.length - 1 ? 4 : 0 }}>
             <div
               style={{
                 width: 5,
@@ -4187,23 +5007,7 @@ function WorkspaceAgentCard({ agent, selected = false, onSelect, onApprove, onRe
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div
-          style={{
-            width: 42,
-            height: 42,
-            borderRadius: 12,
-            background: C.accentLight,
-            border: `1px solid ${C.borderMid}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 13,
-            fontWeight: 700,
-            color: C.accent
-          }}
-        >
-          {agent.icon}
-        </div>
+        <AgentAvatar agent={agent} size={42} />
         <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 7, color: status.color, background: status.bg }}>
           {status.label}
         </span>
@@ -4446,6 +5250,7 @@ export default function FigmaMakeWorkspace() {
   const [apiModelProviders, setApiModelProviders] = useState([]);
   const [apiRuntimeCapabilities, setApiRuntimeCapabilities] = useState([]);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const [createAgentStage, setCreateAgentStage] = useState("idle");
   const [panelErrors, setPanelErrors] = useState({
     general: "",
     createAgent: "",
@@ -4859,9 +5664,24 @@ export default function FigmaMakeWorkspace() {
 
   async function handleCreateAgent(payload) {
     setActionBusy((current) => ({ ...current, createAgent: true }));
+    setCreateAgentStage("creating");
     setPanelErrors((current) => ({ ...current, createAgent: "" }));
 
     try {
+      const skillMap = new Map();
+      apiSkillLibrary.forEach((item, index) => {
+        const id = getSkillLibraryId(item, index);
+        if (id) {
+          skillMap.set(id, item);
+        }
+      });
+
+      const selectedSkillIds = Array.from(
+        new Set((Array.isArray(payload.selectedSkillIds) ? payload.selectedSkillIds : []).map((value) => String(value || "").trim()).filter(Boolean))
+      );
+      const selectedSkills = selectedSkillIds.map((id) => skillMap.get(id)).filter(Boolean);
+      const selectedSkillLabels = selectedSkills.map((item) => getSkillLibraryLabel(item));
+      const selectedSkillSummary = selectedSkillLabels.slice(0, 3).join(", ");
       const defaultProvider =
         apiModelProviders.find((item) => {
           const id = String(item?.id || "").toLowerCase();
@@ -4870,11 +5690,11 @@ export default function FigmaMakeWorkspace() {
           return id === preferred || name.includes(preferred) || preferred.includes(name);
         }) || apiModelProviders[0] || null;
 
-      await createAgent({
+      const createPayload = {
         name: payload.name,
         slug: payload.name.toLowerCase().replace(/\s+/g, "-"),
-        description: `${payload.skill} agent`,
-        role_description: `${payload.skill} workspace agent`,
+        description: selectedSkillSummary ? `${payload.name} agent for ${selectedSkillSummary}.` : `${payload.name} agent.`,
+        role_description: selectedSkillSummary ? `${payload.name} workspace agent with ${selectedSkillSummary}.` : `${payload.name} workspace agent.`,
         default_model_provider_id: payload.defaultProviderId || defaultProvider?.id || null,
         default_model_name: payload.model,
         status: payload.pinned ? "active" : "inactive",
@@ -4882,8 +5702,69 @@ export default function FigmaMakeWorkspace() {
         max_runtime_seconds: 300,
         max_token_budget: null,
         requires_approval_by_default: false,
-        instruction_text: `Workspace agent for ${payload.skill}.`
-      });
+        instruction_text: selectedSkillSummary
+          ? `Workspace agent. Approved skills: ${selectedSkillSummary}.`
+          : `Workspace agent for ${payload.name}.`
+      };
+
+      if (payload.avatarMode && payload.avatarMode !== "upload" && payload.avatarType && payload.avatarValue) {
+        createPayload.avatar_type = payload.avatarType;
+        createPayload.avatar_value = payload.avatarValue;
+      }
+
+      const createdAgent = await createAgent(createPayload);
+      const avatarUploadRequested = payload.avatarMode === "upload" && payload.avatarFile;
+      let avatarUploadFailed = false;
+      let avatarUploadMessage = "";
+
+      if (avatarUploadRequested) {
+        setCreateAgentStage("uploading");
+        try {
+          await uploadAgentAvatar(createdAgent.id, payload.avatarFile, payload.avatarKind || null);
+        } catch (uploadError) {
+          avatarUploadFailed = true;
+          avatarUploadMessage = uploadError?.message || "Avatar upload gagal.";
+        }
+      }
+
+      let attachedCount = 0;
+      let failedCount = 0;
+
+      if (selectedSkills.length) {
+        setCreateAgentStage("attaching");
+        const attachResults = await Promise.allSettled(
+          selectedSkills.map((skill) => attachImportedSkillToAgent(createdAgent.id, getSkillLibraryId(skill)))
+        );
+        attachResults.forEach((result) => {
+          if (result.status === "fulfilled") {
+            attachedCount += 1;
+          } else {
+            failedCount += 1;
+          }
+        });
+      }
+
+      await refreshWorkspace();
+      setSelectedAgentId(String(createdAgent.id));
+
+      if (avatarUploadFailed || failedCount) {
+        const reasons = [];
+        if (avatarUploadFailed) {
+          reasons.push(`avatar upload failed${avatarUploadMessage ? `: ${avatarUploadMessage}` : ""}`);
+        }
+        if (failedCount) {
+          reasons.push(`${failedCount} skill${failedCount === 1 ? "" : "s"} failed to attach`);
+        }
+
+        return {
+          status: "partial",
+          message: `Agent created, but ${reasons.join(" and ")}.`,
+          agent: createdAgent,
+          attachedCount,
+          failedCount,
+          avatarUploadFailed
+        };
+      }
 
       setConversationEntries((current) => [
         {
@@ -4892,12 +5773,20 @@ export default function FigmaMakeWorkspace() {
         },
         ...current
       ]);
-      await refreshWorkspace();
+
+      return {
+        status: "ok",
+        message: "Agent saved.",
+        agent: createdAgent,
+        attachedCount,
+        failedCount: 0
+      };
     } catch (error) {
       setPanelErrors((current) => ({ ...current, createAgent: error?.message || "Create agent gagal." }));
       throw error;
     } finally {
       setActionBusy((current) => ({ ...current, createAgent: false }));
+      setCreateAgentStage("idle");
     }
   }
 
@@ -5216,7 +6105,13 @@ export default function FigmaMakeWorkspace() {
       isSubmitting: actionBusy.createAgent,
       error: panelErrors.createAgent,
       defaultProviderId,
-      modelProviders: apiModelProviders
+      providerSettings: apiProviderSettings,
+      apiKeyStatuses,
+      modelProviders: apiModelProviders,
+      skillLibrary: apiSkillLibrary,
+      skillLibraryLoading: !workspaceLoaded,
+      skillLibraryError: panelErrors.skills,
+      submitStage: createAgentStage
     },
     skillHub: {
       rows: skillRows,
