@@ -49,6 +49,9 @@ DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/personal_ai_a
 JWT_SECRET_KEY=change-me-in-development
 CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
 PROVIDER_API_KEY_ENCRYPTION_KEY=
+AGENT_AVATAR_STORAGE_BACKEND=local
+AGENT_AVATAR_LOCAL_DIR=var/uploads/agent-avatars
+AGENT_AVATAR_MAX_BYTES=2097152
 ```
 
 Rules:

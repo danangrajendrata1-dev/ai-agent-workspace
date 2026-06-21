@@ -13,3 +13,5 @@ email-validator
 httpx
 pytest
 psycopg2-binary
+google-cloud-storage
+python-multipart

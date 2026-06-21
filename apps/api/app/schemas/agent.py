@@ -2,11 +2,32 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 AgentStatus = Literal["active", "inactive"]
+AgentAvatarInputType = Literal["emoji", "image_url", "animation_url"]
+AgentAvatarStoredType = Literal["emoji", "image_url", "animation_url", "uploaded_image", "uploaded_animation"]
+AgentAvatarUploadKind = Literal["uploaded_image", "uploaded_animation"]
 TaskDraftConfidence = Literal["high", "medium", "low", "none"]
+
+
+def _normalize_avatar_url(value: str) -> str:
+    trimmed = value.strip()
+    if len(trimmed) > 500:
+        raise ValueError("Avatar URL must be 500 characters or fewer.")
+    if trimmed.startswith("//"):
+        raise ValueError("Avatar URL must include http or https scheme.")
+    if trimmed.startswith("/"):
+        raise ValueError("Avatar URL must be absolute.")
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(trimmed)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Avatar URL must use http or https.")
+
+    return trimmed
 
 
 class AgentCreate(BaseModel):
@@ -22,6 +43,8 @@ class AgentCreate(BaseModel):
     max_token_budget: int | None = Field(default=None, gt=0)
     requires_approval_by_default: bool = False
     instruction_text: str = Field(min_length=1)
+    avatar_type: AgentAvatarInputType | None = None
+    avatar_value: str | None = Field(default=None, max_length=500)
 
     @field_validator(
         "name",
@@ -30,6 +53,7 @@ class AgentCreate(BaseModel):
         "role_description",
         "default_model_name",
         "instruction_text",
+        "avatar_value",
         mode="before",
     )
     @classmethod
@@ -38,6 +62,22 @@ class AgentCreate(BaseModel):
             value = value.strip()
             return value or None
         return value
+
+    @model_validator(mode="after")
+    def validate_avatar_fields(self):
+        if self.avatar_type is None and self.avatar_value is None:
+            return self
+
+        if self.avatar_type is None or self.avatar_value is None:
+            raise ValueError("avatar_type and avatar_value must be provided together.")
+
+        if self.avatar_type == "emoji":
+            if len(self.avatar_value) > 16:
+                raise ValueError("Emoji avatar must be 16 characters or fewer.")
+        else:
+            self.avatar_value = _normalize_avatar_url(self.avatar_value)
+
+        return self
 
 
 class AgentUpdate(BaseModel):
@@ -52,6 +92,8 @@ class AgentUpdate(BaseModel):
     max_runtime_seconds: int | None = Field(default=None, gt=0)
     max_token_budget: int | None = Field(default=None, gt=0)
     requires_approval_by_default: bool | None = None
+    avatar_type: AgentAvatarInputType | None = None
+    avatar_value: str | None = Field(default=None, max_length=500)
 
     @field_validator(
         "name",
@@ -59,6 +101,7 @@ class AgentUpdate(BaseModel):
         "description",
         "role_description",
         "default_model_name",
+        "avatar_value",
         mode="before",
     )
     @classmethod
@@ -67,6 +110,22 @@ class AgentUpdate(BaseModel):
             value = value.strip()
             return value or None
         return value
+
+    @model_validator(mode="after")
+    def validate_avatar_fields(self):
+        if self.avatar_type is None and self.avatar_value is None:
+            return self
+
+        if self.avatar_type is None or self.avatar_value is None:
+            raise ValueError("avatar_type and avatar_value must be provided together.")
+
+        if self.avatar_type == "emoji":
+            if len(self.avatar_value) > 16:
+                raise ValueError("Emoji avatar must be 16 characters or fewer.")
+        else:
+            self.avatar_value = _normalize_avatar_url(self.avatar_value)
+
+        return self
 
 
 class AgentInstructionCreate(BaseModel):
@@ -104,6 +163,9 @@ class AgentResponse(BaseModel):
     role_description: str
     default_model_provider_id: uuid.UUID | None
     default_model_name: str | None
+    avatar_type: AgentAvatarStoredType | None = None
+    avatar_value: str | None = None
+    avatar_content_url: str | None = None
     status: AgentStatus
     max_steps: int
     max_runtime_seconds: int
@@ -112,6 +174,20 @@ class AgentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
+
+
+class AgentAvatarUploadResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    agent_id: uuid.UUID
+    avatar_type: AgentAvatarStoredType
+    avatar_value: str
+    content_type: str
+    size_bytes: int
+    safe_filename: str | None
+    sha256: str
+    avatar_content_url: str
 
 
 class AgentListResponse(BaseModel):

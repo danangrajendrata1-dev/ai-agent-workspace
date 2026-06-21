@@ -14,6 +14,8 @@ EXPECTED_PATHS = {
     "/agents",
     "/agents/task-draft",
     "/agents/{agent_id}/chat",
+    "/agents/{agent_id}/avatar",
+    "/agents/{agent_id}/avatar/content",
     "/skills",
     "/skills/library",
     "/agents/routing-preview",

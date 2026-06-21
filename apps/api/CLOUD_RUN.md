@@ -21,6 +21,7 @@ Vercel Next.js frontend
 - `DATABASE_URL` ready for Neon
 - `PROVIDER_API_KEY_ENCRYPTION_KEY` ready
 - `JWT_SECRET_KEY` ready
+- `AGENT_AVATAR_GCS_BUCKET` ready
 
 ## Required Environment Variables
 
@@ -30,6 +31,11 @@ Set these for Cloud Run:
 - `JWT_SECRET_KEY`
 - `CORS_ORIGINS`
 - `PROVIDER_API_KEY_ENCRYPTION_KEY`
+- `AGENT_AVATAR_STORAGE_BACKEND`
+- `AGENT_AVATAR_GCS_BUCKET`
+- `AGENT_AVATAR_GCS_PREFIX`
+- `AGENT_AVATAR_MAX_BYTES`
+- `AGENT_AVATAR_ALLOWED_MIME_TYPES`
 - `PORT` is injected by Cloud Run
 
 Important note:
@@ -42,6 +48,8 @@ Important note:
 - Set `DATABASE_URL` to the Neon production database.
 - Set `JWT_SECRET_KEY` to a production-grade secret.
 - Set `PROVIDER_API_KEY_ENCRYPTION_KEY` before using provider key vault endpoints.
+- Set `AGENT_AVATAR_STORAGE_BACKEND=gcs` and `AGENT_AVATAR_GCS_BUCKET` for production avatar persistence.
+- Keep avatar uploads private. Frontend never uploads directly to GCS.
 
 ## Security Notes
 

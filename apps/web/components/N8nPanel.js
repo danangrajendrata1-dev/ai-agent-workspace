@@ -102,6 +102,7 @@ function WorkflowEditorCard({
   disabled = false,
   onSave,
   onDelete,
+  onRefresh = null,
   allowDelete = false,
   saveLabel = "Save metadata",
   deleteLabel = "Delete metadata",
@@ -119,6 +120,7 @@ function WorkflowEditorCard({
   const [metadataText, setMetadataText] = useState(formatJsonObject(workflow?.metadata));
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const canRefresh = typeof onRefresh === "function";
 
   useEffect(() => {
     setName(workflow?.name || "");
@@ -352,14 +354,16 @@ function WorkflowEditorCard({
         >
           {workflow?.id ? saveLabel : "Create workflow"}
         </button>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={busy}
-          style={secondaryButtonStyle(busy)}
-        >
-          Refresh
-        </button>
+        {canRefresh ? (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={busy}
+            style={secondaryButtonStyle(busy)}
+          >
+            Refresh
+          </button>
+        ) : null}
         {allowDelete && workflow?.id ? (
           <button
             type="button"
@@ -469,7 +473,7 @@ function StatusStrip({ label, value, tone = "neutral" }) {
   );
 }
 
-function WorkflowCard({ workflow, disabled, onSave, onDelete }) {
+function WorkflowCard({ workflow, disabled, onSave, onDelete, onRefresh }) {
   return (
     <WorkflowEditorCard
       key={workflow.id}
@@ -478,6 +482,7 @@ function WorkflowCard({ workflow, disabled, onSave, onDelete }) {
       disabled={disabled}
       onSave={onSave}
       onDelete={onDelete}
+      onRefresh={onRefresh}
       allowDelete
       saveLabel="Update metadata"
       deleteLabel="Delete metadata"
@@ -611,6 +616,7 @@ export default function N8nPanel({
               disabled={!allowed || Boolean(error)}
               onSave={onSaveWorkflow}
               onDelete={onDeleteWorkflow}
+              onRefresh={onRefresh}
             />
           ))
         ) : (

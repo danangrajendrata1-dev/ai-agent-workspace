@@ -1,5 +1,6 @@
 from app.models.activity_log import ActivityLog
 from app.models.agent import Agent
+from app.models.agent_avatar_asset import AgentAvatarAsset
 from app.models.agent_instruction import AgentInstruction
 from app.models.agent_skill import AgentSkill
 from app.models.agent_tool import AgentTool
@@ -27,6 +28,7 @@ from app.models.user import User
 __all__ = [
     "ActivityLog",
     "Agent",
+    "AgentAvatarAsset",
     "AgentInstruction",
     "AgentSkill",
     "AgentTool",

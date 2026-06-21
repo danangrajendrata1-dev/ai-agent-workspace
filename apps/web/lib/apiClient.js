@@ -100,6 +100,63 @@ async function request(method, pathname, body, options = {}) {
 }
 
 
+async function requestBlob(pathname, options = {}) {
+  const includeAuth = options.includeAuth !== false;
+  const headers = { ...(options.headers || {}) };
+  const token = includeAuth ? getToken() : null;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(buildUrl(pathname, options.query), {
+    method: options.method || "GET",
+    headers,
+    cache: "no-store"
+  });
+
+  if (response.status === 401 && includeAuth !== false) {
+    handleUnauthorized();
+  }
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    const isJson = contentType.includes("application/json");
+    const payload = isJson ? await response.json() : await response.text();
+    const message =
+      isJson && payload && typeof payload === "object" && ("detail" in payload || "error_message" in payload || "message" in payload)
+        ? payload.detail || payload.error_message || payload.message
+        : typeof payload === "string" && payload
+          ? payload
+          : "Request failed.";
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+
+  return response.blob();
+}
+
+
+async function requestFormData(method, pathname, formData, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const includeAuth = options.includeAuth !== false;
+  const token = includeAuth ? getToken() : null;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(buildUrl(pathname, options.query), {
+    method,
+    headers,
+    cache: "no-store",
+    body: formData
+  });
+
+  return parseResponse(response, { includeAuth });
+}
+
+
 export function get(pathname, options) {
   return request("GET", pathname, undefined, options);
 }
@@ -163,6 +220,31 @@ function ensureIdentifier(id, resourceName) {
 export function getAgent(id, options) {
   ensureIdentifier(id, "agent");
   return get(`/agents/${id}`, options);
+}
+
+export function fetchAgentAvatarBlob(agentId, options) {
+  ensureIdentifier(agentId, "agent");
+  return requestBlob(`/agents/${agentId}/avatar/content`, options);
+}
+
+export function uploadAgentAvatar(agentId, file, avatarKind, options) {
+  ensureIdentifier(agentId, "agent");
+  if (!file) {
+    throw new Error("Missing avatar file.");
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  if (avatarKind) {
+    formData.append("avatar_kind", avatarKind);
+  }
+
+  return requestFormData("POST", `/agents/${agentId}/avatar`, formData, options);
+}
+
+export function deleteAgentAvatar(agentId, options) {
+  ensureIdentifier(agentId, "agent");
+  return remove(`/agents/${agentId}/avatar`, options);
 }
 
 export function previewAgentRouting(payload, options) {

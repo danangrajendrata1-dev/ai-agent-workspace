@@ -24,6 +24,7 @@ from app.schemas.agent import (
     AgentResponse,
     AgentUpdate,
 )
+from app.services.agent_avatar_service import build_avatar_content_url, normalize_agent_avatar_fields
 from app.services import log_service
 
 
@@ -59,7 +60,10 @@ def validate_default_model_provider(db: Session, provider_id: uuid.UUID | None) 
 
 
 def serialize_agent(agent) -> AgentResponse:
-    return AgentResponse.model_validate(agent)
+    response = AgentResponse.model_validate(agent)
+    if response.avatar_type in {"uploaded_image", "uploaded_animation"} and response.avatar_value:
+        response.avatar_content_url = build_avatar_content_url(agent.id)
+    return response
 
 
 def serialize_instruction(instruction) -> AgentInstructionResponse:
@@ -74,6 +78,8 @@ def _agent_snapshot(agent) -> dict:
         "role_description": agent.role_description,
         "default_model_provider_id": str(agent.default_model_provider_id) if agent.default_model_provider_id else None,
         "default_model_name": agent.default_model_name,
+        "avatar_type": getattr(agent, "avatar_type", None),
+        "avatar_value": getattr(agent, "avatar_value", None),
         "status": agent.status,
         "max_steps": agent.max_steps,
         "max_runtime_seconds": agent.max_runtime_seconds,
@@ -126,6 +132,12 @@ def create_agent(db: Session, *, owner_id: uuid.UUID, payload: AgentCreate) -> A
     agent_data = payload.model_dump(exclude={"instruction_text"})
     agent_data["owner_id"] = owner_id
     agent_data["slug"] = slug
+    avatar_type, avatar_value = normalize_agent_avatar_fields(
+        agent_data.get("avatar_type"),
+        agent_data.get("avatar_value"),
+    )
+    agent_data["avatar_type"] = avatar_type
+    agent_data["avatar_value"] = avatar_value
 
     agent = agent_repository.create(db, agent_data)
     agent_instruction_repository.create_instruction(
@@ -188,6 +200,14 @@ def update_agent(
     update_data = payload.model_dump(exclude_unset=True)
     if "default_model_provider_id" in update_data:
         validate_default_model_provider(db, update_data["default_model_provider_id"])
+
+    if "avatar_type" in update_data or "avatar_value" in update_data:
+        avatar_type, avatar_value = normalize_agent_avatar_fields(
+            update_data.get("avatar_type"),
+            update_data.get("avatar_value"),
+        )
+        update_data["avatar_type"] = avatar_type
+        update_data["avatar_value"] = avatar_value
 
     if "slug" in update_data or "name" in update_data:
         source_slug = update_data.get("slug") or update_data.get("name") or agent.slug

@@ -596,6 +596,84 @@ function formatTimeOnly(value) {
   }).format(parsed);
 }
 
+function statusStyle(status) {
+  const value = safeString(status, "default").toLowerCase();
+
+  const base = {
+    display: "inline-flex",
+    alignItems: "center",
+    width: "fit-content",
+    borderRadius: 999,
+    padding: "4px 8px",
+    fontSize: 11,
+    fontWeight: 700,
+    lineHeight: 1,
+    border: "1px solid rgba(62, 54, 46, 0.12)",
+    background: "rgba(245, 241, 230, 0.82)",
+    color: "#6B5D50",
+    whiteSpace: "nowrap"
+  };
+
+  if (
+    value.includes("safe") ||
+    value.includes("approved") ||
+    value.includes("success") ||
+    value.includes("active") ||
+    value.includes("ready")
+  ) {
+    return {
+      ...base,
+      border: "1px solid rgba(80, 128, 96, 0.22)",
+      background: "rgba(232, 244, 234, 0.92)",
+      color: "#3F7A52"
+    };
+  }
+
+  if (
+    value.includes("blocked") ||
+    value.includes("rejected") ||
+    value.includes("error") ||
+    value.includes("failed") ||
+    value.includes("danger")
+  ) {
+    return {
+      ...base,
+      border: "1px solid rgba(160, 84, 72, 0.24)",
+      background: "rgba(252, 235, 230, 0.92)",
+      color: "#9A4B3D"
+    };
+  }
+
+  if (
+    value.includes("warning") ||
+    value.includes("review") ||
+    value.includes("pending") ||
+    value.includes("preview")
+  ) {
+    return {
+      ...base,
+      border: "1px solid rgba(164, 112, 58, 0.24)",
+      background: "rgba(255, 246, 222, 0.92)",
+      color: "#9A6A2F"
+    };
+  }
+
+  if (
+    value.includes("disabled") ||
+    value.includes("inactive") ||
+    value.includes("not selectable")
+  ) {
+    return {
+      ...base,
+      border: "1px solid rgba(107, 93, 80, 0.18)",
+      background: "rgba(229, 224, 211, 0.72)",
+      color: "#76695D"
+    };
+  }
+
+  return base;
+}
+
 function getAgentInitials(name) {
   const source = String(name || "AI").trim();
 
@@ -897,6 +975,69 @@ function getCenteredCardPosition(width, height, offsetX = 0, offsetY = 0) {
   const left = Math.round((window.innerWidth - width) / 2) + offsetX;
   const top = Math.round((window.innerHeight - height) / 2) + offsetY;
   return clampCardPosition(left, top, width, height);
+}
+
+function useWindowDrag(initialX = 240, initialY = 80) {
+  const [pos, setPos] = useState({ x: initialX, y: initialY });
+  const dragRef = useRef(null);
+
+  useEffect(() => {
+    function handleMove(event) {
+      if (!dragRef.current) {
+        return;
+      }
+
+      const nextX = event.clientX - dragRef.current.offsetX;
+      const nextY = event.clientY - dragRef.current.offsetY;
+      const maxX = Math.max(16, window.innerWidth - 160);
+      const maxY = Math.max(16, window.innerHeight - 120);
+
+      setPos({
+        x: Math.min(Math.max(16, nextX), maxX),
+        y: Math.min(Math.max(16, nextY), maxY)
+      });
+    }
+
+    function handleUp() {
+      dragRef.current = null;
+      document.body.style.userSelect = "";
+    }
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      document.body.style.userSelect = "";
+    };
+  }, []);
+
+  function handleDown(event) {
+    const target = event.target;
+
+    if (
+      target &&
+      typeof target.closest === "function" &&
+      target.closest("button, input, textarea, select, a, [data-no-drag='true']")
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    dragRef.current = {
+      offsetX: event.clientX - pos.x,
+      offsetY: event.clientY - pos.y
+    };
+
+    document.body.style.userSelect = "none";
+  }
+
+  return {
+    pos,
+    handleDown
+  };
 }
 
 function getBrainProviderKey(provider, fallbackIndex = 0) {

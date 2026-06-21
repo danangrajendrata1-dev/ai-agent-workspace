@@ -34,12 +34,20 @@ Production and local backend config use these variables:
 - `JWT_SECRET_KEY`
 - `CORS_ORIGINS`
 - `PROVIDER_API_KEY_ENCRYPTION_KEY`
+- `AGENT_AVATAR_STORAGE_BACKEND`
+- `AGENT_AVATAR_LOCAL_DIR`
+- `AGENT_AVATAR_GCS_BUCKET`
+- `AGENT_AVATAR_GCS_PREFIX`
+- `AGENT_AVATAR_MAX_BYTES`
+- `AGENT_AVATAR_ALLOWED_MIME_TYPES`
 
 Rules:
 
 - `CORS_ORIGINS` must be a JSON array.
 - Do not include trailing slashes in origin values.
 - Do not use `BACKEND_CORS_ORIGINS` in deployment docs or examples.
+- Local avatar storage is dev only.
+- Production avatar persistence uses the private GCS backend.
 
 ## Available Endpoint
 

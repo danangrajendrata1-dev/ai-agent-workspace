@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.config import get_settings
 from app.models.agent import Agent  # noqa: F401
+from app.models.agent_avatar_asset import AgentAvatarAsset  # noqa: F401
 from app.models.agent_instruction import AgentInstruction  # noqa: F401
 from app.models.agent_skill import AgentSkill  # noqa: F401
 from app.models.agent_tool import AgentTool  # noqa: F401
