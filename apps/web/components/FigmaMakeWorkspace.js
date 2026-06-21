@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import AgentChatPanel from "./AgentChatPanel";
 import ProtectedRoute from "./ProtectedRoute";
+import RuntimeCapabilityPanel from "./RuntimeCapabilityPanel";
 import N8nPanel from "./N8nPanel";
 import { clearToken } from "../lib/auth";
 import {
@@ -27,6 +28,7 @@ import {
   getPendingApprovals,
   getSkillLibrary,
   getTasks,
+  chatWithAgent,
   importSelectedGithubSkill,
   deleteWorkflowBinding,
   listN8nWorkflows,
@@ -44,6 +46,7 @@ import {
   patch,
   remove,
   saveModelProviderApiKey,
+  orchestratorChat,
   updateN8nWorkflow,
   updateModelProviderSettings
 } from "../lib/apiClient";
@@ -76,22 +79,18 @@ const SERIF = {
 };
 
 const NAV_ITEMS = [
-  { id: "create-agent", label: "Agent", icon: "plus" },
-  { id: "skill-panel", label: "Skill Panel", icon: "book" },
+  { id: "create-agent", label: "Create Agent", icon: "plus" },
   { id: "import-skill", label: "Import Skill", icon: "upload" },
   { id: "library-skill", label: "Library Skill", icon: "book" },
-  { id: "active-skills", label: "Active Skills", icon: "spark" },
   { id: "library-workflow", label: "Library Workflow", icon: "workflow" },
-  { id: "workflow-n8n", label: "Workflow n8n", icon: "nodes" },
-  { id: "providers", label: "Provider / API Key", icon: "key" },
-  { id: "oauth-connections", label: "OAuth / Connections", icon: "link" },
-  { id: "safety-center", label: "Safety Center", icon: "shield" },
-  { id: "activity-log", label: "Activity Log", icon: "activity" }
+  { id: "workflow-n8n", label: "Workflow n8n", icon: "nodes" }
 ];
 
 const WIN_META = {
   "create-agent": { title: "Agent Panel", width: 560, ix: 230, iy: 60 },
   "skill-panel": { title: "Skill Panel", width: 640, ix: 250, iy: 80 },
+  "import-skill": { title: "Import Skill", width: 720, ix: 220, iy: 90 },
+  "library-skill": { title: "Library Skill", width: 900, ix: 180, iy: 70 },
   "active-skills": { title: "Active Skills", width: 620, ix: 270, iy: 100 },
   "library-workflow": { title: "Library Workflow", width: 680, ix: 250, iy: 110 },
   "workflow-n8n": { title: "Workflow n8n", width: 520, ix: 330, iy: 75 },
@@ -99,8 +98,20 @@ const WIN_META = {
   "oauth-connections": { title: "OAuth / Connections", width: 620, ix: 310, iy: 105 },
   "safety-center": { title: "Safety Center", width: 600, ix: 330, iy: 95 },
   "activity-log": { title: "Activity Log", width: 460, ix: 270, iy: 60 },
-  settings: { title: "Settings", width: 420, ix: 310, iy: 70 }
+  "agent-detail": { title: "Agent Chat", width: 860, ix: 220, iy: 70 },
+  settings: { title: "Settings Control Center", width: 1100, ix: 140, iy: 54 }
 };
+
+const SETTINGS_TABS = [
+  { id: "account", label: "Account" },
+  { id: "provider", label: "Provider / API Key" },
+  { id: "oauth", label: "OAuth / Connections" },
+  { id: "safety", label: "Safety Center" },
+  { id: "activity", label: "Activity Log" },
+  { id: "runtime", label: "Runtime Capabilities" },
+  { id: "plan", label: "Plan / Limits" },
+  { id: "system", label: "System Info" }
+];
 
 const PREVIEW_AGENTS = [
   {
@@ -393,11 +404,29 @@ function getSkillTypeMeta(type) {
 }
 
 function normalizeCollection(payload) {
+  return normalizeArrayResponse(payload);
+}
+
+function normalizeArrayResponse(payload, preferredKeys = []) {
   if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.items)) return payload.items;
-  if (Array.isArray(payload?.data)) return payload.data;
-  if (Array.isArray(payload?.results)) return payload.results;
+  if (!payload || typeof payload !== "object") return [];
+
+  const keys = [...preferredKeys, "items", "data", "results", "skills", "imported_skills", "active_skills", "candidates"];
+  for (const key of keys) {
+    if (Array.isArray(payload[key])) {
+      return payload[key];
+    }
+  }
+
   return [];
+}
+
+function normalizeObjectResponse(payload, fallback = {}) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return fallback;
+  }
+
+  return payload;
 }
 
 function safeString(value, fallback = "-") {
@@ -1176,7 +1205,7 @@ function statusStyle(status) {
 }
 
 function FloatingWindow({ id, onClose, onFocus, zIndex, children }) {
-  const meta = WIN_META[id];
+  const meta = WIN_META[id] || { title: safeString(id, "Panel"), width: 640, ix: 240, iy: 80 };
   const { pos, handleDown } = useWindowDrag(meta.ix, meta.iy);
 
   return (
@@ -1460,7 +1489,7 @@ function ImportSkillContent({
   const [message, setMessage] = useState("");
 
   const collectionCandidates = useMemo(
-    () => (Array.isArray(collectionPreview?.candidates) ? collectionPreview.candidates : []),
+    () => normalizeArrayResponse(collectionPreview, ["candidates"]),
     [collectionPreview],
   );
   const selectedCollectionCandidate = collectionCandidates.find((item) => {
@@ -1470,7 +1499,7 @@ function ImportSkillContent({
   }) || null;
   const canPreviewImport = Boolean(onPreviewImport);
   const canPreviewCollection = Boolean(onPreviewCollection);
-  const canImportSkill = Boolean(onImportSkill) && !isSubmitting;
+  const canImportSkill = Boolean(onImportSkill) && !isSubmitting && Boolean(String(selectedSkillPath || previewFilePath || filePath || "").trim());
   const canApproveImport = Boolean(onApproveImport);
   const canRejectImport = Boolean(onRejectImport);
   const canDisableImport = Boolean(onDisableImport);
@@ -1536,7 +1565,8 @@ function ImportSkillContent({
         branch
       });
       setCollectionPreview(result || null);
-      const firstCandidate = Array.isArray(result?.candidates) ? result.candidates[0] : null;
+      const normalizedCandidates = normalizeArrayResponse(result, ["candidates"]);
+      const firstCandidate = normalizedCandidates[0] || null;
       const nextSelectedPath = String(firstCandidate?.path || firstCandidate?.manifest_path || filePath || "").trim();
       if (nextSelectedPath) {
         setSelectedSkillPath(nextSelectedPath);
@@ -1672,15 +1702,17 @@ function ImportSkillContent({
                         </div>
                         <button
                           type="button"
+                          disabled={!candidatePath}
                           onClick={() => setSelectedSkillPath(candidatePath || filePath)}
                           style={{
                             padding: "6px 10px",
                             borderRadius: 8,
                             border: `1px solid ${C.border}`,
                             background: C.cardInner,
-                            color: C.textMuted,
+                            color: candidatePath ? C.textMuted : C.textDim,
                             fontSize: 12,
-                            cursor: "pointer",
+                            cursor: candidatePath ? "pointer" : "not-allowed",
+                            opacity: candidatePath ? 1 : 0.72,
                             ...FONT
                           }}
                         >
@@ -1888,7 +1920,9 @@ function ImportSkillContent({
 }
 
 function LibraryTable({ rows, columns, onRowAction }) {
-  const normalizedColumns = columns.map((column) => (typeof column === "string" ? { key: column, label: column } : column));
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const safeColumns = Array.isArray(columns) ? columns : [];
+  const normalizedColumns = safeColumns.map((column) => (typeof column === "string" ? { key: column, label: column } : column));
   const gridTemplateColumns = normalizedColumns.length >= 7 ? "2fr 1fr 1fr 1.5fr 1.8fr 1fr 1fr" : "2fr 1fr 1fr 1.5fr 1fr";
 
   return (
@@ -1951,14 +1985,14 @@ function LibraryTable({ rows, columns, onRowAction }) {
             </div>
           ))}
         </div>
-        {rows.map((row, index) => (
+        {safeRows.map((row, index) => (
           <div
             key={`${row.name}-${index}`}
             style={{
               display: "grid",
               gridTemplateColumns,
               padding: "10px 14px",
-              borderBottom: index < rows.length - 1 ? `1px solid ${C.border}` : "none",
+              borderBottom: index < safeRows.length - 1 ? `1px solid ${C.border}` : "none",
               background: index % 2 === 0 ? C.card : C.bgDeep,
               alignItems: "center"
             }}
@@ -1968,21 +2002,23 @@ function LibraryTable({ rows, columns, onRowAction }) {
                 return (
                   <div key={column.key} style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                     {(row.actions || [row.action || "View"]).map((action) => (
-                      <button
-                        key={action}
-                        type="button"
-                        onClick={() => onRowAction?.(action, row)}
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 8px",
-                          borderRadius: 6,
-                          border: `1px solid ${C.border}`,
-                          background: "none",
-                          color: C.textMuted,
-                          cursor: "pointer",
-                          ...FONT
-                        }}
-                      >
+                    <button
+                      key={action}
+                      type="button"
+                      disabled={action !== "View" && !row?.id}
+                      onClick={() => onRowAction?.(action, row)}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 8px",
+                        borderRadius: 6,
+                        border: `1px solid ${C.border}`,
+                        background: "none",
+                        color: action !== "View" && !row?.id ? C.textDim : C.textMuted,
+                        cursor: action !== "View" && !row?.id ? "not-allowed" : "pointer",
+                        opacity: action !== "View" && !row?.id ? 0.72 : 1,
+                        ...FONT
+                      }}
+                    >
                         {action}
                       </button>
                     ))}
@@ -2004,7 +2040,7 @@ function LibraryTable({ rows, columns, onRowAction }) {
   );
 }
 
-function LibrarySkillContent({ rows, onRowAction }) {
+function LibrarySkillContent({ rows = [], onRowAction }) {
   return (
     <LibraryTable
       rows={rows}
@@ -2045,7 +2081,7 @@ function LibrarySkillContent({ rows, onRowAction }) {
   );
 }
 
-function LibraryWorkflowContent({ rows, onRowAction }) {
+function LibraryWorkflowContent({ rows = [], onRowAction }) {
   return (
     <LibraryTable
       rows={rows}
@@ -2071,12 +2107,13 @@ function WorkflowN8nContent(props) {
   return <N8nPanel {...props} />;
 }
 
-function ActivityLogContent({ rows }) {
+function ActivityLogContent({ rows = [] }) {
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState(null);
 
-  const filteredRows = rows.filter((row) => {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const filteredRows = safeRows.filter((row) => {
     const haystack = `${row.title} ${row.desc} ${row.status} ${row.actor}`.toLowerCase();
     const matchesFilter = filter === "All" || haystack.includes(filter.toLowerCase());
     const matchesQuery = !query.trim() || haystack.includes(query.trim().toLowerCase());
@@ -2176,6 +2213,236 @@ function ActivityLogContent({ rows }) {
           <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>{detail.desc}</div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function SettingsControlCenterContent({
+  currentUser,
+  providerSettings,
+  apiKeyStatuses,
+  modelProviders = [],
+  runtimeCapabilities = [],
+  activityRows = [],
+  auditRows = [],
+  taskRows = [],
+  approvalRows = [],
+  isLoading = false,
+  workspaceLoaded = false,
+  errors = {},
+  onSaveSettings,
+  onSaveApiKey,
+  onDeleteApiKey,
+  onRefresh,
+  onApproveApproval,
+  onRejectApproval,
+  onOpenPanel
+}) {
+  const [activeTab, setActiveTab] = useState("account");
+  const user = currentUser || {
+    display_name: "nama user",
+    username: "nama user",
+    email: "user@email.com",
+    subscription_plan: "free"
+  };
+  const safeModelProviders = Array.isArray(modelProviders) ? modelProviders : [];
+  const safeRuntimeCapabilities = Array.isArray(runtimeCapabilities) ? runtimeCapabilities : [];
+  const safeActivityRows = Array.isArray(activityRows) ? activityRows : [];
+  const safeAuditRows = Array.isArray(auditRows) ? auditRows : [];
+  const safeTaskRows = Array.isArray(taskRows) ? taskRows : [];
+  const safeApprovalRows = Array.isArray(approvalRows) ? approvalRows : [];
+  const planLabel = safeString(user.subscription_plan || user.plan || user.membership_plan || "free", "free");
+  const userName = safeString(user.display_name || user.username || user.email, "nama user");
+  const email = safeString(user.email, "-");
+  const providerCount = safeModelProviders.length;
+  const runtimeCount = safeRuntimeCapabilities.length;
+  const keyCount = Array.isArray(apiKeyStatuses) ? apiKeyStatuses.length : 0;
+  const activeTabConfig = SETTINGS_TABS.find((tab) => tab.id === activeTab) || SETTINGS_TABS[0];
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <PanelHeader
+        title="Settings Control Center"
+        description="Panel admin ditaruh di sini. Board agent tetap layar utama."
+        badge={planLabel}
+        actionLabel="Refresh"
+        onAction={onRefresh}
+        actionDisabled={!onRefresh}
+      />
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {SETTINGS_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: "7px 12px",
+              borderRadius: 10,
+              border: `1px solid ${activeTab === tab.id ? C.accent : C.border}`,
+              background: activeTab === tab.id ? C.accentLight : C.cardInner,
+              color: activeTab === tab.id ? C.text : C.textMuted,
+              fontSize: 12,
+              cursor: "pointer",
+              ...FONT
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <Card style={{ display: "grid", gap: 12, background: C.card }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              {activeTabConfig.label}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 13, color: C.textSub }}>
+              Safe view only. No secret, no token, no execution.
+            </div>
+          </div>
+          <span style={statusStyle("preview only")}>{isLoading ? "loading" : "read only"}</span>
+        </div>
+
+        {activeTab === "account" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>User</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>{userName}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Email</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>{email}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Plan</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>{planLabel}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <span style={statusStyle("ready")}>{providerCount} providers</span>
+              <span style={statusStyle("ready")}>{keyCount} api keys</span>
+              <span style={statusStyle(runtimeCount ? "ready" : "review")}>{runtimeCount ? `${runtimeCount} runtime caps` : "runtime missing"}</span>
+            </div>
+            <PanelStateCard
+              title="Account metadata only"
+              description="Data account dibatasi ke info aman. Secret, token, dan key mentah tidak ditaruh di sini."
+              tone="review"
+              actionLabel="Open Provider / API Key"
+              onAction={() => onOpenPanel?.("providers")}
+            />
+          </div>
+        ) : null}
+
+        {activeTab === "provider" ? (
+          <ProviderApiKeyContent
+            currentUser={user}
+            providerSettings={providerSettings}
+            apiKeyStatuses={apiKeyStatuses}
+            modelProviders={safeModelProviders}
+            onSaveSettings={onSaveSettings}
+            onSaveApiKey={onSaveApiKey}
+            onDeleteApiKey={onDeleteApiKey}
+            errors={errors}
+            onOpenPanel={onOpenPanel}
+          />
+        ) : null}
+
+        {activeTab === "oauth" ? (
+          <OAuthConnectionsContent
+            modelProviders={safeModelProviders}
+            apiKeyStatuses={apiKeyStatuses}
+            runtimeCapabilities={safeRuntimeCapabilities}
+            errors={errors}
+            onOpenPanel={onOpenPanel}
+          />
+        ) : null}
+
+        {activeTab === "safety" ? (
+          <SafetyCenterContent
+            runtimeCapabilities={safeRuntimeCapabilities}
+            activityRows={safeActivityRows}
+            auditRows={safeAuditRows}
+            taskRows={safeTaskRows}
+            approvalRows={safeApprovalRows}
+            isLoading={isLoading}
+            errors={errors}
+            onRefresh={onRefresh}
+            onApproveApproval={onApproveApproval}
+            onRejectApproval={onRejectApproval}
+            onOpenPanel={onOpenPanel}
+          />
+        ) : null}
+
+        {activeTab === "activity" ? <ActivityLogContent rows={safeActivityRows} /> : null}
+
+        {activeTab === "runtime" ? (
+          <RuntimeCapabilityPanel
+            capabilities={safeRuntimeCapabilities}
+            loading={isLoading}
+            error={errors.runtime || ""}
+            emptyMessage="Capability belum muncul. Semua execution tetap blocked."
+          />
+        ) : null}
+
+        {activeTab === "plan" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Plan</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>{planLabel}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Agents</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>
+                  {currentUser?.agent_quota ?? currentUser?.agent_limit ?? "n/a"}
+                </div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Limits</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>
+                  {currentUser?.usage_limit ?? currentUser?.quota_status ?? "unavailable"}
+                </div>
+              </div>
+            </div>
+            <PanelStateCard
+              title="Plan view"
+              description="Kalau backend belum kirim kuota, status tampil unavailable. Tidak ada angka palsu."
+              tone="review"
+              actionLabel="Open account"
+              onAction={() => setActiveTab("account")}
+            />
+          </div>
+        ) : null}
+
+        {activeTab === "system" ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Workspace</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>{workspaceLoaded ? "loaded" : "loading"}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Activity rows</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>{safeActivityRows.length}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Safety rows</div>
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: C.text }}>{safeAuditRows.length + safeTaskRows.length + safeApprovalRows.length}</div>
+              </div>
+            </div>
+            <PanelStateCard
+              title="System info"
+              description="Tanpa endpoint baru. Hanya status yang sudah ada di workspace."
+              tone="review"
+              actionLabel="Open Safety Center"
+              onAction={() => onOpenPanel?.("safety-center")}
+            />
+          </div>
+        ) : null}
+      </Card>
     </div>
   );
 }
@@ -3865,23 +4132,40 @@ function AgentCard({ agent }) {
   );
 }
 
-function WorkspaceAgentCard({ agent, selected = false, onSelect, onApprove, onReject, onCaptureCommand }) {
+function WorkspaceAgentCard({ agent, selected = false, onSelect, onApprove, onReject, onSendCommand }) {
   const [cmd, setCmd] = useState("");
   const [notes, setNotes] = useState([]);
+  const [sendState, setSendState] = useState({ status: "idle", message: "" });
   const statusMap = {
     idle: { label: "Idle", color: C.textDim, bg: "rgba(0,0,0,0.05)" },
     active: { label: "Running", color: C.amber, bg: C.amberLight },
     sending: { label: "Sending", color: C.green, bg: C.greenLight }
   };
-  const status = statusMap[agent.status] || statusMap.idle;
-  const approval = agent.approval || (agent.needApproval ? { id: `preview-${agent.id}`, requested_action: "use workflow", risk_level: "medium", status: "pending" } : null);
+  const status = statusMap[agent?.status] || statusMap.idle;
+  const approval = agent?.approval || (agent?.needApproval ? { id: `preview-${agent.id}`, requested_action: "use workflow", risk_level: "medium", status: "pending" } : null);
+  const canSend = Boolean(agent?.id && onSendCommand);
 
-  function handleSend() {
+  async function handleSend() {
     const trimmed = cmd.trim();
-    if (!trimmed) return;
-    setNotes((current) => [{ id: Date.now(), text: trimmed }, ...current].slice(0, 2));
-    setCmd("");
-    onCaptureCommand?.(agent, trimmed);
+    if (!trimmed || !canSend || sendState.status === "sending") return;
+
+    setSendState({ status: "sending", message: "" });
+    setNotes((current) => [{ id: Date.now(), text: `You: ${trimmed}` }, ...current].slice(0, 3));
+
+    try {
+      const response = await onSendCommand(agent, trimmed);
+      const replyText = safeString(response?.reply || response?.message || response?.output, "");
+      if (replyText && replyText !== "-") {
+        setNotes((current) => [{ id: Date.now() + 1, text: `Agent: ${replyText}` }, ...current].slice(0, 3));
+      }
+      setSendState({
+        status: "success",
+        message: replyText && replyText !== "-" ? "Balasan diterima." : "Command terkirim."
+      });
+      setCmd("");
+    } catch (error) {
+      setSendState({ status: "error", message: error?.message || "Send command gagal." });
+    }
   }
 
   return (
@@ -4029,10 +4313,21 @@ function WorkspaceAgentCard({ agent, selected = false, onSelect, onApprove, onRe
             placeholder="ketik untuk menyuruh agent..."
             style={{ flex: 1, background: "none", border: "none", outline: "none", fontSize: 11, color: C.text, minWidth: 0, ...FONT }}
           />
-          <button type="button" onClick={handleSend} style={{ background: "none", border: "none", cursor: "pointer", color: cmd ? C.accent : C.textDim, padding: 0 }}>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={!canSend || !cmd.trim() || sendState.status === "sending"}
+            title={canSend ? "Kirim command ke agent ini." : "Chat backend belum tersedia."}
+            style={{ background: "none", border: "none", cursor: !canSend || !cmd.trim() || sendState.status === "sending" ? "not-allowed" : "pointer", color: cmd ? C.accent : C.textDim, padding: 0, opacity: !canSend || sendState.status === "sending" ? 0.55 : 1 }}
+          >
             &gt;
           </button>
         </div>
+        {sendState.message ? (
+          <div style={{ marginTop: 6, fontSize: 11, color: sendState.status === "error" ? C.accent : C.textMuted }}>
+            {sendState.message}
+          </div>
+        ) : null}
         {notes.length ? (
           <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
             {notes.map((note) => (
@@ -4114,8 +4409,10 @@ function WindowContent({ id, currentUser, panelProps = {} }) {
       return <ActiveSkillsContent {...panelProps.activeSkills} />;
     case "activity-log":
       return <ActivityLogContent {...panelProps.activityLog} />;
+    case "agent-detail":
+      return <AgentChatPanel {...panelProps.agentDetail} />;
     case "settings":
-      return <SettingsContent currentUser={currentUser} {...panelProps.settings} />;
+      return <SettingsControlCenterContent currentUser={currentUser} {...panelProps.settings} />;
     default:
       return null;
   }
@@ -4176,6 +4473,21 @@ export default function FigmaMakeWorkspace() {
     { role: "You", text: "lanjut" },
     { role: "Main AI", text: "menunggu approval sebelum melanjutkan" }
   ]);
+  const [orchestratorDraft, setOrchestratorDraft] = useState("");
+  const [orchestratorSessionId, setOrchestratorSessionId] = useState(null);
+  const [orchestratorMessages, setOrchestratorMessages] = useState([]);
+  const [orchestratorSending, setOrchestratorSending] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [orchestratorModelId, setOrchestratorModelId] = useState("");
+  const [orchestratorState, setOrchestratorState] = useState({
+    status: "draft",
+    message: "Siap terima command global.",
+    routedToAgentId: "",
+    routedToAgentName: "",
+    confidence: ""
+  });
+  const attachMenuButtonRef = useRef(null);
+  const attachMenuRef = useRef(null);
 
   const refreshWorkspace = useCallback(async () => {
     const results = await Promise.allSettled([
@@ -4228,21 +4540,21 @@ export default function FigmaMakeWorkspace() {
       const skillResults = await Promise.allSettled(agents.map((agent) => getAgentActiveSkills(agent.id)));
       skillResults.forEach((skillResult, index) => {
         if (skillResult.status === "fulfilled") {
-          nextAgentSkillMap[String(agents[index].id)] = normalizeCollection(skillResult.value);
+          nextAgentSkillMap[String(agents[index].id)] = normalizeArrayResponse(skillResult.value);
         }
       });
     }
     setApiAgentSkillsById(nextAgentSkillMap);
 
-    setApiSkillLibrary(skillsResult.status === "fulfilled" ? normalizeCollection(skillsResult.value) : []);
+    setApiSkillLibrary(skillsResult.status === "fulfilled" ? normalizeArrayResponse(skillsResult.value) : []);
     setApiActivityLogs(activityResult.status === "fulfilled" ? normalizeCollection(activityResult.value) : []);
     setApiAuditLogs(auditResult.status === "fulfilled" ? normalizeCollection(auditResult.value) : []);
     setApiTasks(taskResult.status === "fulfilled" ? normalizeCollection(taskResult.value) : []);
     setApiApprovals(approvalsResult.status === "fulfilled" ? normalizeCollection(approvalsResult.value) : []);
-    setApiProviderSettings(settingsResult.status === "fulfilled" ? settingsResult.value : null);
-    setApiKeyStatuses(keyStatusResult.status === "fulfilled" ? normalizeCollection(keyStatusResult.value) : []);
-    setApiModelProviders(modelProvidersResult.status === "fulfilled" ? normalizeCollection(modelProvidersResult.value) : []);
-    setApiRuntimeCapabilities(runtimeCapabilitiesResult.status === "fulfilled" ? normalizeCollection(runtimeCapabilitiesResult.value) : []);
+    setApiProviderSettings(settingsResult.status === "fulfilled" ? normalizeObjectResponse(settingsResult.value, {}) : {});
+    setApiKeyStatuses(keyStatusResult.status === "fulfilled" ? normalizeArrayResponse(keyStatusResult.value) : []);
+    setApiModelProviders(modelProvidersResult.status === "fulfilled" ? normalizeArrayResponse(modelProvidersResult.value) : []);
+    setApiRuntimeCapabilities(runtimeCapabilitiesResult.status === "fulfilled" ? normalizeArrayResponse(runtimeCapabilitiesResult.value) : []);
     setApiN8nWorkflows(n8nResult.status === "fulfilled" ? normalizeCollection(n8nResult.value) : []);
     setApiWorkflowTemplates(templatesResult.status === "fulfilled" ? normalizeCollection(templatesResult.value) : []);
     setApiWorkflowConsents(consentsResult.status === "fulfilled" ? normalizeCollection(consentsResult.value) : []);
@@ -4298,6 +4610,39 @@ export default function FigmaMakeWorkspace() {
   useEffect(() => {
     refreshWorkspace().catch(() => {});
   }, [refreshWorkspace]);
+
+  useEffect(() => {
+    if (!attachMenuOpen) {
+      return undefined;
+    }
+
+    function handleDocumentMouseDown(event) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (attachMenuRef.current?.contains(target) || attachMenuButtonRef.current?.contains(target)) {
+        return;
+      }
+
+      setAttachMenuOpen(false);
+    }
+
+    function handleDocumentKeyDown(event) {
+      if (event.key === "Escape") {
+        setAttachMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleDocumentMouseDown);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentMouseDown);
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+    };
+  }, [attachMenuOpen]);
 
   function openWindow(id) {
     const next = zTop + 1;
@@ -4372,7 +4717,7 @@ export default function FigmaMakeWorkspace() {
 
   const selectedAgentSkills = useMemo(() => {
     if (!selectedAgent?.id) return [];
-    return normalizeCollection(apiAgentSkillsById[String(selectedAgent.id)] || []);
+    return normalizeArrayResponse(apiAgentSkillsById[String(selectedAgent.id)] || []);
   }, [apiAgentSkillsById, selectedAgent]);
 
   useEffect(() => {
@@ -4439,6 +4784,76 @@ export default function FigmaMakeWorkspace() {
     subscription_plan: "free",
     email: "user@email.com"
   };
+
+  const normalizedOrchestratorMessages = useMemo(() => {
+    const source = Array.isArray(orchestratorMessages) ? orchestratorMessages : [];
+    const userRoles = new Set(["user", "human", "you", "client"]);
+    const assistantRoles = new Set(["assistant", "ai", "main_ai", "main-ai", "orchestrator"]);
+    const systemRoles = new Set(["system", "status", "routing", "router", "tool", "workflow"]);
+
+    return source
+      .map((entry, index) => {
+        const rawRole = safeString(entry?.role, "system").toLowerCase();
+        const rawContent = safeString(
+          entry?.content ?? entry?.text ?? entry?.message ?? entry?.body ?? entry?.result ?? entry?.response,
+          ""
+        ).trim();
+
+        if (!rawContent) {
+          return null;
+        }
+
+        let kind = "system";
+        if (userRoles.has(rawRole)) {
+          kind = "user";
+        } else if (assistantRoles.has(rawRole)) {
+          kind = "assistant";
+        } else if (systemRoles.has(rawRole)) {
+          kind = "system";
+        }
+
+        return {
+          id: `orchestrator-${index}-${rawRole}`,
+          role: kind,
+          label: kind === "user" ? "You" : kind === "assistant" ? "Main AI" : "System",
+          content: rawContent
+        };
+      })
+      .filter(Boolean);
+  }, [orchestratorMessages]);
+
+  const orchestratorModelOptions = useMemo(() => {
+    const providerOptions = Array.isArray(apiModelProviders) ? apiModelProviders : [];
+    const mappedOptions = providerOptions
+      .map((item, index) => {
+        const value = String(item?.id || item?.provider || item?.name || `model-${index + 1}`);
+        const label = [item?.name, item?.model_name || item?.default_model_name || item?.preferred_model]
+          .filter(Boolean)
+          .join(" / ") || item?.name || item?.provider || `Model ${index + 1}`;
+        return { value, label };
+      })
+      .filter((item) => Boolean(item.value));
+
+    if (mappedOptions.length) {
+      return mappedOptions;
+    }
+
+    return [
+      {
+        value: "default",
+        label: [apiProviderSettings?.preferred_provider || "default", apiProviderSettings?.preferred_model || "gpt-4o"]
+          .filter(Boolean)
+          .join(" / ")
+      }
+    ];
+  }, [apiModelProviders, apiProviderSettings?.preferred_model, apiProviderSettings?.preferred_provider]);
+
+  useEffect(() => {
+    if (!orchestratorModelOptions.length) return;
+    if (!orchestratorModelId || !orchestratorModelOptions.some((item) => item.value === orchestratorModelId)) {
+      setOrchestratorModelId(orchestratorModelOptions[0].value);
+    }
+  }, [orchestratorModelId, orchestratorModelOptions]);
 
   const defaultProviderId = apiModelProviders[0]?.id || "";
 
@@ -4695,6 +5110,106 @@ export default function FigmaMakeWorkspace() {
     await refreshWorkspace();
   }
 
+  async function handleAgentCardCommand(agent, commandText) {
+    if (!agent?.id) {
+      throw new Error("Agent target missing.");
+    }
+
+    setSelectedAgentId(String(agent.id));
+    const response = await chatWithAgent(agent.id, [{ role: "user", content: commandText }], null);
+    const replyPreview = safeString(response?.reply || response?.message || response?.output, "");
+    setConversationEntries((current) => [
+      {
+        role: agent?.name || "Agent",
+        text: commandText
+      },
+      ...(replyPreview && replyPreview !== "-" ? [{ role: `${agent?.name || "Agent"} reply`, text: replyPreview }] : []),
+      ...current
+    ].slice(0, 8));
+    return response;
+  }
+
+  async function handleOrchestratorSubmit(event) {
+    event.preventDefault();
+    return submitOrchestratorMessage();
+  }
+
+  async function submitOrchestratorMessage() {
+    if (orchestratorSending) {
+      return;
+    }
+
+    const messageToSend = orchestratorDraft.trim();
+    if (!messageToSend) {
+      setOrchestratorState((current) => ({
+        ...current,
+        status: "draft",
+        message: "Tulis command dulu."
+      }));
+      return;
+    }
+
+    const userMessage = { role: "user", content: messageToSend };
+    const nextMessages = [...orchestratorMessages, userMessage];
+
+    setOrchestratorMessages(nextMessages);
+    setOrchestratorDraft("");
+    setOrchestratorSending(true);
+    setOrchestratorState((current) => ({
+      ...current,
+      status: "routing preview",
+      message: "Main AI sedang pilih target agent..."
+    }));
+
+    try {
+      const response = await orchestratorChat(messageToSend, nextMessages, orchestratorSessionId);
+      const routedToAgentId = response?.routed_to_agent_id ? String(response.routed_to_agent_id) : "";
+      const routedToAgentName = safeString(response?.routed_to_agent_name, "");
+      const replyText = safeString(response?.reply || response?.message || response?.output, "");
+      const status = safeString(response?.status, routedToAgentId ? "routed" : "preview");
+
+      if (routedToAgentId) {
+        setSelectedAgentId(routedToAgentId);
+      }
+
+      setOrchestratorSessionId(response?.session_id || orchestratorSessionId || null);
+      setOrchestratorMessages((current) =>
+        [
+          ...current,
+          ...(replyText && replyText !== "-" ? [{ role: "assistant", content: replyText }] : [])
+        ].slice(-8)
+      );
+      setOrchestratorState({
+        status,
+        message: replyText && replyText !== "-" ? replyText : response?.warning || "Routing preview selesai.",
+        routedToAgentId,
+        routedToAgentName,
+        confidence: safeString(response?.confidence, "")
+      });
+      setConversationEntries((current) =>
+        [
+          { role: "You", text: messageToSend },
+          {
+            role: "Main AI",
+            text: routedToAgentName ? `routed to ${routedToAgentName}` : status === "fallback" ? "fallback route" : status
+          },
+          ...(replyText && replyText !== "-" ? [{ role: "Main AI", text: replyText }] : []),
+          ...current
+        ].slice(0, 8)
+      );
+    } catch (error) {
+      setOrchestratorState({
+        status: "blocked",
+        message: error?.message || "Orchestrator command gagal.",
+        routedToAgentId: "",
+        routedToAgentName: "",
+        confidence: ""
+      });
+    } finally {
+      setOrchestratorSending(false);
+    }
+  }
+
   const panelProps = {
     createAgent: {
       onCreateAgent: handleCreateAgent,
@@ -4799,14 +5314,33 @@ export default function FigmaMakeWorkspace() {
       providerSettings: apiProviderSettings,
       apiKeyStatuses,
       modelProviders: apiModelProviders,
+      runtimeCapabilities: apiRuntimeCapabilities,
+      activityRows,
+      auditRows,
+      taskRows,
+      approvalRows,
+      isLoading: !workspaceLoaded,
+      workspaceLoaded,
       onSaveSettings: handleSaveSettings,
       onSaveApiKey: handleSaveApiKey,
       onDeleteApiKey: handleDeleteApiKey,
       errors: {
         general: panelErrors.settings,
-        apiKeyVault: panelErrors.apiKeyVault
-      }
-    }
+        apiKeyVault: panelErrors.apiKeyVault,
+        runtime: panelErrors.safety
+      },
+      onRefresh: refreshWorkspace,
+      onApproveApproval: (approval) => handleApprovalDecision(approval, "approve"),
+      onRejectApproval: (approval) => handleApprovalDecision(approval, "reject"),
+      onOpenPanel: openWindow
+    },
+    agentDetail: {
+      agent: selectedAgent,
+      providerLabel:
+        apiProviderSettings?.preferred_provider || apiProviderSettings?.preferred_model
+          ? [apiProviderSettings?.preferred_provider, apiProviderSettings?.preferred_model].filter(Boolean).join(" / ")
+          : "preview only"
+    },
   };
 
   const user = currentUserView;
@@ -4936,15 +5470,7 @@ export default function FigmaMakeWorkspace() {
                       onSelect={() => setSelectedAgentId(agent.id)}
                       onApprove={(approval) => handleApprovalDecision(approval, "approve")}
                       onReject={(approval) => handleApprovalDecision(approval, "reject")}
-                      onCaptureCommand={(selected, message) => {
-                        setConversationEntries((current) => [
-                          {
-                            role: selected.name,
-                            text: message
-                          },
-                          ...current
-                        ]);
-                      }}
+                      onSendCommand={handleAgentCardCommand}
                     />
                   ))
                 ) : (
@@ -4958,130 +5484,263 @@ export default function FigmaMakeWorkspace() {
               </div>
             </div>
 
-            <div style={{ flexShrink: 0, borderTop: `1px solid ${C.border}`, background: C.bgDeep, padding: 12, display: "grid", gap: 12 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 360px) minmax(0, 1fr)",
-                  gap: 12,
-                  alignItems: "stretch"
-                }}
-              >
-                <div style={{ borderRadius: 16, border: `1px solid ${C.border}`, background: C.card, padding: 12, display: "grid", gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                      Selected Agent
-                    </div>
-                    {selectedAgent ? (
-                      <>
-                        <div style={{ marginTop: 6, fontSize: 18, fontWeight: 700, color: C.text }}>
-                          {selectedAgent.name}
-                        </div>
-                        <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted, lineHeight: 1.6 }}>
-                          {selectedAgent.roleDescription || "Workspace agent."}
-                        </div>
-                        <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          <span style={statusStyle(selectedAgent.status || "inactive")}>{selectedAgent.status || "inactive"}</span>
-                          <span style={statusStyle("ready")}>{selectedAgent.skillCount || 0} skills</span>
-                          <span style={statusStyle(selectedAgentSkills.length ? "active" : "review")}>{selectedAgentSkills.length ? "active skills" : "no active skills"}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <div style={{ marginTop: 8 }}>
-                        <EmptyPanelState
-                          title={workspaceLoaded ? "No agent yet" : "Loading agents"}
-                          description={workspaceLoaded ? "Buat agent dulu supaya chat dan active skill kebaca." : "Ambil data agent dari backend dulu."}
-                          actionLabel="Create agent"
-                          onAction={() => openWindow("create-agent")}
-                        />
-                      </div>
-                    )}
-                  </div>
+            <div style={{ flexShrink: 0, borderTop: `1px solid ${C.border}`, background: C.bgDeep, padding: "12px 20px 14px" }}>
+              <div style={{ display: "grid", gap: 10 }}>
+                {normalizedOrchestratorMessages.length ? (
+                  <Card style={{ background: C.card, display: "grid", gap: 10 }}>
+                    <div
+                      style={{
+                        maxHeight: 192,
+                        overflowY: "auto",
+                        paddingRight: 4,
+                        display: "grid",
+                        gap: 8,
+                        scrollbarWidth: "thin"
+                      }}
+                    >
+                      {normalizedOrchestratorMessages.slice(-12).map((entry) => {
+                        if (entry.role === "system") {
+                          return (
+                            <div key={entry.id} style={{ display: "flex", justifyContent: "center" }}>
+                              <div
+                                style={{
+                                  maxWidth: "88%",
+                                  padding: "6px 10px",
+                                  borderRadius: 999,
+                                  background: "rgba(0,0,0,0.05)",
+                                  color: C.textMuted,
+                                  fontSize: 11,
+                                  lineHeight: 1.45,
+                                  textAlign: "center",
+                                  whiteSpace: "pre-wrap",
+                                  ...FONT
+                                }}
+                              >
+                                {entry.content}
+                              </div>
+                            </div>
+                          );
+                        }
 
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                      Recent command notes
-                    </div>
-                    {conversationEntries.length ? (
-                      conversationEntries.slice(0, 3).map((entry, index) => (
-                        <div key={`${entry.role}-${index}`} style={{ borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep, padding: "8px 10px" }}>
-                          <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                            {entry.role}
+                        const isUser = entry.role === "user";
+                        const bubbleAlign = isUser ? "flex-end" : "flex-start";
+                        const bubbleBackground = isUser ? C.accentLight : C.cardInner;
+                        const bubbleBorder = isUser ? `1px solid rgba(184,92,56,0.14)` : `1px solid ${C.border}`;
+                        const bubbleColor = isUser ? C.textSub : C.text;
+
+                        return (
+                          <div key={entry.id} style={{ display: "flex", justifyContent: bubbleAlign }}>
+                            <div style={{ maxWidth: "74%", display: "grid", gap: 4 }}>
+                              <div
+                                style={{
+                                  fontSize: 10,
+                                  color: C.textDim,
+                                  textTransform: "uppercase",
+                                  letterSpacing: "0.05em",
+                                  textAlign: isUser ? "right" : "left"
+                                }}
+                              >
+                                {entry.label}
+                              </div>
+                              <div
+                                style={{
+                                  padding: "10px 12px",
+                                  borderRadius: 14,
+                                  border: bubbleBorder,
+                                  background: bubbleBackground,
+                                  color: bubbleColor,
+                                  fontSize: 12,
+                                  lineHeight: 1.65,
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-word",
+                                  boxShadow: isUser ? "none" : "0 1px 0 rgba(255,255,255,0.7)"
+                                }}
+                              >
+                                {entry.content}
+                              </div>
+                            </div>
                           </div>
-                          <div style={{ marginTop: 4, fontSize: 12, color: C.textSub, lineHeight: 1.5 }}>
-                            {entry.text}
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div style={{ borderRadius: 10, border: `1px dashed ${C.border}`, background: "rgba(255,255,255,0.6)", padding: "10px 12px", fontSize: 12, color: C.textMuted }}>
-                        Belum ada catatan command.
-                      </div>
-                    )}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                ) : null}
 
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => openWindow("active-skills")}
+                <Card style={{ background: C.card, display: "grid", gap: 10, position: "relative" }}>
+                  {attachMenuOpen ? (
+                    <div
+                      ref={attachMenuRef}
                       style={{
-                        padding: "8px 12px",
-                        borderRadius: 10,
+                        position: "absolute",
+                        left: 12,
+                        bottom: 58,
+                        zIndex: 5,
+                        width: 220,
+                        padding: 10,
+                        borderRadius: 12,
                         border: `1px solid ${C.border}`,
-                        background: C.cardInner,
-                        color: C.textMuted,
-                        fontSize: 12,
-                        cursor: "pointer",
-                        ...FONT
+                        background: C.card,
+                        boxShadow: "0 12px 28px rgba(62,54,46,0.12)"
                       }}
                     >
-                      Open active skills
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openWindow("skill-panel")}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: 10,
-                        border: `1px solid ${C.border}`,
-                        background: C.cardInner,
-                        color: C.textMuted,
-                        fontSize: 12,
-                        cursor: "pointer",
-                        ...FONT
-                      }}
-                    >
-                      Open skill panel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openWindow("create-agent")}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: 10,
-                        border: `1px solid ${C.border}`,
-                        background: C.cardInner,
-                        color: C.textMuted,
-                        fontSize: 12,
-                        cursor: "pointer",
-                        ...FONT
-                      }}
-                    >
-                      Create agent
-                    </button>
-                  </div>
-                </div>
+                      {["Attach image - coming soon", "Attach file - coming soon", "Add context - coming soon"].map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => setAttachMenuOpen(false)}
+                          title={item}
+                          style={{
+                            width: "100%",
+                            marginBottom: 6,
+                            padding: "8px 10px",
+                            borderRadius: 10,
+                            border: `1px solid ${C.border}`,
+                            background: C.bgDeep,
+                            color: C.textDim,
+                            fontSize: 12,
+                            textAlign: "left",
+                            cursor: "not-allowed",
+                            opacity: 0.9,
+                            ...FONT
+                          }}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
 
-                <div style={{ minWidth: 0 }}>
-                  <AgentChatPanel
-                    agent={selectedAgent}
-                    providerLabel={
-                      apiProviderSettings?.preferred_provider || apiProviderSettings?.preferred_model
-                        ? [apiProviderSettings?.preferred_provider, apiProviderSettings?.preferred_model].filter(Boolean).join(" / ")
-                        : "preview only"
-                    }
-                  />
-                </div>
+                  <form onSubmit={handleOrchestratorSubmit} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <button
+                      type="button"
+                      ref={attachMenuButtonRef}
+                      onClick={() => setAttachMenuOpen((value) => !value)}
+                      aria-expanded={attachMenuOpen}
+                      title="Attach coming soon"
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 12,
+                        border: `1px solid ${C.border}`,
+                        background: C.bgDeep,
+                        color: C.textMuted,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        flexShrink: 0
+                      }}
+                    >
+                      <MenuIcon name="plus" />
+                    </button>
+
+                    <textarea
+                      value={orchestratorDraft}
+                      onChange={(event) => setOrchestratorDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") {
+                          return;
+                        }
+
+                        if (event.shiftKey || event.nativeEvent?.isComposing || event.isComposing) {
+                          return;
+                        }
+
+                        event.preventDefault();
+                        if (!orchestratorDraft.trim() || orchestratorSending) {
+                          return;
+                        }
+
+                        submitOrchestratorMessage();
+                      }}
+                      placeholder="Tulis pesan ke Main AI..."
+                      rows={1}
+                      style={{
+                        flex: "1 1 auto",
+                        minWidth: 0,
+                        height: 40,
+                        maxHeight: 92,
+                        resize: "none",
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: `1px solid ${C.borderMid}`,
+                        background: C.bgDeep,
+                        color: C.text,
+                        fontSize: 13,
+                        outline: "none",
+                        lineHeight: 1.4,
+                        overflowY: "auto",
+                        ...FONT
+                      }}
+                    />
+
+                    <select
+                      value={orchestratorModelId}
+                      onChange={(event) => setOrchestratorModelId(event.target.value)}
+                      style={{
+                        width: 156,
+                        height: 40,
+                        borderRadius: 999,
+                        border: `1px solid ${C.border}`,
+                        background: C.bgDeep,
+                        color: C.textMuted,
+                        fontSize: 12,
+                        padding: "0 12px",
+                        flexShrink: 0,
+                        ...FONT
+                      }}
+                    >
+                      {orchestratorModelOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      disabled
+                      title="Voice input coming soon"
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 12,
+                        border: `1px solid ${C.border}`,
+                        background: C.bgDeep,
+                        color: C.textDim,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "not-allowed",
+                        flexShrink: 0,
+                        opacity: 0.72
+                      }}
+                    >
+                      mic
+                    </button>
+
+                    <button
+                      type="submit"
+                      disabled={!orchestratorDraft.trim() || orchestratorSending}
+                      style={{
+                        padding: "0 16px",
+                        height: 40,
+                        borderRadius: 12,
+                        border: "none",
+                        background: C.accent,
+                        color: "#fff",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: !orchestratorDraft.trim() || orchestratorSending ? "not-allowed" : "pointer",
+                        opacity: !orchestratorDraft.trim() || orchestratorSending ? 0.72 : 1,
+                        flexShrink: 0,
+                        ...FONT
+                      }}
+                    >
+                      {orchestratorSending ? "Sending..." : "Send"}
+                    </button>
+                  </form>
+                </Card>
               </div>
             </div>
           </div>

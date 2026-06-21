@@ -23,17 +23,30 @@ def auth_headers(user_id: uuid.UUID) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(subject=str(user_id))}"}
 
 
-def build_user(db, *, role: str = "user", email_prefix: str = "session-user"):
+def build_user(
+    db,
+    *,
+    role: str = "user",
+    subscription_plan: str = "pro",
+    email_prefix: str = "session-user",
+):
     user = user_repository.create_user(
         db,
         email=f"{email_prefix}-{uuid.uuid4().hex[:8]}@example.com",
         password_hash="hash",
         display_name="Session User",
         role=role,
+        subscription_plan=subscription_plan,
     )
     db.commit()
     db.refresh(user)
-    return SimpleNamespace(id=user.id, role=user.role, email=user.email, display_name=user.display_name)
+    return SimpleNamespace(
+        id=user.id,
+        role=user.role,
+        subscription_plan=user.subscription_plan,
+        email=user.email,
+        display_name=user.display_name,
+    )
 
 
 def build_agent(db, *, owner_id: uuid.UUID, name: str):

@@ -23,7 +23,10 @@ def test_workflow_templates_list_requires_authentication(client):
 
 def test_workflow_templates_list_returns_safe_fields(client):
     user_id = uuid.uuid4()
-    with patch("app.services.auth_service.get_current_active_user", return_value=SimpleNamespace(id=user_id, role="user")):
+    with patch(
+        "app.services.auth_service.get_current_active_user",
+        return_value=SimpleNamespace(id=user_id, role="user", subscription_plan="pro"),
+    ):
         response = client.get("/workflows/templates", headers=auth_headers(user_id))
 
     assert response.status_code == 200
@@ -39,7 +42,10 @@ def test_workflow_templates_list_returns_safe_fields(client):
 
 def test_disabled_template_cannot_be_consented(client):
     user_id = uuid.uuid4()
-    with patch("app.services.auth_service.get_current_active_user", return_value=SimpleNamespace(id=user_id, role="user")):
+    with patch(
+        "app.services.auth_service.get_current_active_user",
+        return_value=SimpleNamespace(id=user_id, role="user", subscription_plan="pro"),
+    ):
         response = client.post("/workflows/consent/generate_pdf", headers=auth_headers(user_id))
 
     assert response.status_code == 400
@@ -48,7 +54,10 @@ def test_disabled_template_cannot_be_consented(client):
 
 def test_missing_template_cannot_be_consented(client):
     user_id = uuid.uuid4()
-    with patch("app.services.auth_service.get_current_active_user", return_value=SimpleNamespace(id=user_id, role="user")):
+    with patch(
+        "app.services.auth_service.get_current_active_user",
+        return_value=SimpleNamespace(id=user_id, role="user", subscription_plan="pro"),
+    ):
         response = client.post("/workflows/consent/missing_template", headers=auth_headers(user_id))
 
     assert response.status_code == 404

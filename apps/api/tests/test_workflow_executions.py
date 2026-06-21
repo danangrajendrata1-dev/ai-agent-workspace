@@ -124,7 +124,7 @@ def test_execute_route_requires_authentication(client):
 
 def test_execute_template_workflow_success_sanitizes_payload_and_saves_audit(client):
     context = build_execution_context(user_prefix="workflow-exec-success")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
     webhook_result = WebhookCallResult(
@@ -196,7 +196,7 @@ def test_execute_template_workflow_success_sanitizes_payload_and_saves_audit(cli
 
 def test_chat_confirm_execute_template_workflow_success_sanitizes_payload_and_saves_audit(client):
     context = build_execution_context(user_prefix="workflow-chat-confirm-success")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
     webhook_result = WebhookCallResult(
@@ -270,7 +270,7 @@ def test_chat_confirm_execute_template_workflow_success_sanitizes_payload_and_sa
 
 def test_execute_requires_consent_before_webhook_call(client):
     context = build_execution_context(user_prefix="workflow-exec-consent", with_consent=False)
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
@@ -309,7 +309,7 @@ def test_execute_requires_consent_before_webhook_call(client):
 
 def test_execute_rejects_frontend_execution_available_field_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-frontend-flag", with_consent=False)
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
@@ -344,7 +344,7 @@ def test_execute_rejects_frontend_execution_available_field_without_call(client)
 
 def test_chat_confirm_execute_requires_consent_before_webhook_call(client):
     context = build_execution_context(user_prefix="workflow-chat-confirm-consent", with_consent=False)
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
@@ -385,7 +385,7 @@ def test_chat_confirm_execute_requires_consent_before_webhook_call(client):
 
 def test_chat_confirm_execute_rejects_frontend_execution_available_field_without_call(client):
     context = build_execution_context(user_prefix="workflow-chat-confirm-invalid")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
@@ -420,7 +420,7 @@ def test_chat_confirm_execute_rejects_frontend_execution_available_field_without
 
 def test_revoked_consent_blocks_future_execution_and_preserves_history(client):
     context = build_execution_context(user_prefix="workflow-exec-revoked")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
     webhook_result = WebhookCallResult(
@@ -680,7 +680,7 @@ def test_workflow_execution_history_limit_is_enforced(client):
 
 def test_execute_rejects_disabled_template_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-disabled")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
     template["enabled"] = False
@@ -713,7 +713,7 @@ def test_execute_rejects_disabled_template_without_call(client):
 
 def test_execute_rejects_private_webhook_url_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-private")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template(webhook_url="https://127.0.0.1/webhook")
 
@@ -743,7 +743,7 @@ def test_execute_rejects_private_webhook_url_without_call(client):
 
 def test_execute_rejects_version_mismatch_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-version")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template(version="2.0")
 
@@ -776,7 +776,7 @@ def test_execute_rejects_version_mismatch_without_call(client):
 
 def test_execute_rejects_missing_binding_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-binding", with_binding=False)
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
@@ -808,7 +808,7 @@ def test_execute_rejects_missing_binding_without_call(client):
 
 def test_execute_rejects_non_workflow_skill_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-prompt")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
@@ -841,7 +841,7 @@ def test_execute_rejects_non_workflow_skill_without_call(client):
 
 def test_execute_rejects_inactive_workflow_skill_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-inactive")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
@@ -874,7 +874,7 @@ def test_execute_rejects_inactive_workflow_skill_without_call(client):
 
 def test_execute_rejects_payload_exceeding_template_limit_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-size")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
     template["max_payload_bytes"] = 1
@@ -908,7 +908,7 @@ def test_execute_rejects_payload_exceeding_template_limit_without_call(client):
 
 def test_execute_timeout_and_failed_http_are_audited(client):
     context = build_execution_context(user_prefix="workflow-exec-fail")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
     timeout_result = WebhookCallResult(
@@ -997,7 +997,7 @@ def test_execute_timeout_and_failed_http_are_audited(client):
 
 def test_execute_rate_limits_after_five_requests(client):
     context = build_execution_context(user_prefix="workflow-exec-ratelimit")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
     webhook_result = WebhookCallResult(
@@ -1047,7 +1047,7 @@ def test_execute_rate_limits_after_five_requests(client):
 def test_execute_rejects_missing_agent_or_other_user_agent_without_call(client):
     context = build_execution_context(user_prefix="workflow-exec-agent")
     other_context = build_execution_context(user_prefix="workflow-exec-other")
-    current_user = SimpleNamespace(id=context.user.id, role=context.user.role)
+    current_user = context.user
     headers = auth_headers(context.user.id)
     template = build_enabled_template()
 
