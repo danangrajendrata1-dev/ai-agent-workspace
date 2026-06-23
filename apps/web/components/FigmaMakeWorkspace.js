@@ -93,7 +93,7 @@ const WIN_META = {
   "create-agent-brain": { title: "Choose Agent Brain", width: 780, ix: 220, iy: 100 },
   "skill-panel": { title: "Skill Panel", width: 640, ix: 250, iy: 80 },
   "import-skill": { title: "Import Skill", width: 720, ix: 220, iy: 90 },
-  "library-skill": { title: "Library Skill", width: 900, ix: 180, iy: 70 },
+  "library-skill": { title: "Library Skill", width: 1220, ix: 120, iy: 54 },
   "library-skill-attach-agent": { title: "Attach Skill to Agent", width: 760, ix: 220, iy: 86 },
   "active-skills": { title: "Active Skills", width: 620, ix: 270, iy: 100 },
   "library-workflow": { title: "Library Workflow", width: 680, ix: 250, iy: 110 },
@@ -199,8 +199,19 @@ const PREVIEW_SKILLS = [
     runtimeStatus: "preview only",
     agent: "Doc Converter",
     sourceUrl: "github.com/private/pdf-helper",
+    sourcePath: "skills/pdf/SKILL.md",
+    sourceReference: "preview-pdf-helper",
     lastUpdate: "2026-06-18 21:10",
-    action: "Attach"
+    action: "Attach",
+    lifecycle: { key: "preview", label: "Preview only", tone: "review", detail: "Preview data only. No backend skill id yet." },
+    attachability: { key: "preview", label: "Import and approve first", tone: "review", detail: "Preview data only. No backend skill id yet." },
+    availabilityLabel: "Import and approve first",
+    nextAction: "Import and approve first.",
+    blockedReason: "",
+    canAttach: false,
+    canApproveImport: false,
+    canRejectImport: false,
+    canDisableImport: false
   },
   {
     id: "skill-2",
@@ -210,8 +221,19 @@ const PREVIEW_SKILLS = [
     runtimeStatus: "safe",
     agent: "Data Parser",
     sourceUrl: "github.com/private/knowledge-index",
+    sourcePath: "skills/knowledge/SKILL.md",
+    sourceReference: "preview-knowledge-index",
     lastUpdate: "2026-06-19 18:40",
-    action: "Attach"
+    action: "Attach",
+    lifecycle: { key: "preview", label: "Preview only", tone: "review", detail: "Preview data only. No backend skill id yet." },
+    attachability: { key: "preview", label: "Import and approve first", tone: "review", detail: "Preview data only. No backend skill id yet." },
+    availabilityLabel: "Import and approve first",
+    nextAction: "Import and approve first.",
+    blockedReason: "",
+    canAttach: false,
+    canApproveImport: false,
+    canRejectImport: false,
+    canDisableImport: false
   },
   {
     id: "skill-3",
@@ -221,8 +243,19 @@ const PREVIEW_SKILLS = [
     runtimeStatus: "blocked",
     agent: "Data Parser",
     sourceUrl: "github.com/private/json-parser",
+    sourcePath: "skills/json/SKILL.md",
+    sourceReference: "preview-json-parser",
     lastUpdate: "2026-06-20 09:20",
-    action: "View"
+    action: "View",
+    lifecycle: { key: "blocked", label: "Blocked: needs review", tone: "blocked", detail: "Blocked references detected." },
+    attachability: { key: "blocked", label: "Cannot attach until reviewed or cleaned", tone: "blocked", detail: "Blocked references detected." },
+    availabilityLabel: "Cannot attach until reviewed or cleaned",
+    nextAction: "Review blocked references, then reject or disable if needed.",
+    blockedReason: "Blocked references detected.",
+    canAttach: false,
+    canApproveImport: false,
+    canRejectImport: true,
+    canDisableImport: true
   },
   {
     id: "skill-4",
@@ -232,8 +265,19 @@ const PREVIEW_SKILLS = [
     runtimeStatus: "blocked",
     agent: "Notifier",
     sourceUrl: "github.com/private/slack-sync-flow",
+    sourcePath: "skills/slack/SKILL.md",
+    sourceReference: "preview-slack-sync-flow",
     lastUpdate: "2026-06-20 09:30",
-    action: "View"
+    action: "View",
+    lifecycle: { key: "blocked", label: "Blocked: needs review", tone: "blocked", detail: "Blocked references detected." },
+    attachability: { key: "blocked", label: "Cannot attach until reviewed or cleaned", tone: "blocked", detail: "Blocked references detected." },
+    availabilityLabel: "Cannot attach until reviewed or cleaned",
+    nextAction: "Review blocked references, then reject or disable if needed.",
+    blockedReason: "Blocked references detected.",
+    canAttach: false,
+    canApproveImport: false,
+    canRejectImport: true,
+    canDisableImport: true
   }
 ];
 
@@ -457,6 +501,30 @@ function getSkillSourceReference(skill) {
   );
 }
 
+function getSkillSourcePath(skill) {
+  return safeString(
+    skill?.file_path ||
+      skill?.path ||
+      skill?.source_path ||
+      skill?.sourcePath ||
+      skill?.raw?.file_path ||
+      skill?.raw?.path ||
+      skill?.raw?.source_path ||
+      skill?.raw?.sourcePath ||
+      skill?.source_reference ||
+      skill?.sourceReference ||
+      "",
+    ""
+  );
+}
+
+function getSkillSourceUrl(skill) {
+  return safeString(
+    skill?.source_url || skill?.sourceUrl || skill?.raw?.source_url || skill?.raw?.sourceUrl || "",
+    ""
+  );
+}
+
 function getSkillBlockedReason(skill) {
   const source = skill?.raw && typeof skill.raw === "object" ? skill.raw : skill || {};
   const rawReason = safeString(
@@ -479,27 +547,35 @@ function getSkillBlockedReason(skill) {
   const lowered = rawReason.toLowerCase();
 
   if (lowered.includes("localhost") || lowered.includes("127.0.0.1")) {
-    return "Localhost reference detected.";
+    return "Localhost reference detected";
   }
 
-  if (lowered.startsWith("//") || lowered.includes("protocol-relative")) {
-    return "Ambiguous resource path detected.";
+  if (lowered.startsWith("//") || lowered.includes("protocol-relative") || lowered.includes("ambiguous resource path")) {
+    return "Ambiguous resource path detected";
   }
 
   if (lowered.includes("http://") || lowered.includes("https://")) {
-    return "External resource reference detected.";
+    return "External resource reference detected";
   }
 
-  if (lowered.includes("c:\\") || lowered.includes("/tmp") || lowered.includes("file path") || lowered.includes("drive path")) {
-    return "Local file path detected.";
+  if (
+    lowered.includes("file://") ||
+    lowered.includes("c:\\") ||
+    lowered.includes("/tmp") ||
+    lowered.includes("drive path") ||
+    lowered.includes("file path") ||
+    /\b[a-z]:[\\/]/.test(lowered) ||
+    lowered.includes("e:///")
+  ) {
+    return "Local file path detected";
   }
 
   if (lowered.includes("resource") && lowered.includes("reference")) {
-    return "Resource reference detected; no file was fetched or executed.";
+    return "Resource reference detected; no file was fetched or executed";
   }
 
   if (lowered.includes("blocked")) {
-    return "Blocked references detected.";
+    return "Blocked references detected";
   }
 
   return rawReason;
@@ -687,6 +763,26 @@ function getSkillAttachability(skill, lifecycle = null) {
     };
   }
 
+  if (state.key === "preview") {
+    return {
+      key: "preview",
+      label: "Import and approve first",
+      tone: "review",
+      canAttach: false,
+      detail: state.detail || "Preview data only. No backend skill id yet."
+    };
+  }
+
+  if (state.key === "manual") {
+    return {
+      key: "manual",
+      label: "Cannot attach until reviewed or cleaned",
+      tone: "review",
+      canAttach: false,
+      detail: state.detail || "Manual or incomplete skill."
+    };
+  }
+
   return {
     key: state.key,
     label: "Approve before selecting in Create Agent",
@@ -771,16 +867,21 @@ function getSkillLibraryDescription(skill) {
 
 function getSkillLibrarySelectionState(skill) {
   const id = getSkillLibraryId(skill);
-  const status = String(skill?.status || skill?.import_status || skill?.security_status || "").toLowerCase();
-  const attachBlockReason = safeString(skill?.attach_block_reason, "");
-  const rejected = status === "rejected" || status === "disabled" || status === "blocked" || status === "pending" || status === "draft" || status === "inactive";
-  const isAttachable = skill?.is_attachable !== false && !rejected && isUuidLike(id);
+  const lifecycle = getSkillLifecycleStatus(skill);
+  const attachability = getSkillAttachability(skill, lifecycle);
+  const isAttachable = skill?.is_attachable !== false && Boolean(lifecycle.key === "approved") && isUuidLike(id);
   const selectable = Boolean(id) && isAttachable;
 
   return {
     id,
     selectable,
-    disabledReason: selectable ? "" : !isUuidLike(id) ? "Preview only / backend id unavailable." : attachBlockReason || (Boolean(id) ? `Status ${status || "unknown"}` : "Missing skill id.")
+    disabledReason: selectable
+      ? ""
+      : !isUuidLike(id)
+        ? "Preview only / backend id unavailable."
+        : lifecycle.key === "blocked"
+          ? attachability.detail || attachability.label
+          : attachability.label || attachability.detail || "Skill is not selectable."
   };
 }
 
@@ -791,6 +892,8 @@ function isSkillSelectable(skill) {
 function getSkillPickerEntry(skill, index, selectedSkillIdSet = new Set()) {
   const id = getSkillLibraryId(skill, index);
   const type = getSkillLibraryType(skill);
+  const lifecycle = getSkillLifecycleStatus(skill);
+  const attachability = getSkillAttachability(skill, lifecycle);
   const selectionState = getSkillLibrarySelectionState(skill);
   const label = getSkillLibraryLabel(skill);
   const status = getSkillLibraryStatus(skill);
@@ -805,6 +908,8 @@ function getSkillPickerEntry(skill, index, selectedSkillIdSet = new Set()) {
     type,
     typeLabel: getSkillLibraryTypeLabel(type),
     status,
+    lifecycle,
+    attachability,
     description,
     selected,
     selectable: isSkillSelectable(skill),
@@ -880,6 +985,7 @@ function statusStyle(status) {
     display: "inline-flex",
     alignItems: "center",
     width: "fit-content",
+    maxWidth: "100%",
     borderRadius: 999,
     padding: "4px 8px",
     fontSize: 11,
@@ -888,7 +994,11 @@ function statusStyle(status) {
     border: "1px solid rgba(62, 54, 46, 0.12)",
     background: "rgba(245, 241, 230, 0.82)",
     color: "#6B5D50",
-    whiteSpace: "nowrap"
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    textAlign: "left",
+    minWidth: 0
   };
 
   if (
@@ -1041,12 +1151,43 @@ function buildSkillRows(skillRows, selectedAgent, agentSkillMap) {
     const status = row?.import_status || row?.security_status || row?.status || "active";
     const normalizedType = normalizeSkillType(row?.skill_type || row?.type || "prompt_skill");
     const typeMeta = getSkillTypeMeta(normalizedType);
-    const hasReviewSignal = Boolean(row?.security_status === "warning" || row?.security_status === "blocked" || row?.attach_block_reason);
+    const sourcePath = safeString(row?.file_path || row?.path || row?.source_path || row?.source_reference || "-", "-");
+    const sourceUrl = safeString(row?.source_url || row?.sourceUrl || "-", "-");
     const actions = row?.is_attachable
       ? isAttached
         ? ["Detach", "Disable"]
         : ["Attach", "Disable"]
       : ["View"];
+    const lifecycle = getSkillLifecycleStatus({
+      raw: {
+        id,
+        status,
+        import_status: row?.import_status,
+        security_status: row?.security_status,
+        review_status: row?.review_status,
+        approval_status: row?.approval_status,
+        blocked_reason: row?.attach_block_reason,
+        attach_block_reason: row?.attach_block_reason,
+        rejected_at: row?.rejected_at,
+        disabled_at: row?.disabled_at
+      },
+      id,
+      source_reference: row?.source_reference,
+      sourceReference: row?.source_reference
+    });
+    const attachability = getSkillAttachability({ ...row, id }, lifecycle);
+    const nextAction =
+      lifecycle.key === "approved"
+        ? "Attach to an agent."
+        : lifecycle.key === "blocked"
+          ? "Review blocked references, then reject or disable if needed."
+          : lifecycle.key === "disabled"
+            ? "Disabled skill cannot be attached."
+            : lifecycle.key === "rejected"
+              ? "Rejected skill cannot be attached."
+              : lifecycle.key === "preview"
+                ? "Import and approve first."
+                : "Review in Library Skill before selecting in Create Agent.";
 
     return {
       id,
@@ -1055,9 +1196,19 @@ function buildSkillRows(skillRows, selectedAgent, agentSkillMap) {
       typeLabel: typeMeta.label,
       typeDetail: typeMeta.detail,
       status,
-      runtimeStatus: row?.is_attachable === false || typeMeta.blocked ? "blocked" : hasReviewSignal ? "review" : typeMeta.executionState,
+      runtimeStatus:
+        lifecycle.key === "approved"
+          ? "ready"
+          : lifecycle.key === "preview"
+            ? "preview only"
+            : lifecycle.key === "manual"
+              ? "review"
+              : lifecycle.key,
       agent: attachedAgentLabel,
-      sourceUrl: row?.source_url || row?.source_reference || row?.file_path || "-",
+      sourcePath,
+      sourceUrl,
+      nextAction,
+      availabilityLabel: attachability.label,
       lastUpdate: formatShortDate(row?.updated_at || row?.created_at),
       action: actions[0] || "View",
       actions,
@@ -1809,7 +1960,7 @@ function Label({ text }) {
 
 function InputField({ label, placeholder, value, onChange, type = "text" }) {
   return (
-    <div style={{ marginBottom: 10 }}>
+    <div style={{ marginBottom: 10, minWidth: 0 }}>
       {label ? <Label text={label} /> : null}
       <input
         type={type}
@@ -1835,7 +1986,7 @@ function InputField({ label, placeholder, value, onChange, type = "text" }) {
 
 function DropField({ label, placeholder, value, onChange, options = [] }) {
   return (
-    <div style={{ marginBottom: 10 }}>
+    <div style={{ marginBottom: 10, minWidth: 0 }}>
       {label ? <Label text={label} /> : null}
       <div
         style={{
@@ -1848,7 +1999,9 @@ function DropField({ label, placeholder, value, onChange, options = [] }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          cursor: "pointer"
+          cursor: "pointer",
+          minWidth: 0,
+          overflow: "hidden"
         }}
       >
         {options.length ? (
@@ -1998,10 +2151,10 @@ function PanelStateCard({ title, description, tone = "inactive", actionLabel, on
 
 function SectionTitle({ title, subtitle, actionLabel, onAction }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-      <div>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, minWidth: 0, flexWrap: "wrap" }}>
+      <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>{title}</div>
-        {subtitle ? <div style={{ marginTop: 3, fontSize: 12, color: C.textDim }}>{subtitle}</div> : null}
+        {subtitle ? <div style={{ marginTop: 3, fontSize: 12, color: C.textDim, lineHeight: 1.45, wordBreak: "break-word" }}>{subtitle}</div> : null}
       </div>
       {actionLabel ? (
         <button
@@ -2060,6 +2213,7 @@ function InlineFeedback({ message, error = false }) {
 function FloatingWindow({ id, onClose, onFocus, zIndex, children }) {
   const meta = WIN_META[id] || { title: safeString(id, "Panel"), width: 640, ix: 240, iy: 80 };
   const { pos, handleDown } = useWindowDrag(meta.ix, meta.iy);
+  const windowMaxHeight = id === "library-skill" ? "min(86vh, 900px)" : "82vh";
 
   return (
     <div
@@ -2068,17 +2222,19 @@ function FloatingWindow({ id, onClose, onFocus, zIndex, children }) {
         position: "fixed",
         left: pos.x,
         top: pos.y,
-        width: meta.width,
-        maxWidth: "calc(100vw - 24px)",
+        width: `min(${meta.width}px, calc(100vw - 48px))`,
+        maxWidth: "calc(100vw - 48px)",
         zIndex,
         background: C.card,
         border: `1.5px solid ${C.borderMid}`,
         borderRadius: 18,
         boxShadow: "0 8px 40px rgba(90,65,35,0.14), 0 2px 8px rgba(90,65,35,0.06)",
-        maxHeight: "82vh",
+        height: windowMaxHeight,
+        maxHeight: windowMaxHeight,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        overflowX: "hidden",
         ...FONT
       }}
     >
@@ -3152,7 +3308,7 @@ function CreateAgentContent({
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Select approved skills for this agent.</div>
               <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>
-                Draft selection only. Apply Skills before create.
+                Approved skills are selectable. Skills that need review must be approved in Library Skill first. Blocked, rejected, and disabled skills stay unavailable.
               </div>
             </div>
 
@@ -3226,7 +3382,9 @@ function CreateAgentContent({
                             </div>
                             <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted, lineHeight: 1.55 }}>{entry.description || "No description."}</div>
                           </div>
-                          <span style={statusStyle(unavailable ? entry.status : "safe")}>{unavailable ? "needs review" : "safe to import"}</span>
+                          <span style={statusStyle(unavailable ? entry.lifecycle?.tone || "review" : "ready")}>
+                            {unavailable ? entry.lifecycle?.label || "Unavailable" : "Available for agents"}
+                          </span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                           <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -4722,7 +4880,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
     }
 
     if (attachAlreadyAttached) {
-      setAttachError("Skill sudah attached ke agent ini.");
+      setAttachError("This skill is already attached to that agent.");
       return;
     }
 
@@ -4742,7 +4900,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
     }
   }
 
-  function renderSkillActionButtons(entry, compact = false) {
+  function renderSkillActionButtons(entry, compact = false, surface = "detail") {
     const actionStyle = (tone = "default", busy = false, primary = false) => ({
       padding: compact ? "5px 10px" : "7px 12px",
       borderRadius: 10,
@@ -4763,6 +4921,8 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
     const approveBusy = actionBusyId === `approve:${entry.id}`;
     const rejectBusy = actionBusyId === `reject:${entry.id}`;
     const disableBusy = actionBusyId === `disable:${entry.id}`;
+    const showSecondaryActions = surface !== "row" || entry.lifecycle?.key !== "preview";
+    const primaryLabel = surface === "row" && entry.lifecycle?.key === "preview" ? "View" : "Review";
 
     return (
       <>
@@ -4771,9 +4931,9 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
           onClick={() => setSelectedSkillId(entry.id)}
           style={actionStyle("soft", false, false)}
         >
-          Review
+          {primaryLabel}
         </button>
-        {canAttach ? (
+        {showSecondaryActions && canAttach ? (
           <button
             type="button"
             onClick={() => openAttachCard(entry)}
@@ -4782,7 +4942,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
             Attach
           </button>
         ) : null}
-        {canApprove ? (
+        {showSecondaryActions && canApprove ? (
           <button
             type="button"
             onClick={() => handleApproveSkill(entry)}
@@ -4792,7 +4952,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
             {approveBusy ? "Approving..." : "Approve skill"}
           </button>
         ) : null}
-        {canReject ? (
+        {showSecondaryActions && canReject ? (
           <button
             type="button"
             onClick={() => handleRejectSkill(entry)}
@@ -4802,7 +4962,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
             {rejectBusy ? "Rejecting..." : "Reject skill"}
           </button>
         ) : null}
-        {canDisable ? (
+        {showSecondaryActions && canDisable ? (
           <button
             type="button"
             onClick={() => handleDisableSkill(entry)}
@@ -4820,22 +4980,23 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
     ? [
         selectedSkill.description || "No description.",
         selectedSkill.blockedReason || selectedSkill.attachability.detail || selectedSkill.lifecycle.detail,
+        selectedSkill.sourcePath || selectedSkill.sourceReference || "-",
         selectedSkill.sourceUrl || "-",
-        selectedSkill.sourceReference || "-"
+        selectedSkill.nextAction || "Review in Library Skill before selecting in Create Agent."
       ]
     : [];
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "grid", gap: 10 }}>
-        <SectionTitle title="Library Skill" subtitle="Review skill dulu. Baru approve. Baru attach ke agent." />
+        <SectionTitle title="Library Skill" subtitle="Review skill dulu. Lihat lifecycle, source, lalu next action." />
         <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
           <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
             <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total skills</div>
             <div style={{ marginTop: 4, fontSize: 18, fontWeight: 700, color: C.text }}>{summary.total}</div>
           </div>
           <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
-            <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Available for agents</div>
+            <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.05em" }}>Approved / attachable</div>
             <div style={{ marginTop: 4, fontSize: 18, fontWeight: 700, color: C.text }}>{summary.available}</div>
           </div>
           <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
@@ -4853,8 +5014,8 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
         </div>
       </div>
 
-      <div style={{ display: "grid", gap: 10 }}>
-        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "minmax(0, 1.2fr) repeat(2, minmax(0, 0.8fr))" }}>
+      <div style={{ display: "grid", gap: 10, minWidth: 0, overflowX: "hidden" }}>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", minWidth: 0 }}>
           <InputField label="Search skill..." placeholder="Search skill..." value={query} onChange={(event) => setQuery(event.target.value)} />
           <DropField
             label="Type"
@@ -4887,7 +5048,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
           />
         </div>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
           {[
             { key: "all", label: "All" },
             { key: "can-attach", label: "Can attach" },
@@ -4919,17 +5080,17 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(320px, 0.85fr)", gap: 14, alignItems: "start" }}>
-        <Card style={{ display: "grid", gap: 12, background: C.card }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 0.9fr)", gap: 14, alignItems: "start", minWidth: 0, overflowX: "hidden" }}>
+        <Card style={{ display: "grid", gap: 10, background: C.card, minWidth: 0, overflowX: "hidden", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <SectionTitle title="Skill Library" subtitle="Nama, path, type, lifecycle, lalu next action." />
+            <SectionTitle title="Skill Library" subtitle="Nama, source/path, status, availability, lalu next action." />
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <span style={statusStyle(summary.available ? "ready" : "review")}>{summary.available} attachable</span>
               <span style={statusStyle(summary.blocked ? "blocked" : "review")}>{summary.blocked} blocked</span>
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 10, maxHeight: 620, overflowY: "auto", paddingRight: 2 }}>
+          <div style={{ display: "grid", gap: 8, maxHeight: "calc(86vh - 210px)", overflowY: "auto", overflowX: "hidden", paddingRight: 2, minWidth: 0 }}>
             {filteredEntries.length ? (
               filteredEntries.map((entry) => {
                 const active = selectedSkill?.id === entry.id;
@@ -4941,43 +5102,80 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
                     type="button"
                     onClick={() => setSelectedSkillId(entry.id)}
                     style={{
-                      padding: 14,
+                      padding: 12,
                       borderRadius: 14,
                       border: `1px solid ${active ? C.accent : C.border}`,
                       background: active ? C.accentLight : C.bg,
                       textAlign: "left",
                       cursor: "pointer",
                       display: "grid",
-                      gap: 10,
-                      boxShadow: active ? "0 8px 20px rgba(184,92,56,0.10)" : "none",
+                      gap: 8,
+                      boxShadow: active ? "0 6px 16px rgba(184,92,56,0.10)" : "none",
+                      minWidth: 0,
                       ...FONT
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{entry.name}</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.name}>
+                            {entry.name}
+                          </div>
                           {entry.duplicateName ? <span style={statusStyle("warning")}>Duplicate name</span> : null}
                         </div>
-                        <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted, lineHeight: 1.5, wordBreak: "break-word" }}>
-                          {entry.sourceUrl || entry.sourceReference || "No source."}
+                        <div style={{ marginTop: 4, display: "grid", gap: 2, fontSize: 11, color: C.textMuted, lineHeight: 1.4, minWidth: 0 }}>
+                          <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.sourcePath || entry.sourceReference || "No source."}>
+                            Source / Path: {entry.sourcePath || entry.sourceReference || "No source."}
+                          </div>
+                          {entry.sourceUrl ? (
+                            <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.sourceUrl}>
+                              Source URL: {entry.sourceUrl}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0, maxWidth: "48%" }}>
                         <span style={statusStyle(entry.lifecycle.tone)}>{entry.lifecycle.label}</span>
                         <span style={statusStyle(entry.attachability.tone)}>{entry.attachability.label}</span>
                       </div>
                     </div>
 
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
                       <span style={statusStyle(entry.type)}>{entry.typeLabel}</span>
                       <span style={statusStyle("preview")}>{entry.lastUpdate}</span>
                       {attachedAgentLabel ? <span style={statusStyle("ready")}>Attached: {attachedAgentLabel}</span> : null}
                     </div>
 
-                    {entry.description ? <div style={{ fontSize: 12, color: C.textSub, lineHeight: 1.5 }}>{entry.description}</div> : null}
+                    {entry.description ? (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: C.textSub,
+                          lineHeight: 1.45,
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden"
+                        }}
+                      >
+                        {entry.description}
+                      </div>
+                    ) : null}
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: C.textMuted,
+                        lineHeight: 1.45,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden"
+                      }}
+                    >
+                      Next action: {entry.nextAction}
+                    </div>
 
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{renderSkillActionButtons(entry, true)}</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>{renderSkillActionButtons(entry, true, "row")}</div>
                   </button>
                 );
               })
@@ -4990,48 +5188,78 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
           <InlineFeedback message={error} error />
         </Card>
 
-        <Card style={{ display: "grid", gap: 12, background: C.card }}>
-          <SectionTitle title="Selected Skill Review" subtitle="Nama, path, type, status, blocked reason, lalu next action." />
+        <Card
+          style={{
+            display: "grid",
+            gap: 10,
+            background: C.card,
+            minWidth: 0,
+            overflowX: "hidden",
+            minHeight: 0,
+            maxHeight: "calc(86vh - 170px)",
+            overflowY: "auto"
+          }}
+        >
+          <SectionTitle title="Skill Review" subtitle="Summary manifest dulu. Raw manifest tetap ada, tapi bukan fokus utama." />
           {!selectedSkill ? (
             <EmptyPanelState title="Select a skill first" description="Pilih skill candidate untuk review sebelum attach." />
           ) : (
-            <div style={{ display: "grid", gap: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", minWidth: 0, flexWrap: "wrap" }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{selectedSkill.name}</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted, lineHeight: 1.5, wordBreak: "break-word" }}>
-                    {selectedSkill.sourceUrl || selectedSkill.sourceReference || "-"}
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={selectedSkill.name}>
+                    {selectedSkill.name}
+                  </div>
+                  <div style={{ marginTop: 4, display: "grid", gap: 3, fontSize: 12, color: C.textMuted, lineHeight: 1.45, wordBreak: "break-word", minWidth: 0 }}>
+                    <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={selectedSkill.sourcePath || selectedSkill.sourceReference || "-"}>
+                      Source / Path: {selectedSkill.sourcePath || selectedSkill.sourceReference || "-"}
+                    </div>
+                    {selectedSkill.sourceUrl ? (
+                      <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={selectedSkill.sourceUrl}>
+                        Source URL: {selectedSkill.sourceUrl}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0, maxWidth: "100%" }}>
                   <span style={statusStyle(selectedSkill.lifecycle.tone)}>{selectedSkill.lifecycle.label}</span>
                   <span style={statusStyle(selectedSkill.attachability.tone)}>{selectedSkill.attachability.label}</span>
                 </div>
               </div>
 
-              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", minWidth: 0 }}>
                 <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
                   <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Skill type</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: C.text }}>{selectedSkill.typeLabel}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.text, wordBreak: "break-word" }}>{selectedSkill.typeLabel}</div>
                 </div>
                 <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
-                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Import state</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: C.text }}>{selectedSkill.lifecycle.label}</div>
+                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Lifecycle status</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.text, wordBreak: "break-word" }}>{selectedSkill.lifecycle.label}</div>
                 </div>
                 <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
                   <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Agent availability</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: C.text }}>{selectedSkill.attachability.label}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.text, wordBreak: "break-word" }}>{selectedSkill.availabilityLabel || selectedSkill.attachability.label}</div>
+                </div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Source / Path</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.text, wordBreak: "break-word" }}>{selectedSkill.sourcePath || selectedSkill.sourceReference || "-"}</div>
+                </div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Source URL</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.text, wordBreak: "break-word" }}>{selectedSkill.sourceUrl || "-"}</div>
                 </div>
                 <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
                   <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Last update</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: C.text }}>{selectedSkill.lastUpdate}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.text, wordBreak: "break-word" }}>{selectedSkill.lastUpdate}</div>
                 </div>
               </div>
 
               <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Why blocked</div>
-                  <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.6 }}>{selectedSkill.blockedReason || selectedSkill.lifecycle.detail || "Safe to import."}</div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Warnings / blocked reasons</div>
+                  <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.55, maxHeight: 108, overflowY: "auto", overflowX: "hidden", wordBreak: "break-word" }}>
+                    {selectedSkill.blockedReason || selectedSkill.lifecycle.detail || "Safe to import."}
+                  </div>
                   {selectedSkill?.raw?.review_notes ? (
                     <div style={{ marginTop: 8, fontSize: 11, color: C.textDim }}>
                       Technical details: {selectedSkill.raw.review_notes}
@@ -5039,27 +5267,19 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
                   ) : null}
                 </div>
 
-                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep, minWidth: 0 }}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Next action</div>
-                  <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.6 }}>
-                    {selectedSkill.lifecycle.key === "approved"
-                      ? "Skill approved. Attach to a target agent sekarang."
-                      : selectedSkill.lifecycle.key === "blocked"
-                        ? "Blocked dulu. Bisa reject atau disable. Approve hanya setelah blocked references dibersihkan."
-                        : selectedSkill.lifecycle.key === "disabled"
-                          ? "Disabled skill tidak bisa attach."
-                          : selectedSkill.lifecycle.key === "rejected"
-                            ? "Rejected skill tidak bisa attach."
-                            : "Approve skill dulu. Setelah itu baru selectable di Create Agent."}
+                  <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.55, wordBreak: "break-word" }}>
+                    {selectedSkill.nextAction || "Review in Library Skill before selecting in Create Agent."}
                   </div>
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{renderSkillActionButtons(selectedSkill, false)}</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>{renderSkillActionButtons(selectedSkill, false, "detail")}</div>
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                <SectionTitle title="Skill Manifest Preview" subtitle="Summary default. Raw Manifest bounded dan scrollable." />
-                <div style={{ display: "flex", gap: 8 }}>
+                <SectionTitle title="Manifest Summary" subtitle="Summary dulu. Raw manifest bounded dan scrollable kalau perlu." />
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
                   {[
                     { key: "summary", label: "Summary" },
                     { key: "raw", label: "Raw Manifest" }
@@ -5089,7 +5309,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
               </div>
 
               {previewTab === "summary" ? (
-                <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
                   {selectedPreviewSummary.map((line, index) => (
                     <div
                       key={`${selectedSkill.id}-summary-${index}`}
@@ -5111,8 +5331,9 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
               ) : (
                 <div
                   style={{
-                    maxHeight: 240,
+                    maxHeight: 260,
                     overflowY: "auto",
+                    overflowX: "hidden",
                     borderRadius: 10,
                     border: `1px solid ${C.border}`,
                     background: C.bgDeep,
@@ -5214,7 +5435,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
               </div>
               <div style={{ marginTop: 4, fontSize: 12, color: C.textMuted }}>
                 {attachAlreadyAttached
-                  ? "Skill sudah attached ke agent ini."
+                  ? "This skill is already attached to that agent."
                   : selectedAttachAgent
                     ? "Confirm attach only after checking the selected target."
                     : "Choose an agent first."}
