@@ -6953,6 +6953,7 @@ function ProviderApiKeyContent({
   const [preferredModel, setPreferredModel] = useState(providerSettings?.preferred_model || "gpt-4o");
   const [message, setMessage] = useState("");
   const [keyDrafts, setKeyDrafts] = useState({});
+  const [keyBusy, setKeyBusy] = useState({});
   const testConnectionLabel = "test connection not available yet";
   const testConnectionEnabled = false;
   const canSaveSettings = Boolean(onSaveSettings);
@@ -6963,12 +6964,25 @@ function ProviderApiKeyContent({
   }, [providerSettings?.preferred_provider, providerSettings?.preferred_model, providerOptions]);
 
   useEffect(() => {
-    const next = {};
-    (apiKeyStatuses.length ? apiKeyStatuses : SETTINGS_KEYS).forEach((item) => {
-      next[item.provider] = "";
+  setKeyDrafts((current) => {
+    const next = { ...current };
+
+    providerOptions.forEach((item) => {
+      if (!Object.prototype.hasOwnProperty.call(next, item.value)) {
+        next[item.value] = "";
+      }
     });
-    setKeyDrafts(next);
-  }, [apiKeyStatuses]);
+
+    apiKeyStatuses.forEach((item) => {
+      const provider = String(item?.provider || "").trim();
+      if (provider && !Object.prototype.hasOwnProperty.call(next, provider)) {
+        next[provider] = "";
+      }
+    });
+
+    return next;
+  });
+}, [apiKeyStatuses, providerOptions]);
 
   async function handleSaveSettings() {
     if (!onSaveSettings) {
@@ -6989,55 +7003,103 @@ function ProviderApiKeyContent({
   }
 
   async function handleSaveKey(provider) {
-    if (!onSaveApiKey) {
-      setMessage("Save key backend endpoint not available yet.");
-      return;
-    }
-
-    const apiKey = String(keyDrafts[provider] || "").trim();
-    if (!apiKey) {
-      setMessage("API key kosong.");
-      return;
-    }
-
-    setMessage("");
-    try {
-      await onSaveApiKey(provider, apiKey);
-      setKeyDrafts((current) => ({ ...current, [provider]: "" }));
-      setMessage(`${provider} key saved.`);
-    } catch (saveError) {
-      setMessage(saveError?.message || "Save key gagal.");
-    }
+  if (!onSaveApiKey) {
+    setMessage("Save key backend endpoint not available yet.");
+    return;
   }
+
+  const providerKey = String(provider || "").trim();
+  const apiKey = String(keyDrafts[providerKey] || "").trim();
+
+  if (!providerKey) {
+    setMessage("Provider tidak valid.");
+    return;
+  }
+
+  if (!apiKey) {
+    setMessage("API key kosong.");
+    return;
+  }
+
+  setMessage("");
+  setKeyBusy((current) => ({ ...current, [`save:${providerKey}`]: true }));
+
+  try {
+    await onSaveApiKey(providerKey, apiKey);
+    setKeyDrafts((current) => ({ ...current, [providerKey]: "" }));
+    setMessage("Key saved. Raw key is hidden.");
+  } catch (saveError) {
+    setMessage(saveError?.message || "Save key gagal.");
+  } finally {
+    setKeyBusy((current) => ({ ...current, [`save:${providerKey}`]: false }));
+  }
+}
 
   async function handleDeleteKey(provider) {
-    if (!onDeleteApiKey) {
-      setMessage("Delete key backend endpoint not available yet.");
-      return;
-    }
-
-    setMessage("");
-    try {
-      await onDeleteApiKey(provider);
-      setMessage(`${provider} key deleted.`);
-    } catch (deleteError) {
-      setMessage(deleteError?.message || "Delete key gagal.");
-    }
+  if (!onDeleteApiKey) {
+    setMessage("Delete key backend endpoint not available yet.");
+    return;
   }
 
-  const keyRows = apiKeyStatuses.length
-    ? apiKeyStatuses.map((item, index) => ({
-        id: item?.provider || `provider-${index + 1}`,
-        provider: item?.provider || "-",
-        masked: item?.masked_key || item?.key_last4 || item?.maskedKey || "not set",
-        status: item?.connection_status || "not setup"
-      }))
-    : SETTINGS_KEYS.map((item) => ({
-        id: item.provider,
-        provider: item.provider,
-        masked: item.masked,
-        status: item.status
-      }));
+  const providerKey = String(provider || "").trim();
+
+  if (!providerKey) {
+    setMessage("Provider tidak valid.");
+    return;
+  }
+
+  const confirmed =
+    typeof window === "undefined"
+      ? true
+      : window.confirm(`Delete API key for ${providerKey}?`);
+
+  if (!confirmed) {
+    return;
+  }
+
+  setMessage("");
+  setKeyBusy((current) => ({ ...current, [`delete:${providerKey}`]: true }));
+
+  try {
+    await onDeleteApiKey(providerKey);
+    setKeyDrafts((current) => ({ ...current, [providerKey]: "" }));
+    setMessage("Key deleted.");
+  } catch (deleteError) {
+    setMessage(deleteError?.message || "Delete key gagal.");
+  } finally {
+    setKeyBusy((current) => ({ ...current, [`delete:${providerKey}`]: false }));
+  }
+}
+
+  const apiKeyStatusMap = new Map(
+  apiKeyStatuses
+    .map((item) => [String(item?.provider || "").trim(), item])
+    .filter(([provider]) => Boolean(provider))
+);
+
+const keyRows = providerOptions.map((providerOption, index) => {
+  const provider = String(providerOption.value || "").trim();
+  const status = apiKeyStatusMap.get(provider) || {};
+  const masked = safeString(
+    status?.masked_key ||
+      status?.maskedKey ||
+      status?.key_last4 ||
+      status?.last_four ||
+      "",
+    ""
+  );
+
+  const configured = Boolean(masked) || status?.configured === true || status?.has_key === true;
+
+  return {
+    id: provider || `provider-${index + 1}`,
+    provider,
+    label: providerOption.label || provider || `Provider ${index + 1}`,
+    masked: configured ? masked || "configured" : "not configured",
+    status: configured ? "configured" : "not configured",
+    updatedAt: status?.updated_at || status?.created_at || ""
+  };
+});
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -7119,7 +7181,7 @@ function ProviderApiKeyContent({
               <div key={item.provider} style={{ padding: "9px 10px", borderRadius: 8, background: C.bgDeep, border: `1px solid ${C.border}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.provider}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.label || item.provider}</div>
                     <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{item.masked}</div>
                   </div>
                   <span style={statusStyle(item.status)}>{item.status}</span>
@@ -7127,8 +7189,10 @@ function ProviderApiKeyContent({
               <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                 {(() => {
                   const draftKey = String(keyDrafts[item.provider] || "").trim();
-                  const canSaveKey = Boolean(onSaveApiKey) && Boolean(draftKey);
-                  const canDeleteKey = Boolean(onDeleteApiKey);
+const saveBusy = Boolean(keyBusy[`save:${item.provider}`]);
+const deleteBusy = Boolean(keyBusy[`delete:${item.provider}`]);
+const canSaveKey = Boolean(onSaveApiKey) && Boolean(draftKey) && !saveBusy && !deleteBusy;
+const canDeleteKey = Boolean(onDeleteApiKey) && item.status === "configured" && !saveBusy && !deleteBusy;
 
                   return (
                     <>
@@ -7167,9 +7231,9 @@ function ProviderApiKeyContent({
                       opacity: canSaveKey ? 1 : 0.72,
                       ...FONT
                     }}
-                    title={canSaveKey ? "Save or update key." : "Need key input or backend save endpoint."}
+                    title={canSaveKey ? "Save API key." : "Need key input or backend save endpoint."}
                   >
-                    Save / Update
+                   {saveBusy ? "Saving..." : "Save API Key"}
                   </button>
                   <button
                     type="button"
@@ -7186,16 +7250,16 @@ function ProviderApiKeyContent({
                       opacity: canDeleteKey ? 1 : 0.72,
                       ...FONT
                     }}
-                    title={canDeleteKey ? "Delete key." : "Delete key backend endpoint not available yet."}
+                    title={canDeleteKey ? "Delete API key." : "No configured key to delete."}
                   >
-                    Delete
+                    {deleteBusy ? "Deleting..." : "Delete Key"}
                   </button>
                     </>
                   );
                 })()}
                 </div>
                 <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.5, color: C.textMuted }}>
-                  Raw key cuma hidup di input sementara. Setelah save/update, field langsung dikosongkan.
+                  Raw API keys are never shown after saving. No provider call is made yet.
                 </div>
               </div>
             ))}
