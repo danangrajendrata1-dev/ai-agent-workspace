@@ -15,6 +15,7 @@ import {
   createN8nWorkflow,
   deleteModelProviderApiKey,
   deleteN8nWorkflow,
+  detachImportedSkillFromAgent,
   get,
   getActivityLogs,
   getAuditLogs,
@@ -23,6 +24,7 @@ import {
   getModelProviderKeyStatuses,
   getModelProviderSettings,
   getModelProviders,
+  getGithubImports,
   getRuntimeCapabilities,
   getPendingApprovals,
   getSkillLibrary,
@@ -486,8 +488,156 @@ function isUuidLike(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
 }
 
+function isGenericSkillDisplayName(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_");
+
+  return [
+    "markdown_instruction",
+    "prompt_skill",
+    "knowledge_skill",
+    "tool_skill",
+    "workflow_skill",
+    "manual_skill",
+    "skill_import",
+    "imported_skill",
+    "selected_skill",
+    "skill"
+  ].includes(normalized);
+}
+
+function humanizeSkillName(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return "";
+  }
+
+  return text
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getSkillNameFromPath(value) {
+  const rawPath = String(value || "").trim();
+
+  if (!rawPath) {
+    return "";
+  }
+
+  const normalizedPath = rawPath
+    .replace(/\\/g, "/")
+    .replace(/\/?SKILL\.md$/i, "")
+    .replace(/\/$/, "");
+
+  const pieces = normalizedPath.split("/").filter(Boolean);
+  const lastPiece = pieces[pieces.length - 1] || "";
+
+  if (!lastPiece) {
+    return "";
+  }
+
+  return humanizeSkillName(lastPiece);
+}
+
+function getSkillNameFromMarkdown(value) {
+  const text = String(value || "");
+
+  if (!text.trim()) {
+    return "";
+  }
+
+  const headingLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("#"));
+
+  if (headingLine) {
+    const heading = headingLine.replace(/^#+\s*/, "").trim();
+    if (heading && !isGenericSkillDisplayName(heading)) {
+      return heading;
+    }
+  }
+
+  const nameMatch = text.match(/^\s*name:\s*["']?([^"'\n]+)["']?\s*$/im);
+  if (nameMatch?.[1]) {
+    const name = nameMatch[1].trim();
+    if (name && !isGenericSkillDisplayName(name)) {
+      return humanizeSkillName(name);
+    }
+  }
+
+  const titleMatch = text.match(/^\s*title:\s*["']?([^"'\n]+)["']?\s*$/im);
+  if (titleMatch?.[1]) {
+    const title = titleMatch[1].trim();
+    if (title && !isGenericSkillDisplayName(title)) {
+      return humanizeSkillName(title);
+    }
+  }
+
+  return "";
+}
+
+function getBestSkillDisplayName(source) {
+  const raw = source?.raw && typeof source.raw === "object" ? source.raw : {};
+  const candidates = [
+    source?.title,
+    source?.display_name,
+    source?.name,
+    raw?.title,
+    raw?.display_name,
+    raw?.name,
+    source?.slug,
+    raw?.slug
+  ];
+
+  for (const candidate of candidates) {
+    const text = String(candidate || "").trim();
+    if (text && !isGenericSkillDisplayName(text)) {
+      return humanizeSkillName(text);
+    }
+  }
+
+  const markdownName = getSkillNameFromMarkdown(
+    source?.content_preview ||
+      source?.description ||
+      source?.summary ||
+      raw?.content_preview ||
+      raw?.description ||
+      raw?.summary ||
+      raw?.review_notes ||
+      ""
+  );
+
+  if (markdownName) {
+    return markdownName;
+  }
+
+  const pathName = getSkillNameFromPath(
+    source?.file_path ||
+      source?.path ||
+      source?.source_path ||
+      source?.skill_path ||
+      raw?.file_path ||
+      raw?.path ||
+      raw?.source_path ||
+      raw?.skill_path ||
+      ""
+  );
+
+  if (pathName) {
+    return pathName;
+  }
+
+  return safeString(source?.source_reference || raw?.source_reference || "Unnamed skill", "Unnamed skill");
+}
+
 function getSkillDisplayName(skill) {
-  return safeString(skill?.title || skill?.name || skill?.display_name || skill?.slug || skill?.file_path || skill?.path || skill?.source_reference, "Unnamed skill");
+  return getBestSkillDisplayName(skill);
 }
 
 function getSkillTypeLabel(skill) {
@@ -523,6 +673,159 @@ function getSkillSourceUrl(skill) {
     skill?.source_url || skill?.sourceUrl || skill?.raw?.source_url || skill?.raw?.sourceUrl || "",
     ""
   );
+}
+
+function getGithubImportDisplayName(importRecord) {
+  const displayName = getBestSkillDisplayName(importRecord);
+
+  if (displayName && displayName !== "Unnamed skill") {
+    return displayName;
+  }
+
+  return safeString(importRecord?.repo_url || importRecord?.review_notes || "Imported skill", "Imported skill");
+}
+
+function normalizeGithubImportLibraryItem(importRecord) {
+  if (!importRecord || typeof importRecord !== "object") {
+    return null;
+  }
+
+  const importStatus = String(importRecord?.status || "preview").toLowerCase();
+  if (importStatus === "imported") {
+    return null;
+  }
+
+  const warnings = Array.isArray(importRecord?.inspection_warnings)
+    ? importRecord.inspection_warnings.map((item) => safeString(item, "")).filter(Boolean)
+    : [];
+  const errors = Array.isArray(importRecord?.inspection_errors)
+    ? importRecord.inspection_errors.map((item) => safeString(item, "")).filter(Boolean)
+    : [];
+  const resourceReferences = Array.isArray(importRecord?.resource_paths)
+    ? importRecord.resource_paths.map((item) => safeString(item, "")).filter(Boolean)
+    : [];
+  const blockedReferences = Array.isArray(importRecord?.blocked_resource_paths)
+    ? importRecord.blocked_resource_paths.map((item) => safeString(item, "")).filter(Boolean)
+    : [];
+  const skillTypeRaw = String(importRecord?.skill_import_type || "").toLowerCase();
+const skillType = skillTypeRaw.includes("workflow")
+  ? "workflow_skill"
+  : skillTypeRaw.includes("tool")
+    ? "tool_skill"
+    : skillTypeRaw.includes("knowledge")
+      ? "knowledge_skill"
+      : "prompt_skill";
+
+const isPromptOrKnowledgeImport = skillType === "prompt_skill" || skillType === "knowledge_skill";
+const isExecutableImport = skillType === "tool_skill" || skillType === "workflow_skill";
+
+const hasResourceReferenceSignals = Boolean(blockedReferences.length) || Boolean(errors.length);
+const hasBlockingSignals =
+  isExecutableImport &&
+  (Boolean(importRecord?.has_executable_resources) || hasResourceReferenceSignals);
+
+const needsReviewSignals =
+  Boolean(warnings.length) ||
+  Boolean(importRecord?.requires_review) ||
+  (isPromptOrKnowledgeImport && hasResourceReferenceSignals);
+
+const securityStatus = hasBlockingSignals ? "blocked" : needsReviewSignals ? "warning" : "safe";
+const normalizedStatus = importStatus === "rejected" || importStatus === "disabled" ? importStatus : "active";
+const normalizedImportStatus = importStatus === "rejected" || importStatus === "disabled" ? importStatus : "imported";
+
+  return {
+    id: safeString(importRecord?.id || "", ""),
+    title: getGithubImportDisplayName(importRecord),
+    name: getGithubImportDisplayName(importRecord),
+    skill_type: skillType,
+    source_url: safeString(importRecord?.repo_url || "", ""),
+    source_reference: safeString(importRecord?.id || "", ""),
+    source_branch: safeString(importRecord?.branch || "", ""),
+    file_path: safeString(importRecord?.file_path || "", ""),
+    status: normalizedStatus,
+    import_status: normalizedImportStatus,
+    security_status: securityStatus,
+    risk_level: "medium",
+    warnings: warnings.length ? warnings : errors,
+    resource_references: resourceReferences,
+    created_at: importRecord?.created_at,
+    updated_at: importRecord?.updated_at || importRecord?.created_at,
+    is_attachable: !hasBlockingSignals,
+attach_block_reason: hasBlockingSignals
+  ? getGitHubImportBlockedSummary(importRecord)
+  : needsReviewSignals
+    ? "Reference found in instructions. No file was fetched or executed."
+    : null,
+    raw: importRecord
+  };
+}
+
+function getManagedActiveSkillEntry(item, index = 0) {
+  const skill = item?.skill && typeof item.skill === "object" ? item.skill : {};
+  const skillId = safeString(skill?.id || item?.skill_id || item?.skillId || item?.id || "", "");
+  const lifecycle = skillId
+    ? getSkillLifecycleStatus(skill)
+    : {
+        key: "missing",
+        label: "Missing metadata",
+        tone: "review",
+        detail: "Skill metadata incomplete."
+      };
+  const attachability = skillId
+    ? getSkillAttachability(skill, lifecycle)
+    : {
+        key: "missing",
+        label: "Missing metadata",
+        tone: "review",
+        canAttach: false,
+        detail: "Skill metadata incomplete."
+      };
+  const enabled = item?.is_enabled !== false;
+  const name = getSkillDisplayName(skill) || safeString(item?.name || `Skill ${index + 1}`, `Skill ${index + 1}`);
+  const type = normalizeSkillType(skill?.skill_type || skill?.type || item?.skill_type || item?.type || "active_skill");
+  const typeLabel = getSkillLibraryTypeLabel(type);
+  const sourcePath = getSkillSourcePath(skill) || safeString(item?.source_path || item?.sourcePath || item?.source_reference || item?.sourceReference || "-", "-");
+  const sourceUrl = getSkillSourceUrl(skill) || safeString(item?.source_url || item?.sourceUrl || "", "");
+  const description = safeString(skill?.description || skill?.summary || skill?.content_preview || item?.description || "", "");
+  const lifecycleLabel = enabled ? (lifecycle.key === "approved" ? "Approved" : lifecycle.label) : "Disabled";
+  const lifecycleTone = !skillId ? "review" : !enabled ? "disabled" : lifecycle.key === "approved" ? "ready" : lifecycle.tone;
+  const attachedStatusLabel = !skillId ? "Missing metadata" : enabled ? "Active" : "Disabled";
+  const attachedStatusTone = !skillId ? "review" : enabled ? "ready" : "disabled";
+  const warning =
+    !skillId
+      ? "Missing metadata"
+      : !enabled
+        ? "Attached skill is disabled."
+        : lifecycle.key === "blocked"
+          ? lifecycle.detail || "Blocked skill attached."
+          : lifecycle.key === "rejected"
+            ? "Rejected skill should be removed."
+            : lifecycle.key === "manual"
+              ? "Manual or incomplete skill."
+              : "";
+  const detachSkillId = skillId;
+
+  return {
+    raw: item,
+    skill,
+    skillId,
+    detachSkillId,
+    name,
+    type,
+    typeLabel,
+    enabled,
+    lifecycle,
+    attachability,
+    lifecycleLabel,
+    lifecycleTone,
+    attachedStatusLabel,
+    attachedStatusTone,
+    sourcePath,
+    sourceUrl,
+    description,
+    warning,
+    canDetach: Boolean(item?.id || skillId)
+  };
 }
 
 function getSkillBlockedReason(skill) {
@@ -584,20 +887,45 @@ function getSkillBlockedReason(skill) {
 function getSkillLifecycleStatus(skill) {
   const source = skill?.raw && typeof skill.raw === "object" ? skill.raw : skill || {};
   const backendId = String(source.id || skill?.id || "").trim();
-  const status = String(source.status || source.import_status || source.security_status || "").toLowerCase();
+
+  const status = String(source.status || "").toLowerCase();
   const importStatus = String(source.import_status || "").toLowerCase();
   const securityStatus = String(source.security_status || "").toLowerCase();
   const reviewStatus = String(source.review_status || source.approval_status || "").toLowerCase();
+
+  const type = normalizeSkillType(source.skill_type || source.type || skill?.skill_type || skill?.type || "prompt_skill");
+  const isPromptOrKnowledge = type === "prompt_skill" || type === "knowledge_skill";
+  const isExecutableSkill = type === "tool_skill" || type === "workflow_skill";
+
   const blockedReason = getSkillBlockedReason(source);
+  const hasBlockingSignal = securityStatus === "blocked" || Boolean(source.attach_block_reason || source.blocked_reason);
+
+  // Untuk alpha ini prompt/knowledge tidak dieksekusi.
+  // Jadi localhost/tmp/path di markdown instruction = warning, bukan hard block.
+  const isBlocked = hasBlockingSignal && isExecutableSkill;
+  const isWarningOnly = hasBlockingSignal && isPromptOrKnowledge;
+
   const isDisabled = status === "disabled" || reviewStatus === "disabled" || Boolean(source.disabled_at);
   const isRejected = status === "rejected" || reviewStatus === "rejected" || Boolean(source.rejected_at);
-  const isBlocked = securityStatus === "blocked" || Boolean(source.attach_block_reason || source.blocked_reason);
   const hasPreviewOnlyId = !isUuidLike(backendId);
+
+  const isFinalImported =
+    importStatus === "imported" ||
+    status === "imported" ||
+    status === "active" ||
+    status === "approved" ||
+    status === "ready" ||
+    source.is_attachable === true ||
+    source.approved === true ||
+    source.is_approved === true ||
+    Boolean(source.approved_at);
+
   const needsReview =
     !hasPreviewOnlyId &&
     !isBlocked &&
     !isDisabled &&
     !isRejected &&
+    !isFinalImported &&
     (securityStatus === "warning" ||
       reviewStatus === "pending" ||
       reviewStatus === "review" ||
@@ -606,15 +934,14 @@ function getSkillLifecycleStatus(skill) {
       status === "pending" ||
       status === "draft" ||
       status === "manual" ||
-      importStatus === "manual" ||
-      status === "inactive");
+      importStatus === "manual");
+
   const approved =
     !hasPreviewOnlyId &&
     !isBlocked &&
     !isDisabled &&
     !isRejected &&
-    !needsReview &&
-    (importStatus === "imported" || status === "active" || status === "approved" || status === "ready" || source.is_attachable === true);
+    isFinalImported;
 
   if (hasPreviewOnlyId) {
     return {
@@ -680,10 +1007,14 @@ function getSkillLifecycleStatus(skill) {
     return {
       key: "approved",
       label: "Approved",
-      tone: "ready",
-      detail: "Available for agents.",
+      tone: isWarningOnly ? "review" : "ready",
+      detail: isWarningOnly
+        ? "Available for agents. Reference found in instructions. No file was fetched or executed."
+        : "Available for agents.",
       order: 0,
-      blockedReason,
+      blockedReason: isWarningOnly
+        ? "Reference found in instructions. No file was fetched or executed."
+        : blockedReason,
       status,
       importStatus,
       securityStatus,
@@ -739,7 +1070,7 @@ function getSkillAttachability(skill, lifecycle = null) {
       label: "Cannot attach until reviewed or cleaned",
       tone: "blocked",
       canAttach: false,
-      detail: state.blockedReason || "Blocked references detected."
+      detail: state.blockedReason || "Review the blocked references. Reject or disable this skill if you do not want to use it."
     };
   }
 
@@ -815,7 +1146,7 @@ function getSkillLibraryId(skill, fallbackIndex = 0) {
 }
 
 function getSkillLibraryLabel(skill) {
-  return safeString(skill?.name || skill?.title || skill?.display_name || skill?.slug || skill?.skill_path, "Unnamed skill");
+  return getSkillDisplayName(skill);
 }
 
 function getSkillLibraryType(skill) {
@@ -869,7 +1200,7 @@ function getSkillLibrarySelectionState(skill) {
   const id = getSkillLibraryId(skill);
   const lifecycle = getSkillLifecycleStatus(skill);
   const attachability = getSkillAttachability(skill, lifecycle);
-  const isAttachable = skill?.is_attachable !== false && Boolean(lifecycle.key === "approved") && isUuidLike(id);
+  const isAttachable = Boolean(attachability.canAttach) && isUuidLike(id);
   const selectable = Boolean(id) && isAttachable;
 
   return {
@@ -1712,7 +2043,14 @@ function getGitHubImportFriendlyError(error) {
 
   if (lowered.includes("slug") || lowered.includes("already in use") || lowered.includes("already in your library") || lowered.includes("duplicate")) {
     return {
-      message: "This skill is already in your library. Review it in Skill Library or choose a different skill.",
+      message: "This skill is already in your library or already approved.",
+      technical: raw
+    };
+  }
+
+  if (lowered.includes("only preview imports can be approved")) {
+    return {
+      message: "This skill is already in library state. Refreshing status.",
       technical: raw
     };
   }
@@ -1727,12 +2065,36 @@ function getGitHubImportFriendlyError(error) {
   return { message: raw, technical: "" };
 }
 
+function buildGitHubImportApproveSlug(importRecord, fallbackName = "Imported Skill") {
+  const baseSource = safeString(
+    importRecord?.file_path ||
+      importRecord?.skill_path ||
+      importRecord?.title ||
+      importRecord?.name ||
+      importRecord?.repo_url ||
+      fallbackName,
+    fallbackName
+  );
+  const normalizedBase = baseSource
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const importIdSuffix = safeString(importRecord?.id || "", "").replace(/-/g, "").slice(0, 8);
+  const baseSlug = normalizedBase || "imported-skill";
+  return importIdSuffix ? `${baseSlug}-${importIdSuffix}` : baseSlug;
+}
+
 function getGitHubImportCandidateView(candidate, selectedSkillPath = "", importedSkillPath = "") {
   const path = safeString(candidate?.path || candidate?.manifest_path || "", "");
   const manifestPath = safeString(candidate?.manifest_path || candidate?.path || "", "");
-  const title = safeString(candidate?.title || path || manifestPath, "skill");
-  const skillType = safeString(candidate?.skill_import_type || "skill import", "skill import");
-  const status = String(candidate?.validation_status || candidate?.status || candidate?.import_status || "").toLowerCase();
+  const title = getGithubImportDisplayName({
+  ...candidate,
+  file_path: candidate?.file_path || candidate?.path || candidate?.manifest_path || path || manifestPath
+});
+  const skillType = normalizeSkillType(candidate?.skill_import_type || candidate?.skill_type || candidate?.type || "prompt_skill");
+const rawStatus = String(candidate?.validation_status || candidate?.status || candidate?.import_status || "").toLowerCase();
+const isPromptOrKnowledgeCandidate = skillType === "prompt_skill" || skillType === "knowledge_skill";
+const status = isPromptOrKnowledgeCandidate && rawStatus === "blocked" ? "warning" : rawStatus;
   const imported = Boolean(importedSkillPath) && (path === importedSkillPath || manifestPath === importedSkillPath);
   const statusMeta = getGitHubImportStatusMeta(status, imported, candidate?.import_status);
   const searchText = [title, path, manifestPath, skillType, safeString(candidate?.description || ""), safeString(candidate?.warning || ""), status, statusMeta.label]
@@ -3690,7 +4052,10 @@ function ImportSkillContent({
       {
         path: previewPath,
         manifest_path: previewPath,
-        title: safeString(previewResult?.skill_import_type || previewResult?.file_path || previewPath, "Selected skill"),
+        title: getGithubImportDisplayName({
+  ...previewResult,
+  file_path: previewResult?.file_path || previewPath
+}),
         description: safeString(previewResult?.content_preview || previewResult?.review_notes || "", ""),
         skill_import_type: safeString(previewResult?.skill_import_type || "skill import", "skill import"),
         validation_status: validationStatus,
@@ -3772,9 +4137,11 @@ function ImportSkillContent({
   const canPreviewImport = Boolean(onPreviewImport);
   const canPreviewCollection = Boolean(onPreviewCollection);
   const canImportSkill = Boolean(onImportSkill) && !isSubmitting && Boolean(selectedCollectionCandidate?.path || selectedCollectionCandidate?.manifestPath) && !selectedCollectionCandidate?.imported;
-  const canApproveImport = Boolean(onApproveImport) && Boolean(selectedImportedSkill?.id);
-  const canRejectImport = Boolean(onRejectImport) && Boolean(selectedImportedSkill?.id);
-  const canDisableImport = Boolean(onDisableImport) && Boolean(selectedImportedSkill?.id);
+  const selectedImportedStatus = String(selectedImportedSkill?.status || selectedImportedSkill?.import_status || "").toLowerCase();
+  const canReviewImported = Boolean(selectedImportedSkill?.id) && selectedImportedStatus !== "imported" && selectedImportedStatus !== "approved";
+  const canApproveImport = Boolean(onApproveImport) && canReviewImported;
+  const canRejectImport = Boolean(onRejectImport) && canReviewImported;
+  const canDisableImport = Boolean(onDisableImport) && canReviewImported;
 
   useEffect(() => {
     if (!selectedSkillPath && filePath) {
@@ -3874,7 +4241,7 @@ function ImportSkillContent({
       if (skillPath) {
         setSelectedSkillPath(skillPath);
       }
-      setMessage("Skill imported to library for review.");
+      setMessage("Skill approved and added to Library.");
     } catch (importError) {
       const friendly = getGitHubImportFriendlyError(importError);
       setMessage(friendly.message || "Import gagal.");
@@ -4306,7 +4673,7 @@ function ImportSkillContent({
                     const next = await onApproveImport(selectedImportedSkill);
                     if (next) setImportedSkillRecord(next);
                     setPreviewResult(next || selectedImportedSkill);
-                    setMessage("Imported skill approved.");
+                    setMessage("Skill approved and added to Library.");
                     setTechnicalMessage("");
                   } catch (approveError) {
                     setMessage(approveError?.message || "Approve import gagal.");
@@ -4722,6 +5089,82 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [apiAgentSkillsById, attachSearch, safeAgents]);
 
+  const attachmentSummaryBySkillId = useMemo(() => {
+    const map = new Map();
+
+    safeAgents.forEach((agent, index) => {
+      const agentId = safeString(agent?.id || `agent-${index + 1}`, `agent-${index + 1}`);
+      const agentName = safeString(agent?.name || `Agent ${index + 1}`, `Agent ${index + 1}`);
+      const skillAssignments = normalizeArrayResponse(apiAgentSkillsById?.[String(agentId)] || []);
+
+      skillAssignments.forEach((item) => {
+        const skillId = String(item?.skill_id || item?.skill?.id || item?.id || "").trim();
+        if (!skillId) {
+          return;
+        }
+
+        if (!map.has(skillId)) {
+          map.set(skillId, { agentIds: [], agentNames: [] });
+        }
+
+        const entry = map.get(skillId);
+        if (!entry.agentIds.includes(agentId)) {
+          entry.agentIds.push(agentId);
+        }
+        if (!entry.agentNames.includes(agentName)) {
+          entry.agentNames.push(agentName);
+        }
+      });
+    });
+
+    return map;
+  }, [apiAgentSkillsById, safeAgents]);
+
+  const hasLoadedAttachmentData = useMemo(
+    () =>
+      safeAgents.some((agent, index) => {
+        const agentId = safeString(agent?.id || `agent-${index + 1}`, `agent-${index + 1}`);
+        return normalizeArrayResponse(apiAgentSkillsById?.[String(agentId)] || []).length > 0 || Number(agent?.skillCount || agent?.skill_count || 0) > 0;
+      }),
+    [apiAgentSkillsById, safeAgents]
+  );
+
+  function getAttachmentSummary(entry) {
+    const attached = attachmentSummaryBySkillId.get(String(entry.id)) || null;
+    if (attached?.agentNames?.length) {
+      if (attached.agentNames.length === 1) {
+        return `Attached to: ${attached.agentNames[0]}`;
+      }
+      return `Attached to ${attached.agentNames.length} agents`;
+    }
+
+    return hasLoadedAttachmentData ? "Not attached to any agent" : "Attached status shown for loaded agents only";
+  }
+function getSelectedAgentAttachment(entry) {
+  const agentId = String(selectedAgent?.id || "").trim();
+
+  if (!agentId || !entry?.id) {
+    return null;
+  }
+
+  const assignments = normalizeArrayResponse(apiAgentSkillsById?.[agentId] || []);
+  const skillId = String(entry.id || "").trim();
+
+  const found = assignments.find((item) => {
+    const attachedSkillId = String(item?.skill_id || item?.skill?.id || item?.id || "").trim();
+    return attachedSkillId === skillId;
+  });
+
+  if (!found) {
+    return null;
+  }
+
+  return {
+    agentId,
+    agentName: safeString(selectedAgent?.name || "selected agent", "selected agent"),
+    skillId
+  };
+}
   const selectedAttachAgent = useMemo(
     () => agentEntries.find((item) => item.id === selectedAttachAgentId) || null,
     [agentEntries, selectedAttachAgentId]
@@ -4805,10 +5248,7 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
     try {
       await approveGithubSkillImport(skill.reviewImportId, {
         name: skill.name,
-        slug: safeString(skill?.raw?.slug || skill?.raw?.file_path || skill.sourceUrl || skill.name, skill.name)
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, ""),
+        slug: buildGitHubImportApproveSlug(skill?.raw, skill.name),
         description: skill.description || skill.blockedReason || "Approved from workspace",
         version_label: safeString(skill.sourceReference || skill.lastUpdate || "workspace", "workspace"),
         risk_level: safeString(skill?.raw?.risk_level || "medium", "medium"),
@@ -4818,7 +5258,12 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
       setMessage("Skill approved.");
       await onRefresh?.();
     } catch (approveError) {
-      setError(approveError?.message || "Approve skill gagal.");
+      const friendly = getGitHubImportFriendlyError(approveError);
+      setError(friendly.message || approveError?.message || "Approve skill gagal.");
+      setMessage("");
+      if (onRefresh) {
+        await onRefresh().catch(() => {});
+      }
     } finally {
       setActionBusyId("");
     }
@@ -4899,7 +5344,37 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
       setAttachBusy(false);
     }
   }
+async function handleDetachLibrarySkill(entry) {
+  const attachment = getSelectedAgentAttachment(entry);
 
+  if (!attachment?.agentId || !attachment?.skillId) {
+    setError("Skill is not attached to selected agent.");
+    return;
+  }
+
+  const confirmed =
+    typeof window === "undefined"
+      ? true
+      : window.confirm(`Detach ${entry.name} from ${attachment.agentName}?`);
+
+  if (!confirmed) {
+    return;
+  }
+
+  setActionBusyId(`detach:${entry.id}`);
+  setError("");
+  setMessage("");
+
+  try {
+    await detachImportedSkillFromAgent(attachment.agentId, attachment.skillId);
+    setMessage(`Skill detached from ${attachment.agentName}.`);
+    await onRefresh?.();
+  } catch (detachError) {
+    setError(detachError?.message || "Detach skill gagal.");
+  } finally {
+    setActionBusyId("");
+  }
+}
   function renderSkillActionButtons(entry, compact = false, surface = "detail") {
     const actionStyle = (tone = "default", busy = false, primary = false) => ({
       padding: compact ? "5px 10px" : "7px 12px",
@@ -4915,62 +5390,84 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
     });
 
     const canApprove = entry.canApproveImport;
-    const canReject = entry.canRejectImport;
-    const canDisable = entry.canDisableImport;
-    const canAttach = entry.canAttach;
-    const approveBusy = actionBusyId === `approve:${entry.id}`;
-    const rejectBusy = actionBusyId === `reject:${entry.id}`;
-    const disableBusy = actionBusyId === `disable:${entry.id}`;
-    const showSecondaryActions = surface !== "row" || entry.lifecycle?.key !== "preview";
-    const primaryLabel = surface === "row" && entry.lifecycle?.key === "preview" ? "View" : "Review";
+const canReject = entry.canRejectImport;
+const canDisable = entry.canDisableImport;
+const canAttach = entry.canAttach;
+const approveBusy = actionBusyId === `approve:${entry.id}`;
+const rejectBusy = actionBusyId === `reject:${entry.id}`;
+const disableBusy = actionBusyId === `disable:${entry.id}`;
+const detachBusy = actionBusyId === `detach:${entry.id}`;
+const canDetachFromSelectedAgent = Boolean(getSelectedAgentAttachment(entry));
+const showSecondaryActions = surface !== "row" || entry.lifecycle?.key !== "preview";
+    const primaryLabel =
+      surface === "row" && ["preview", "rejected", "disabled"].includes(entry.lifecycle?.key) ? "View" : "Review";
 
     return (
       <>
         <button
-          type="button"
-          onClick={() => setSelectedSkillId(entry.id)}
-          style={actionStyle("soft", false, false)}
-        >
-          {primaryLabel}
-        </button>
+  type="button"
+  onClick={(event) => {
+    event.stopPropagation();
+    setSelectedSkillId(entry.id);
+    setPreviewTab("summary");
+    setMessage("");
+    setError("");
+  }}
+  style={actionStyle("soft", false, false)}
+>
+  {primaryLabel}
+</button>
         {showSecondaryActions && canAttach ? (
           <button
-            type="button"
-            onClick={() => openAttachCard(entry)}
-            style={actionStyle("soft", false, true)}
-          >
-            Attach
-          </button>
+  type="button"
+  onClick={(event) => {
+    event.stopPropagation();
+    openAttachCard(entry);
+  }}
+  style={actionStyle("soft", false, true)}
+>
+  Attach
+</button>
         ) : null}
-        {showSecondaryActions && canApprove ? (
-          <button
-            type="button"
-            onClick={() => handleApproveSkill(entry)}
-            disabled={approveBusy}
-            style={actionStyle("soft", approveBusy, false)}
-          >
-            {approveBusy ? "Approving..." : "Approve skill"}
-          </button>
-        ) : null}
+        {showSecondaryActions && canDetachFromSelectedAgent ? (
+  <button
+    type="button"
+    onClick={(event) => {
+      event.stopPropagation();
+      handleDetachLibrarySkill(entry);
+    }}
+    disabled={detachBusy}
+    style={actionStyle("soft", detachBusy, false)}
+    title="Detach from selected agent"
+  >
+    {detachBusy ? "Detaching..." : "Detach"}
+  </button>
+) : null}
         {showSecondaryActions && canReject ? (
           <button
-            type="button"
-            onClick={() => handleRejectSkill(entry)}
-            disabled={rejectBusy}
-            style={actionStyle("soft", rejectBusy, false)}
-          >
-            {rejectBusy ? "Rejecting..." : "Reject skill"}
-          </button>
+  type="button"
+  onClick={(event) => {
+    event.stopPropagation();
+    handleRejectSkill(entry);
+  }}
+  disabled={rejectBusy}
+  style={actionStyle("soft", rejectBusy, false)}
+>
+  {rejectBusy ? "Rejecting..." : "Reject skill"}
+</button>
         ) : null}
         {showSecondaryActions && canDisable ? (
           <button
-            type="button"
-            onClick={() => handleDisableSkill(entry)}
-            disabled={disableBusy}
-            style={actionStyle("soft", disableBusy, false)}
-          >
-            {disableBusy ? "Disabling..." : "Disable skill"}
-          </button>
+  type="button"
+  onClick={(event) => {
+    event.stopPropagation();
+    handleDisableSkill(entry);
+  }}
+  disabled={disableBusy}
+  style={actionStyle("soft", disableBusy, false)}
+>
+  {disableBusy ? "Disabling..." : "Disable skill"}
+</button>
         ) : null}
       </>
     );
@@ -4985,6 +5482,15 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
         selectedSkill.nextAction || "Review in Library Skill before selecting in Create Agent."
       ]
     : [];
+  const hasAnySkills = skillEntries.length > 0;
+  const hasFilteredSkills = filteredEntries.length > 0;
+
+  function resetLibraryFilters() {
+    setQuery("");
+    setTypeFilter("all");
+    setStatusFilter("all");
+    setAvailabilityFilter("all");
+  }
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -5091,30 +5597,44 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
           </div>
 
           <div style={{ display: "grid", gap: 8, maxHeight: "calc(86vh - 210px)", overflowY: "auto", overflowX: "hidden", paddingRight: 2, minWidth: 0 }}>
-            {filteredEntries.length ? (
+              {hasFilteredSkills ? (
               filteredEntries.map((entry) => {
                 const active = selectedSkill?.id === entry.id;
-                const attachedAgentLabel = safeString(entry.agent || entry.attachedAgent || "", "");
 
                 return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    onClick={() => setSelectedSkillId(entry.id)}
-                    style={{
-                      padding: 12,
-                      borderRadius: 14,
-                      border: `1px solid ${active ? C.accent : C.border}`,
-                      background: active ? C.accentLight : C.bg,
-                      textAlign: "left",
-                      cursor: "pointer",
-                      display: "grid",
-                      gap: 8,
-                      boxShadow: active ? "0 6px 16px rgba(184,92,56,0.10)" : "none",
-                      minWidth: 0,
-                      ...FONT
-                    }}
-                  >
+                  <div
+  key={entry.id}
+  role="button"
+  tabIndex={0}
+  onClick={() => {
+    setSelectedSkillId(entry.id);
+    setPreviewTab("summary");
+    setMessage("");
+    setError("");
+  }}
+  onKeyDown={(event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setSelectedSkillId(entry.id);
+      setPreviewTab("summary");
+      setMessage("");
+      setError("");
+    }
+  }}
+  style={{
+    padding: 12,
+    borderRadius: 14,
+    border: `1px solid ${active ? C.accent : C.border}`,
+    background: active ? C.accentLight : C.bg,
+    textAlign: "left",
+    cursor: "pointer",
+    display: "grid",
+    gap: 8,
+    boxShadow: active ? "0 6px 16px rgba(184,92,56,0.10)" : "none",
+    minWidth: 0,
+    ...FONT
+  }}
+>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -5143,7 +5663,9 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
                       <span style={statusStyle(entry.type)}>{entry.typeLabel}</span>
                       <span style={statusStyle("preview")}>{entry.lastUpdate}</span>
-                      {attachedAgentLabel ? <span style={statusStyle("ready")}>Attached: {attachedAgentLabel}</span> : null}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45, wordBreak: "break-word" }}>
+                      {getAttachmentSummary(entry)}
                     </div>
 
                     {entry.description ? (
@@ -5176,11 +5698,18 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
                     </div>
 
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>{renderSkillActionButtons(entry, true, "row")}</div>
-                  </button>
+                  </div>
                 );
               })
+            ) : hasAnySkills ? (
+              <EmptyPanelState
+                title="No skills match the current filters."
+                description="Coba ganti search, type, status, atau availability filter."
+                actionLabel="Clear filters"
+                onAction={resetLibraryFilters}
+              />
             ) : (
-              <EmptyPanelState title="No matching skill candidates." description="Coba ganti search, type, atau status filter." />
+              <EmptyPanelState title="No skills in your library yet." description="Import skill dulu, lalu review dari Library Skill." />
             )}
           </div>
 
@@ -5251,6 +5780,12 @@ function LibrarySkillContent({ rows = [], agents = [], selectedAgent = null, api
                 <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
                   <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Last update</div>
                   <div style={{ marginTop: 4, fontSize: 12, color: C.text, wordBreak: "break-word" }}>{selectedSkill.lastUpdate}</div>
+                </div>
+                <div style={{ padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgDeep }}>
+                  <div style={{ fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.05em" }}>Attached agents</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: C.text, lineHeight: 1.5, wordBreak: "break-word" }}>
+                    {getAttachmentSummary(selectedSkill)}
+                  </div>
                 </div>
               </div>
 
@@ -7218,33 +7753,60 @@ function SafetyCenterContent({
   );
 }
 
-function ActiveSkillsContent({ selectedAgent, selectedAgentSkills = [], error = "", onOpenPanel }) {
+function ActiveSkillsContent({ selectedAgent, selectedAgentSkills = [], error = "", onOpenPanel, onRefresh }) {
+  const [pendingDetachSkillId, setPendingDetachSkillId] = useState("");
+  const [detachBusySkillId, setDetachBusySkillId] = useState("");
+  const [detachMessage, setDetachMessage] = useState("");
+  const [detachError, setDetachError] = useState("");
   const agentName = selectedAgent?.name || "Belum ada agent";
 
-  const rows = selectedAgentSkills.map((item, index) => {
-    const skill = item?.skill || {};
-    return {
-      id: String(item?.id || skill?.id || `active-skill-${index + 1}`),
-      name: skill?.title || skill?.name || skill?.slug || `Skill ${index + 1}`,
-      type: skill?.skill_type || skill?.type || "active_skill",
-      enabled: item?.is_enabled !== false,
-      source: skill?.source_url || skill?.source_reference || skill?.file_path || "-"
-    };
-  });
+  const rows = useMemo(
+    () => selectedAgentSkills.map((item, index) => getManagedActiveSkillEntry(item, index)),
+    [selectedAgentSkills]
+  );
+
+  async function handleDetachSkill(row) {
+    if (!selectedAgent?.id) {
+      setDetachError("Agent belum dipilih.");
+      return;
+    }
+
+    if (!row?.detachSkillId) {
+      setDetachError("Skill id tidak tersedia.");
+      return;
+    }
+
+    setDetachBusySkillId(row.detachSkillId);
+    setDetachError("");
+    setDetachMessage("");
+
+    try {
+      await detachImportedSkillFromAgent(selectedAgent.id, row.detachSkillId);
+      setDetachMessage(`Skill detached from ${selectedAgent.name}.`);
+      setPendingDetachSkillId("");
+      await onRefresh?.();
+    } catch (detachErr) {
+      setDetachError(detachErr?.message || "Detach skill gagal.");
+    } finally {
+      setDetachBusySkillId("");
+    }
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <PanelHeader
         title="Active Skills"
-        description="Skill aktif ngikut agent yang sedang dipilih di lane utama."
+        description="Attached skills on the selected agent. No runtime execution here."
         badge={selectedAgent ? "ready" : "preview only"}
+        actionLabel={onRefresh ? "Refresh" : null}
+        onAction={onRefresh}
       />
 
       {error ? <PanelStateCard title="Active skill data" description={error} tone="review" /> : null}
 
       <PanelStateCard
         title={agentName}
-        description={selectedAgent ? `${rows.length} skill aktif terhubung.` : "Pilih agent dulu supaya daftar active skill kebaca."}
+        description={selectedAgent ? `${rows.length} active skills attached.` : "Pilih agent dulu supaya daftar active skill kebaca."}
         tone={selectedAgent ? "inactive" : "review"}
         actionLabel="Open skill panel"
         onAction={() => onOpenPanel?.("skill-panel")}
@@ -7254,33 +7816,158 @@ function ActiveSkillsContent({ selectedAgent, selectedAgentSkills = [], error = 
         <SectionTitle title="Active list" subtitle="Data dari GET /agents/{id}/active-skills." />
         {rows.length ? (
           <div style={{ display: "grid", gap: 8 }}>
-            {rows.map((row) => (
-              <div
-                key={row.id}
-                style={{
-                  padding: "9px 10px",
-                  borderRadius: 9,
-                  background: C.bgDeep,
-                  border: `1px solid ${C.border}`
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.name}</div>
-                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{row.type}</div>
+            {rows.map((row) => {
+              const confirmDetach = pendingDetachSkillId === row.detachSkillId;
+              const busy = detachBusySkillId === row.detachSkillId;
+              return (
+                <div
+                  key={row.detachSkillId || row.name}
+                  style={{
+                    padding: 10,
+                    borderRadius: 10,
+                    background: row.enabled ? C.bgDeep : "rgba(247,242,236,0.88)",
+                    border: `1px solid ${row.enabled ? C.border : "rgba(176,120,32,0.18)"}`,
+                    minWidth: 0
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.name}>
+                        {row.name}
+                      </div>
+                      <div style={{ marginTop: 4, fontSize: 11, color: C.textMuted, lineHeight: 1.45, wordBreak: "break-word" }}>
+                        {row.typeLabel}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0, maxWidth: "50%" }}>
+                      <span style={statusStyle(row.attachedStatusTone)}>{row.attachedStatusLabel}</span>
+                      <span style={statusStyle(row.lifecycleTone)}>{row.lifecycleLabel}</span>
+                    </div>
                   </div>
-                  <span style={statusStyle(row.enabled ? "active" : "inactive")}>{row.enabled ? "enabled" : "disabled"}</span>
+
+                  <div style={{ marginTop: 7, display: "grid", gap: 2, fontSize: 11, color: C.textMuted, minWidth: 0 }}>
+                    <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.sourcePath}>
+                      Source / Path: {row.sourcePath}
+                    </div>
+                    {row.sourceUrl ? (
+                      <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.sourceUrl}>
+                        Source URL: {row.sourceUrl}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {row.description ? (
+                    <div
+                      style={{
+                        marginTop: 7,
+                        fontSize: 11,
+                        color: C.textSub,
+                        lineHeight: 1.45,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden"
+                      }}
+                    >
+                      {row.description}
+                    </div>
+                  ) : null}
+
+                  {row.warning ? (
+                    <div
+                      style={{
+                        marginTop: 7,
+                        padding: "7px 9px",
+                        borderRadius: 8,
+                        border: `1px solid ${row.lifecycleTone === "blocked" || row.lifecycleTone === "disabled" ? "rgba(160,84,72,0.18)" : "rgba(176,120,32,0.16)"}`,
+                        background: row.lifecycleTone === "blocked" || row.lifecycleTone === "disabled" ? "rgba(252,235,230,0.72)" : "rgba(255,246,222,0.72)",
+                        fontSize: 11,
+                        color: C.textMuted,
+                        lineHeight: 1.45,
+                        wordBreak: "break-word"
+                      }}
+                    >
+                      {row.warning}
+                    </div>
+                  ) : null}
+
+                  <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                    {!confirmDetach ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetachError("");
+                          setDetachMessage("");
+                          setPendingDetachSkillId(row.detachSkillId);
+                        }}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: `1px solid ${C.border}`,
+                          background: C.cardInner,
+                          color: C.textMuted,
+                          fontSize: 12,
+                          cursor: row.canDetach ? "pointer" : "not-allowed",
+                          ...FONT
+                        }}
+                        disabled={!row.canDetach || busy}
+                      >
+                        Detach Skill
+                      </button>
+                    ) : (
+                      <div style={{ display: "grid", gap: 8, width: "100%", minWidth: 0 }}>
+                        <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.45, wordBreak: "break-word" }}>
+                          Remove this skill from this agent?
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => setPendingDetachSkillId("")}
+                            disabled={busy}
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: 8,
+                              border: `1px solid ${C.border}`,
+                              background: C.cardInner,
+                              color: C.textMuted,
+                              fontSize: 12,
+                              cursor: busy ? "not-allowed" : "pointer",
+                              ...FONT
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDetachSkill(row)}
+                            disabled={busy}
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: C.accent,
+                              color: "#fff",
+                              fontSize: 12,
+                              cursor: busy ? "not-allowed" : "pointer",
+                              ...FONT
+                            }}
+                          >
+                            {busy ? "Detaching..." : "Detach Skill"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div style={{ marginTop: 7, fontSize: 11, color: C.textDim }}>{row.source}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <EmptyPanelState
-            title="No active skills"
-            description="Agent ini belum punya active skill. Buka skill panel untuk attach dari library."
-            actionLabel="Open skill hub"
-            onAction={() => onOpenPanel?.("skill-panel")}
+            title="No active skills attached yet."
+            description="Approve skills in Library Skill, then attach them to this agent."
+            actionLabel="Open Library Skill"
+            onAction={() => onOpenPanel?.("library-skill")}
           />
         )}
       </Card>
@@ -7299,6 +7986,9 @@ function ActiveSkillsContent({ selectedAgent, selectedAgentSkills = [], error = 
           onAction={() => onOpenPanel?.("library-skill")}
         />
       </div>
+
+      <InlineFeedback message={detachMessage} />
+      <InlineFeedback message={detachError} error />
     </div>
   );
 }
@@ -7417,15 +8107,17 @@ function AgentCard({ agent }) {
 
       <div>
         <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 2 }}>{agent.name}</div>
-        <div style={{ fontSize: 12, color: C.textMuted }}>skill {agent.skillCount}</div>
+        <div style={{ fontSize: 12, color: C.textMuted }}>active skills {agent.skillCount}</div>
       </div>
 
       <div style={{ background: C.bgDeep, borderRadius: 10, padding: "8px 10px", border: `1px solid ${C.border}` }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Skills</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: C.textDim, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>Attached skills</div>
         {skillItems.slice(0, 3).map((skill) => (
-          <div key={skill} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+          <div key={skill} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, minWidth: 0 }}>
             <div style={{ width: 4, height: 4, borderRadius: "50%", background: C.textDim, flexShrink: 0 }} />
-            <span style={{ fontSize: 11, color: C.textMuted }}>{skill}</span>
+            <span style={{ fontSize: 11, color: C.textMuted, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={skill}>
+              {skill}
+            </span>
           </div>
         ))}
         {skillItems.length > 3 ? <div style={{ fontSize: 11, color: C.textDim }}>+{skillItems.length - 3} more</div> : null}
@@ -7570,23 +8262,30 @@ function WorkspaceAgentCard({ agent, selected = false, onSelect, onApprove, onRe
       style={{
         flexShrink: 0,
         width: 196,
-        background: C.card,
-        border: `1.5px solid ${selected ? "rgba(184,92,56,0.30)" : C.border}`,
+        background: selected ? "rgba(184,92,56,0.06)" : C.card,
+        border: `1.5px solid ${selected ? C.accent : C.border}`,
         borderRadius: 16,
         padding: 14,
         display: "flex",
         flexDirection: "column",
         gap: 11,
         transition: "border-color 0.18s, box-shadow 0.18s",
-        boxShadow: selected ? "0 0 0 1px rgba(184,92,56,0.10), 0 12px 24px rgba(62,54,46,0.06)" : "none",
+        boxShadow: selected ? "0 0 0 1px rgba(184,92,56,0.10), 0 12px 24px rgba(62,54,46,0.08)" : "none",
         cursor: "pointer"
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <AgentAvatar agent={agent} size={42} />
-        <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 7, color: status.color, background: status.bg }}>
-          {status.label}
-        </span>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 7, color: status.color, background: status.bg }}>
+            {status.label}
+          </span>
+          {selected ? (
+            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, color: C.accent, background: C.accentLight }}>
+              Selected
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div>
@@ -7811,6 +8510,7 @@ export default function FigmaMakeWorkspace() {
   const [apiAgents, setApiAgents] = useState([]);
   const [apiAgentSkillsById, setApiAgentSkillsById] = useState({});
   const [apiSkillLibrary, setApiSkillLibrary] = useState([]);
+  const [apiGithubImports, setApiGithubImports] = useState([]);
   const [apiN8nWorkflows, setApiN8nWorkflows] = useState([]);
   const [apiWorkflowTemplates, setApiWorkflowTemplates] = useState([]);
   const [apiWorkflowConsents, setApiWorkflowConsents] = useState([]);
@@ -7875,6 +8575,7 @@ export default function FigmaMakeWorkspace() {
       getCurrentUser(),
       get("/agents"),
       getSkillLibrary(),
+      getGithubImports(),
       getActivityLogs(),
       getAuditLogs(),
       getTasks(),
@@ -7895,6 +8596,7 @@ export default function FigmaMakeWorkspace() {
       userResult,
       agentsResult,
       skillsResult,
+      githubImportsResult,
       activityResult,
       auditResult,
       taskResult,
@@ -7928,6 +8630,7 @@ export default function FigmaMakeWorkspace() {
     setApiAgentSkillsById(nextAgentSkillMap);
 
     setApiSkillLibrary(skillsResult.status === "fulfilled" ? normalizeArrayResponse(skillsResult.value) : []);
+    setApiGithubImports(githubImportsResult.status === "fulfilled" ? normalizeArrayResponse(githubImportsResult.value) : []);
     setApiActivityLogs(activityResult.status === "fulfilled" ? normalizeCollection(activityResult.value) : []);
     setApiAuditLogs(auditResult.status === "fulfilled" ? normalizeCollection(auditResult.value) : []);
     setApiTasks(taskResult.status === "fulfilled" ? normalizeCollection(taskResult.value) : []);
@@ -7947,7 +8650,12 @@ export default function FigmaMakeWorkspace() {
       general: agentsResult.status === "rejected" ? "Agents unavailable. Preview fallback used." : "",
       createAgent: "",
       importSkill: "",
-      skills: skillsResult.status === "rejected" ? "Skill library unavailable. Preview fallback used." : "",
+      skills:
+        skillsResult.status === "rejected"
+          ? "Skill library unavailable. Preview fallback used."
+          : githubImportsResult.status === "rejected"
+            ? "GitHub import list unavailable. Preview fallback used."
+            : "",
       workflows: n8nResult.status === "rejected" ? "n8n registry unavailable." : "",
       activity:
         activityResult.status === "rejected"
@@ -8132,8 +8840,12 @@ export default function FigmaMakeWorkspace() {
     if (!workspaceLoaded) {
       return PREVIEW_SKILLS;
     }
-    return apiSkillLibrary.length ? buildSkillRows(apiSkillLibrary, selectedAgent, apiAgentSkillsById) : [];
-  }, [workspaceLoaded, apiSkillLibrary, selectedAgent, apiAgentSkillsById]);
+    const importedPreviewRows = apiGithubImports
+      .map((item) => normalizeGithubImportLibraryItem(item))
+      .filter(Boolean);
+    const combinedLibraryRows = [...apiSkillLibrary, ...importedPreviewRows];
+    return combinedLibraryRows.length ? buildSkillRows(combinedLibraryRows, selectedAgent, apiAgentSkillsById) : [];
+  }, [workspaceLoaded, apiSkillLibrary, apiGithubImports, selectedAgent, apiAgentSkillsById]);
 
   const workflowRows = useMemo(() => {
     if (apiN8nWorkflows.length) {
@@ -8403,10 +9115,7 @@ export default function FigmaMakeWorkspace() {
     try {
       const result = await approveGithubSkillImport(importRecord.id, {
         name: safeString(importRecord?.skill_import_type || importRecord?.file_path || importRecord?.repo_url, "Imported Skill"),
-        slug: safeString(importRecord?.file_path || importRecord?.repo_url, "imported-skill")
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, ""),
+        slug: buildGitHubImportApproveSlug(importRecord, "Imported Skill"),
         description: importRecord?.content_preview || "Approved from workspace",
         version_label: "workspace",
         risk_level: "medium",
@@ -8416,7 +9125,9 @@ export default function FigmaMakeWorkspace() {
       await refreshWorkspace();
       return result;
     } catch (error) {
-      setPanelErrors((current) => ({ ...current, importSkill: error?.message || "Approve import gagal." }));
+      const friendly = getGitHubImportFriendlyError(error);
+      setPanelErrors((current) => ({ ...current, importSkill: friendly.message || error?.message || "Approve import gagal." }));
+      await refreshWorkspace().catch(() => {});
       throw error;
     }
   }
@@ -8755,7 +9466,8 @@ export default function FigmaMakeWorkspace() {
       selectedAgent,
       selectedAgentSkills,
       error: panelErrors.skills,
-      onOpenPanel: openWindow
+      onOpenPanel: openWindow,
+      onRefresh: refreshWorkspace
     },
     settings: {
       currentUser: currentUserView,
@@ -8915,7 +9627,10 @@ export default function FigmaMakeWorkspace() {
                       key={agent.id}
                       agent={agent}
                       selected={selectedAgent?.id === agent.id}
-                      onSelect={() => setSelectedAgentId(agent.id)}
+                      onSelect={() => {
+                        setSelectedAgentId(agent.id);
+                        openWindow("agent-detail");
+                      }}
                       onApprove={(approval) => handleApprovalDecision(approval, "approve")}
                       onReject={(approval) => handleApprovalDecision(approval, "reject")}
                       onSendCommand={handleAgentCardCommand}

@@ -418,6 +418,10 @@ export function getSkillLibrary(options) {
   return get("/skills/library", options);
 }
 
+export function getGithubImports(options) {
+  return get("/github-imports", options);
+}
+
 export function getModelProviders(options) {
   return get("/model-providers", options);
 }
